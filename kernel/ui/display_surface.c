@@ -9,12 +9,17 @@ typedef uint8_t u8;
 
 static MINT_DISPLAY_SURFACE *current_surface;
 static volatile uint32_t *scanout_pixels;
-#define MINT_BACKBUFFER_MAX_PIXELS (1920u * 1080u)
 /* Only the native kernel needs the large software backbuffer. Keep the UEFI
- * application compact; its own renderer already has a separate backbuffer. */
+ * application compact; its own renderer already has a separate backbuffer.
+ * 26.5.009.0: the retained backbuffer and the glass-backdrop snapshot are no
+ * longer fixed 1920x1080 .bss arrays. The kernel sizes them from the real GOP
+ * mode (stride x height, any stride padding, up to MINT_DISPLAY_MAX_PIXELS)
+ * and attaches them after the physical allocator is online. Until then frame
+ * calls fail closed and drawing goes straight to scanout, as before. */
 #if !defined(_WIN32)
-static uint32_t display_backbuffer[MINT_BACKBUFFER_MAX_PIXELS];
-static uint32_t display_background[MINT_BACKBUFFER_MAX_PIXELS];
+static uint32_t *display_backbuffer;
+static uint32_t *display_background;
+static uint64_t display_buffer_pixels;
 static int display_background_valid;
 static int display_backbuffer_initialized;
 static uint32_t damage_x0, damage_y0, damage_x1, damage_y1;
@@ -66,21 +71,62 @@ int mint_display_surface_init(MINT_DISPLAY_SURFACE *surface,
     surface->initialized = 1u;
     current_surface = surface;
 #if !defined(_WIN32)
-    if (pixels > MINT_BACKBUFFER_MAX_PIXELS) {
+    if (pixels > MINT_DISPLAY_MAX_PIXELS) {
         surface->initialized = 0;
         current_surface = 0;
         return 0;
     }
-    for (uint32_t y = 0; y < surface->height; ++y) {
-        uint64_t row = (uint64_t)y * surface->stride_pixels;
-        for (uint32_t x = 0; x < surface->stride_pixels; ++x)
+    /* A new surface invalidates any previously attached buffers. */
+    display_backbuffer = 0;
+    display_background = 0;
+    display_buffer_pixels = 0;
+    display_backbuffer_initialized = 0;
+    display_background_valid = 0;
+    display_damage_valid = 0;
+#endif
+    return 1;
+}
+
+uint64_t mint_display_backbuffer_pixels_required(void) {
+    if (!current_surface || !current_surface->initialized) return 0;
+    return (uint64_t)current_surface->stride_pixels * current_surface->height;
+}
+
+int mint_display_attach_backbuffers(uint32_t *backbuffer, uint32_t *background,
+                                    uint64_t capacity_pixels) {
+#if defined(_WIN32)
+    (void)backbuffer; (void)background; (void)capacity_pixels;
+    return 0;
+#else
+    uint64_t required = mint_display_backbuffer_pixels_required();
+    if (!required || !backbuffer || !background || backbuffer == background ||
+        capacity_pixels < required || display_frame_active) return 0;
+    uint64_t bytes = capacity_pixels * sizeof(uint32_t);
+    uintptr_t a = (uintptr_t)backbuffer, b = (uintptr_t)background;
+    if ((a < b && a + bytes > b) || (b < a && b + bytes > a)) return 0;
+    display_backbuffer = backbuffer;
+    display_background = background;
+    display_buffer_pixels = capacity_pixels;
+    /* Seed the retained frame from what is currently on screen. This is the
+     * one deliberate bulk read of scanout memory. */
+    for (uint32_t y = 0; y < current_surface->height; ++y) {
+        uint64_t row = (uint64_t)y * current_surface->stride_pixels;
+        for (uint32_t x = 0; x < current_surface->stride_pixels; ++x)
             display_backbuffer[row + x] = scanout_pixels[row + x];
     }
     display_backbuffer_initialized = 1;
     display_background_valid = 0;
     display_damage_valid = 0;
-#endif
     return 1;
+#endif
+}
+
+/* Scanout may be mapped write-combining. Drain the WC buffers so presented
+ * pixels reach the framebuffer and later uncached reads (cursor save) see them. */
+static void display_flush_scanout(void) {
+#if defined(__x86_64__) && !defined(_WIN32)
+    __asm__ volatile("sfence" ::: "memory");
+#endif
 }
 
 int mint_display_frame_begin(void) {
@@ -90,15 +136,8 @@ int mint_display_frame_begin(void) {
     if (!current_surface || !current_surface->initialized || !scanout_pixels || display_frame_active)
         return 0;
     uint64_t count = (uint64_t)current_surface->stride_pixels * current_surface->height;
-    if (count > MINT_BACKBUFFER_MAX_PIXELS) return 0;
-    if (!display_backbuffer_initialized) {
-        for (uint32_t y = 0; y < current_surface->height; ++y) {
-            uint64_t row = (uint64_t)y * current_surface->stride_pixels;
-            for (uint32_t x = 0; x < current_surface->stride_pixels; ++x)
-                display_backbuffer[row + x] = scanout_pixels[row + x];
-        }
-        display_backbuffer_initialized = 1;
-    }
+    if (!display_backbuffer || !display_backbuffer_initialized ||
+        count > display_buffer_pixels) return 0;
     /* Restore the scanout beneath the hardware cursor before beginning a frame.
        The retained backbuffer never includes the cursor overlay. */
     cursor_hide();
@@ -122,9 +161,20 @@ int mint_display_frame_end(void) {
         if (y1 > current_surface->height) y1 = current_surface->height;
         for (uint32_t y = y0; y < y1; ++y) {
             uint64_t row = (uint64_t)y * current_surface->stride_pixels;
-            for (uint32_t x = x0; x < x1; ++x)
-                scanout_pixels[row + x] = display_backbuffer[row + x];
+            uint32_t x = x0;
+            /* Present in aligned 64-bit pairs where possible: half the bus
+             * transactions to UC memory and full lines for WC combining. */
+            if ((x & 1u) && x < x1) { scanout_pixels[row + x] = display_backbuffer[row + x]; ++x; }
+            if (!(((uintptr_t)(scanout_pixels + row + x) | (uintptr_t)(display_backbuffer + row + x)) & 7u)) {
+                volatile uint64_t *dst = (volatile uint64_t *)(scanout_pixels + row + x);
+                const uint64_t *src = (const uint64_t *)(display_backbuffer + row + x);
+                uint32_t pairs = (x1 - x) / 2u;
+                for (uint32_t i = 0; i < pairs; ++i) dst[i] = src[i];
+                x += pairs * 2u;
+            }
+            for (; x < x1; ++x) scanout_pixels[row + x] = display_backbuffer[row + x];
         }
+        display_flush_scanout();
     }
     current_surface->pixels = scanout_pixels;
     display_frame_active = 0;
@@ -141,7 +191,7 @@ int mint_display_current_capture_background(void) {
     if (!display_frame_active || !current_surface || !current_surface->initialized ||
         current_surface->pixels != display_backbuffer) return 0;
     uint64_t count = (uint64_t)current_surface->stride_pixels * current_surface->height;
-    if (count > MINT_BACKBUFFER_MAX_PIXELS) return 0;
+    if (!display_background || count > display_buffer_pixels) return 0;
     for (uint32_t y = 0; y < current_surface->height; ++y) {
         uint64_t row = (uint64_t)y * current_surface->stride_pixels;
         for (uint32_t x = 0; x < current_surface->stride_pixels; ++x)
@@ -157,8 +207,8 @@ int mint_display_current_restore_rect(int32_t x, int32_t y, int32_t width, int32
     (void)x; (void)y; (void)width; (void)height;
     return 0;
 #else
-    if (!display_frame_active || !display_background_valid || !current_surface ||
-        !current_surface->initialized || width <= 0 || height <= 0) return 0;
+    if (!display_frame_active || !display_background_valid || !display_background ||
+        !current_surface || !current_surface->initialized || width <= 0 || height <= 0) return 0;
     int64_t x0 = x, y0 = y, x1 = (int64_t)x + width, y1 = (int64_t)y + height;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -213,6 +263,7 @@ int mint_display_current_fill_rect(int32_t x, int32_t y, int32_t width,
     cursor_hide();
     mint_display_fill_rect(current_surface, x, y, width, height, rgb);
     cursor_paint();
+    display_flush_scanout();
     return 1;
 }
 
@@ -311,7 +362,7 @@ int mint_display_current_blend_round_rect(int32_t x, int32_t y, int32_t width,
                     if(bx[tap]<0||by[tap]<0||(uint32_t)bx[tap]>=current_surface->width||
                        (uint32_t)by[tap]>=current_surface->height)continue;
                     uint64_t bi=(uint64_t)(uint32_t)by[tap]*current_surface->stride_pixels+(uint32_t)bx[tap];
-                    if(bi>=MINT_BACKBUFFER_MAX_PIXELS)continue;
+                    if(bi>=display_buffer_pixels)continue;
                     uint32_t bp=decode_rgb(display_background[bi],current_surface->pixel_format);
                     sr+=(bp>>16)&255u;sg+=(bp>>8)&255u;sb+=bp&255u;samples++;
                 }
@@ -516,6 +567,7 @@ static void cursor_hide(void) {
         }
     }
     cursor_saved_valid = 0;
+    display_flush_scanout();
 }
 
 static void cursor_paint(void) {
@@ -561,6 +613,7 @@ static void cursor_paint(void) {
             }
         }
     }
+    display_flush_scanout();
 }
 
 void mint_display_cursor_move(int32_t x, int32_t y) {

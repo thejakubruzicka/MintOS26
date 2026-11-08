@@ -9,6 +9,8 @@
 #define PTE_PWT (1ULL << 3)
 #define PTE_PCD (1ULL << 4)
 #define PDE_PS  (1ULL << 7)
+#define PTE_PAT (1ULL << 7)   /* 4 KiB leaf: PAT index bit */
+#define PDE_PAT (1ULL << 12)  /* 2 MiB leaf: PAT index bit */
 #define PTE_NX  (1ULL << 63)
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 #define PDE_LARGE_ADDR_MASK 0x000FFFFFFFE00000ULL
@@ -31,6 +33,8 @@ extern char __guard_rsp0_before[], __guard_rsp0_after[];
 extern char __guard_df_before[], __guard_df_after[];
 extern char __guard_nmi_before[], __guard_nmi_after[];
 extern char __guard_mc_before[], __guard_mc_after[];
+
+static void invalidate_window_aliases(uint64_t va);
 
 static int ranges_overlap(uint64_t a, uint64_t as, uint64_t b, uint64_t bs) {
     if (!as || !bs || a > UINT64_MAX - as || b > UINT64_MAX - bs) return 0;
@@ -249,6 +253,9 @@ static uint64_t *ensure_pte_table(MINT_PAGING_TABLES *t, uint64_t table_base,
             if (!pt) return 0;
             uint64_t physical_base = old & PDE_LARGE_ADDR_MASK;
             uint64_t leaf_flags = PTE_P | (old & (PTE_RW | PTE_PWT | PTE_PCD | PTE_NX));
+            /* The PAT selector moves from bit 12 (large) to bit 7 (4 KiB).
+               Dropping it would silently turn a WC framebuffer leaf into WB. */
+            if (old & PDE_PAT) leaf_flags |= PTE_PAT;
             for (uint64_t i = 0; i < 512; ++i)
                 pt[i] = physical_base + i * MINT_PAGING_PAGE_SIZE | leaf_flags;
             /* Keep the intermediate entry permissive; leaf PTEs enforce R/W and NX. */
@@ -402,7 +409,7 @@ int mint_paging_init(const MINT_BOOT_INFO *boot) {
     mint_serial_write("[paging] 2 MiB leaves; kernel image split into protected 4 KiB pages\n");
     mint_serial_write(nx_active ? "[paging] NX enabled; text RX, rodata R/NX, data RW/NX\n"
                                 : "[paging] NX unavailable; write-protect and read-only text enabled\n");
-    mint_serial_write("[paging] framebuffer identity range marked uncached\n");
+    mint_serial_write("[paging] framebuffer identity range marked uncached (WC remap follows when PAT is available)\n");
     mint_serial_write("[paging] eight non-present guard pages installed around RSP0/DF/NMI/MC stacks\n");
     return 1;
 }
@@ -424,6 +431,41 @@ int mint_paging_mark_uncached_range(uint64_t physical_base, uint64_t byte_size) 
         if (!pte || !(*pte & PTE_P)) return 0;
         *pte |= PTE_PCD | PTE_PWT;
         __asm__ volatile("invlpg (%0)" :: "r"((uintptr_t)va) : "memory");
+    }
+    return 1;
+}
+
+/* Remap exactly [physical_base, physical_base+byte_size) write-combining using
+ * PAT entry PA4 (programmed to WC by mint_arch_enable_pat_write_combining).
+ * 2 MiB leaves wholly inside the range flip in place; partially covered edge
+ * leaves are split so memory outside the framebuffer keeps its UC policy.
+ * Any failure leaves already-converted pages WC (valid for scanout) and the
+ * rest UC; it never produces a WB framebuffer mapping. */
+int mint_paging_set_framebuffer_write_combining(uint64_t physical_base, uint64_t byte_size) {
+    if (!paging_active || !byte_size || physical_base >= MINT_IDENTITY_MAP_LIMIT ||
+        byte_size > MINT_IDENTITY_MAP_LIMIT - physical_base) return 0;
+    uint64_t start = physical_base & ~(MINT_PAGING_PAGE_SIZE - 1u);
+    uint64_t end = (physical_base + byte_size + MINT_PAGING_PAGE_SIZE - 1u) &
+                   ~(MINT_PAGING_PAGE_SIZE - 1u);
+    if (end < physical_base || end > MINT_VMALLOC_BASE) return 0;
+    if (!mint_arch_enable_pat_write_combining()) return 0;
+    uint64_t table_base = (uint64_t)(uintptr_t)&g_tables;
+    const uint64_t large = MINT_PAGING_LARGE_PAGE_SIZE;
+    uint64_t va = start;
+    while (va < end) {
+        uint64_t *pde = &g_tables.pd[va >> 30][(va >> 21) & 0x1FFu];
+        if (!(va & (large - 1u)) && end - va >= large &&
+            (*pde & (PTE_P | PDE_PS)) == (PTE_P | PDE_PS)) {
+            *pde = (*pde & ~(PTE_PCD | PTE_PWT)) | PDE_PAT;
+            invalidate_window_aliases(va);
+            va += large;
+            continue;
+        }
+        uint64_t *pte = lookup_pte(&g_tables, table_base, va, &dynamic_pt_used, 1);
+        if (!pte || !(*pte & PTE_P)) return 0;
+        *pte = (*pte & ~(PTE_PCD | PTE_PWT)) | PTE_PAT;
+        invalidate_window_aliases(va);
+        va += MINT_PAGING_PAGE_SIZE;
     }
     return 1;
 }

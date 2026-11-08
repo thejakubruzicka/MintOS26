@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /* MintOS syscall numbering. A few base values match Linux x86-64 numbers for
- * familiarity only; this is NOT a Linux-compatible ABI. 26.5.008.0 adds the bounded polling E1000 interface and device telemetry. */
+ * familiarity only; this is NOT a Linux-compatible ABI. 26.5.008.0 adds the bounded polling E1000 interface and device telemetry; 26.5.009.0 adds ACPI power info/control. */
 #define MINT_SYSABI_VERSION 1u
 #define MINT_SYS_READ          0u
 #define MINT_SYS_WRITE         1u
@@ -48,6 +48,9 @@
 #define MINT_SYS_E1000_START                  0x4D24u
 #define MINT_SYS_E1000_INFO                   0x4D22u
 #define MINT_SYS_E1000_LOOPBACK_TEST           0x4D23u
+/* 26.5.009.0: ACPI power information and confirmed shutdown/restart. */
+#define MINT_SYS_POWER_INFO                    0x4D25u
+#define MINT_SYS_POWER_CONTROL                 0x4D26u
 
 #define MINT_CLOCK_REALTIME  0
 #define MINT_CLOCK_MONOTONIC 1

@@ -18,6 +18,7 @@
 #include "../include/vfs.h"
 #include "../include/pci.h"
 #include "../include/e1000.h"
+#include "../include/power.h"
 
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
  * ring-3 entry below never passes raw user pointers into this function. */
@@ -184,6 +185,19 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         int rc=mint_e1000_loopback_test();
         if (rc<0) return -MINT_ENODEV;
         return rc ? 0 : -MINT_EIO;
+    }
+    if (number == MINT_SYS_POWER_INFO) {
+        MINT_POWER_INFO local;
+        if (!mint_address_space_validate_user_range(space,arg0,sizeof(local),1)) return -MINT_EFAULT;
+        if (!mint_power_get_info(&local)) return -MINT_ENODEV;
+        return mint_address_space_copy_to_user(space,arg0,&local,sizeof(local)) ? 0 : -MINT_EFAULT;
+    }
+    if (number == MINT_SYS_POWER_CONTROL) {
+        /* Requires the explicit token so a stray call cannot power off. */
+        if (arg1 != MINT_POWER_CONFIRM_TOKEN) return -MINT_EPERM;
+        if (arg0 == MINT_POWER_ACTION_SHUTDOWN) return mint_power_shutdown();
+        if (arg0 == MINT_POWER_ACTION_RESTART) return mint_power_restart();
+        return -MINT_EINVAL;
     }
     if (number == MINT_SYS_FAT16_VOLUMES) {
         MINT_FAT16_VOLUME_LIST list;

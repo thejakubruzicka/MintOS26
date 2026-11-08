@@ -14,6 +14,8 @@
 #include <vfs.h>
 #include <pci.h>
 #include <e1000.h>
+#define MINT_POWER_USERSPACE 1
+#include <power.h>
 
 /* Tiny freestanding userspace ABI. It is deliberately not a libc or Linux ABI. */
 int64_t mint_write(uint64_t fd, const void *buffer, size_t length);
@@ -45,6 +47,10 @@ int64_t mint_pci_inventory_get(MINT_PCI_INVENTORY *out);
 int64_t mint_e1000_start(void);
 int64_t mint_e1000_get_status(MINT_E1000_INFO *out);
 int64_t mint_e1000_run_loopback_test(void);
+/* ACPI power: status snapshot, and confirmed shutdown/restart (returns only
+ * on failure with a negative MintOS errno). */
+int64_t mint_power_get_status(MINT_POWER_INFO *out);
+int64_t mint_power_request(uint32_t action);
 int64_t mint_log_read(MINT_LOG_RECORD *out, uint32_t capacity, uint32_t minimum_severity, uint32_t component_filter);
 int64_t mint_ui_frame_begin(void);
 int64_t mint_ui_frame_end(void);

@@ -16,6 +16,14 @@
 #define AHCI_CAP2 0x24u
 #define AHCI_BOHC 0x28u
 #define AHCI_PI 0x0Cu
+#define AHCI_VS 0x10u
+/* Intel RST "RAID On" (the Dell OptiPlex factory default) presents the PCH
+ * SATA controller as class 01:04:00, but its ABAR is the same AHCI register
+ * set (Linux's ahci driver binds these IDs too). MintOS accepts it only after
+ * the AHCI version and ports-implemented registers validate; RAID volumes
+ * themselves are not assembled, each member disk is read individually. */
+#define PCI_VENDOR_INTEL 0x8086u
+#define PCI_SUBCLASS_RAID 0x04u
 #define AHCI_PORT_BASE 0x100u
 #define AHCI_PORT_STRIDE 0x80u
 #define AHCI_PX_CLB 0x00u
@@ -300,6 +308,16 @@ static void log_port_implemented(const MINT_STORAGE_CONTROLLER_INFO *ci) {
     mint_serial_write("\n");
 }
 
+static int ahci_version_plausible(uint32_t vs) {
+    if (vs == 0x00000905u) return 1;                         /* AHCI 0.95 */
+    return (vs >> 16) == 1u && (vs & 0xFFFFu) <= 0x0301u;    /* AHCI 1.0 .. 1.3.1 */
+}
+
+static int is_intel_raid_mode_ahci(const MINT_PCI_DEVICE *d) {
+    return d->vendor_id == PCI_VENDOR_INTEL && d->class_code == AHCI_PCI_CLASS &&
+           d->subclass == PCI_SUBCLASS_RAID && d->programming_interface == 0x00u;
+}
+
 static int probe_controller(uint32_t controller_index, const MINT_PCI_DEVICE *d,
                             MINT_STORAGE_SNAPSHOT *snapshot) {
     MINT_STORAGE_CONTROLLER_INFO *ci = &snapshot->controllers[controller_index];
@@ -322,12 +340,30 @@ static int probe_controller(uint32_t controller_index, const MINT_PCI_DEVICE *d,
     /* Enable memory decoding and bus mastering only; preserve the command
        register and write zero to status W1C bits. This does not write media. */
     uint32_t old_cmdstat = mint_pci_read_config32(d->bus, d->device, d->function, 0x04u);
+    volatile uint8_t *hba = (volatile uint8_t *)(uintptr_t)abar;
+    if (is_intel_raid_mode_ahci(d)) {
+        /* Enable memory decoding only, prove the ABAR is a real AHCI HBA, and
+           only then allow bus mastering below. */
+        uint32_t mem_only = (old_cmdstat & 0xFFFFu) | (1u << 1);
+        if (!mint_pci_write_config32(d->bus, d->device, d->function, 0x04u, mem_only)) {
+            controller_failure(ci, "PCI command register could not enable MMIO");
+            return 0;
+        }
+        uint32_t vs = mmio_read32(hba, AHCI_VS), pi = mmio_read32(hba, AHCI_PI);
+        if (!ahci_version_plausible(vs) || !pi || pi == 0xFFFFFFFFu) {
+            (void)mint_pci_write_config32(d->bus, d->device, d->function, 0x04u, old_cmdstat & 0xFFFFu);
+            controller_failure(ci, "Intel RAID-mode controller does not expose AHCI registers; set SATA to AHCI in firmware");
+            return 0;
+        }
+        mint_log_emit(MINT_LOG_WARN, MINT_LOG_COMPONENT_AHCI,
+                      "Intel RST RAID-mode SATA accepted through its AHCI interface; RAID volumes are not assembled");
+        mint_serial_write("[ahci] Intel RAID-mode (class 01:04) controller validated as AHCI; firmware SATA mode 'AHCI' is still recommended\n");
+    }
     uint32_t command = (old_cmdstat & 0xFFFFu) | (1u << 1) | (1u << 2);
     if (!mint_pci_write_config32(d->bus, d->device, d->function, 0x04u, command)) {
         controller_failure(ci, "PCI command register could not enable MMIO/DMA");
         return 0;
     }
-    volatile uint8_t *hba = (volatile uint8_t *)(uintptr_t)abar;
     controller_hbas[controller_index] = hba;
     uint32_t cap2 = mmio_read32(hba, AHCI_CAP2);
     if (cap2 & 1u) {
@@ -542,8 +578,9 @@ int mint_ahci_init(void) {
     uint32_t supported = 0u;
     for (uint32_t i = 0; i < inv->devices_stored; ++i) {
         const MINT_PCI_DEVICE *d = &inv->devices[i];
-        if (d->class_code != AHCI_PCI_CLASS || d->subclass != AHCI_PCI_SUBCLASS ||
-            d->programming_interface != AHCI_PCI_PROGIF) continue;
+        int standard_ahci = d->class_code == AHCI_PCI_CLASS && d->subclass == AHCI_PCI_SUBCLASS &&
+                            d->programming_interface == AHCI_PCI_PROGIF;
+        if (!standard_ahci && !is_intel_raid_mode_ahci(d)) continue;
         if (snapshot->controller_count >= MINT_STORAGE_MAX_CONTROLLERS) {
             ++snapshot->controller_overflow;
             mint_log_emit(MINT_LOG_WARN, MINT_LOG_COMPONENT_AHCI,
@@ -558,7 +595,7 @@ int mint_ahci_init(void) {
     }
     if (!snapshot->controller_count) {
         mint_log_emit(MINT_LOG_WARN, MINT_LOG_COMPONENT_AHCI,
-                      "PCI inventory contains no class 01:06:01 AHCI controller");
+                      "PCI inventory contains no class 01:06:01 AHCI or Intel RAID-mode AHCI controller");
     }
     for (uint32_t i = 0; i < snapshot->controller_count; ++i) {
         if (snapshot->controllers[i].state == MINT_STORAGE_CTRL_READY ||

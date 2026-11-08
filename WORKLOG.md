@@ -1,43 +1,31 @@
-# MintOS26 26.5.007.0 worklog
+# MintOS26 26.5.009.0 / MintDE 1.0.8 worklog
 
-## User-provided VM evidence
+Previous worklog: `docs/WORKLOG-26.5.008.0.md`.
 
-The 26.5.005.0 COM1 log shows:
-- `sda` and `sdb` identified and read-only FAT16 mount messages for both block indexes.
-- Intel 82540EM (8086:100E) detected read-only at boot; bus-master DMA remains disabled until `net start`.
-- `net start` initialized the polling RX/TX rings and reported MAC `08:00:27:11:F3:4F`.
-- `net test` failed/timed out at loopback. The older log did not record the exact timeout phase.
-- `use sda` and `use sdb` ran after the network test without another page fault.
+## Baseline reproduction (26.5.008.0, unmodified)
 
-The source log is preserved as `test-evidence/mint-26.5.005.0-e1000-loopback.log`.
+- The source archive matched the handoff SHA-256 (`f48b5d27…2983`). It is imported verbatim as git tag `v26.5.008.0` on `main`; this work is on branch `dev/26.5.009.0`.
+- Host: macOS 27 on Apple Silicon, Apple clang 21, Homebrew lld/qemu 11.1.3/binutils. `make clean all` exited 0 with no warnings.
+- `make check` run per command with the `tools/macos-host` wrapper: 41/43 commands passed (714 PASS lines). `test_context_switch.py` and `test_paging.py` cannot run on a Mach-O host (ELF assembly, undefined linker-script symbols); they are not failures of MintOS code.
+- **First live VM run of 26.5.008.0** (QEMU q35 + OVMF, TCG): UEFI Desktop and native MintDE both boot; ring-3 smoke tests pass. Evidence: `test-evidence/qemu-26.5.008.0-*`.
+- E1000 on QEMU: TX descriptor completes; with the corrected diagnostics the submitted frame length is 0x3C. RX times out under RCTL.LBM_TCVR. QEMU's e1000 loops back only through PHY BMCR loopback, so this neither confirms nor refutes the VirtualBox TCVR hypothesis.
 
-## 26.5.007.0 changes
+## Defects found and fixed
 
-- Terminal presents command history with a distinct `root#mintos >` prefix and accent-colored command entries separated from output.
-- E1000 performs bounded MDIC PHY register access and configures both integrated-PHY and MAC loopback for the internal probe.
-- Loopback failure snapshots record STATUS/CTRL/RCTL/TCTL, TX/RX head-tail registers, descriptor status, MDIC and PHY control/status **before normal mode is restored**.
-- `net status` and `net test` show stage/error and the register snapshot on screen as well as in COM1.
-- Partial E1000 initialization now disables and verifies PCI bus mastering before freeing the DMA pool. If bus-master disable cannot be confirmed, the pool is retained and retries are refused.
-- Boot remains detect-only; `net start` explicitly activates the experimental driver. It has no TCP/IP, DHCP, DNS or external packet-send path.
+1. **PS/2 pointer direction inversion.** Deltas were read as `int8_t`, ignoring the 9-bit sign in byte 0. Motion above 127 counts per packet reversed direction. Reproduced in QEMU, where host moves are coalesced; real mice do the same on fast flicks. Fixed, with host tests for ±200-count packets.
+2. **Kernel halt on large or padded GOP modes.** The backbuffers were static 1920x1080 arrays, and `stride*height` above that failed surface init ("invalid/unsupported framebuffer surface; halted"). They are now allocated per mode from high memory, up to 4096x2400.
+3. **Uncached framebuffer.** It is now WC via PAT PA4, with exact-range remapping; large-page splits keep the PAT bit (otherwise a WC leaf would silently become WB).
+4. **No power-off/restart path** on the native kernel. ACPI S5 and reset were added.
+5. **Dell "RAID On" SATA invisible** (class 01:04). Intel RAID-mode HBAs are now accepted after AHCI register validation.
 
-## Verification boundaries
+## Verification for 26.5.009.0
 
-- `make clean all` completed with exit status 0; final documentation changes were then rebuilt into the ISO/data images by `make all`, exit status 0.
-- Host suite runs were split because the monolithic `make check` exceeded the shell command's 300-second execution limit. The core batch printed 538 PASS / 0 FAIL. The final storage/artifact batch printed 186 PASS / 0 FAIL and repeated the UEFI verifier; this corresponds to 715 unique PASS assertions, no reported test failures.
-- The E1000 core/driver, stack-usage, kernel, userspace, UEFI, storage, VDI, architecture-hardening and VMALLOC verifiers passed in the recorded batch logs.
-- No VirtualBox/VBoxManage or QEMU/OVMF runtime was available in the build environment. Therefore the revised E1000 PHY/MAC loopback has **not** been proven live; the next VM log should report the exact failure stage and pre-restore registers if it still fails.
+- Host (macOS, `tools/macos-host` wrapper): 44/45 `make check` commands pass with 820 PASS lines; only `test_context_switch.py` (ELF assembly, Linux-host only) cannot run. `test_paging.py` now names linker-script symbols portably, so it runs on macOS, and gained a PAT-split regression check. Summary: `test-evidence/host-check-macos-26.5.009.0-summary.txt`.
+- Host: new `tools/test_acpi.py` (synthetic RSDP/XSDT/RSDT/FADT/DSDT/SSDT: Dell-style SLP_TYP 7, SSDT fallback, multi-byte PkgLength, bad checksums, MethodOp decoy, oversized lengths) and `tools/test_hardware_compat.py` (display surface with 1080p, padded 2048-stride 1080p, 1440p, 4K, 1366x768/1376 stride, 5K refusal; PAT/WC/RAID/PS2 source contracts). Updated `test_ps2_input.c` to spec-correct packets plus fast-motion cases.
+- QEMU 11.1 q35/OVMF, native MintDE (COM1: `test-evidence/qemu-26.5.009.0-native-power-shutdown-com1.log`): `[display] framebuffer remapped write-combining via PAT`; 1920x1080 backbuffers attached at the top of RAM; `[acpi] … PM1a_CNT=0x604 S5=0/0 reset-reg 8042`. Menu → Shut Down… → confirm made QEMU exit (ACPI S5). Menu → Restart… → confirm rebooted to UEFI Desktop. Fast pointer moves kept their direction.
+- **Not validated:** VirtualBox, the physical OptiPlex 7040 / GTX 1050 Ti, the Intel RAID-mode path (QEMU cannot present a class 01:04 Intel HBA), modes above 1080p in a live guest, and WC timing (TCG ignores memory types).
 
+## Next
 
-## 26.5.007.0 E1000 follow-up
-- The supplied 26.5.006.0 COM1 snapshot shows TDH/TDT 0/1, TX descriptor status 0, CTRL.LRST bit set and STATUS.LU clear at TX timeout.
-- The 26.5.007.0 loopback path no longer combines MII PHY loopback with RCTL MAC loopback; it clears and verifies CTRL.LRST and leaves PHY configuration untouched.
-- Added TX command/length/buffer and DMA ring/PCI command diagnostics. Runtime loopback success still requires a fresh VirtualBox log.
-
-
-## 26.5.008.0 / MintDE 1.0.7 follow-up
-
-- User's 26.5.007.0 COM1 trace showed TX descriptor completion with TDH/TDT=1/1 and TX DD=1, while RX remained empty (RDH/RDT=0/7; RX DD=0).
-- Updated the VirtualBox-emulated 82540EM self-test from RCTL.LBM_MAC to RCTL.LBM_TCVR to use the emulator's internal loopback-buffer route.
-- Corrected failure diagnostics to retain the actual submitted TX descriptor index and capture RX descriptor index, length, error flags and DMA buffer address.
-- Fixed hit testing for the compact eight-version changelog list.
-- Host tests can check the bitfield selection and diagnostics contract, but they cannot establish live VirtualBox DMA behavior.
+- **Phase 2 — USB input:** a polled xHCI driver (BIOS handoff via USBLEGSUP, bounded command/event rings) with HID boot keyboard/mouse and report-protocol tablet. This lets native MintDE run on USB-only machines (OptiPlex 7040) and with VirtualBox's default USB tablet. Test in QEMU with `-device qemu-xhci -device usb-kbd -device usb-tablet`.
+- **Phase 3 — MintDE macOS-style rework:** multi-window z-order, traffic-light chrome, translucent menu bar with clock and status icons, dock indicators, Spotlight-style launcher, original wallpaper.

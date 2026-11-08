@@ -49,6 +49,10 @@ int main(void) {
     MINT_DISPLAY_SURFACE surface;
     memset(pixels, 0, sizeof(pixels));
     CHECK(mint_display_surface_init(&surface, &fb), "surface accepts valid GOP descriptor with padded stride");
+    /* 26.5.009.0: frames fail closed until the kernel attaches per-mode buffers. */
+    CHECK(!mint_display_frame_begin(), "software frame refuses to begin without attached backbuffers");
+    static uint32_t back[6u * 4u], backdrop[6u * 4u];
+    CHECK(mint_display_attach_backbuffers(back, backdrop, 6u * 4u), "kernel-style backbuffers attach for the mode");
     CHECK(mint_display_frame_begin(), "software frame begins using bounded backbuffer");
     CHECK(mint_display_current_fill_rect(0, 0, 1, 1, 0x00ABCDEFu), "frame draw targets the backbuffer");
     CHECK(pixels[0] == 0, "scanout is unchanged before frame commit");

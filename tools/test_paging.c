@@ -6,25 +6,33 @@
 #include "../kernel/include/paging.h"
 
 /* Unused kernel-init path dependencies for the host-side table builder test. */
-char kernel_start_test[1] __asm__("__kernel_start");
-char kernel_end_test[1] __asm__("__kernel_end");
-char kernel_text_start_test[1] __asm__("__kernel_text_start");
-char kernel_text_end_test[1] __asm__("__kernel_text_end");
-char kernel_rodata_start_test[1] __asm__("__kernel_rodata_start");
-char kernel_rodata_end_test[1] __asm__("__kernel_rodata_end");
-char guard_rsp0_before_test[1] __asm__("__guard_rsp0_before");
-char guard_rsp0_after_test[1] __asm__("__guard_rsp0_after");
-char guard_df_before_test[1] __asm__("__guard_df_before");
-char guard_df_after_test[1] __asm__("__guard_df_after");
-char guard_nmi_before_test[1] __asm__("__guard_nmi_before");
-char guard_nmi_after_test[1] __asm__("__guard_nmi_after");
-char guard_mc_before_test[1] __asm__("__guard_mc_before");
-char guard_mc_after_test[1] __asm__("__guard_mc_after");
+/* Linker-script symbol names; Mach-O C symbols carry a leading underscore. */
+#ifdef __APPLE__
+#define LDSYM(name) "_" name
+#else
+#define LDSYM(name) name
+#endif
+char kernel_start_test[1] __asm__(LDSYM("__kernel_start"));
+char kernel_end_test[1] __asm__(LDSYM("__kernel_end"));
+char kernel_text_start_test[1] __asm__(LDSYM("__kernel_text_start"));
+char kernel_text_end_test[1] __asm__(LDSYM("__kernel_text_end"));
+char kernel_rodata_start_test[1] __asm__(LDSYM("__kernel_rodata_start"));
+char kernel_rodata_end_test[1] __asm__(LDSYM("__kernel_rodata_end"));
+char guard_rsp0_before_test[1] __asm__(LDSYM("__guard_rsp0_before"));
+char guard_rsp0_after_test[1] __asm__(LDSYM("__guard_rsp0_after"));
+char guard_df_before_test[1] __asm__(LDSYM("__guard_df_before"));
+char guard_df_after_test[1] __asm__(LDSYM("__guard_df_after"));
+char guard_nmi_before_test[1] __asm__(LDSYM("__guard_nmi_before"));
+char guard_nmi_after_test[1] __asm__(LDSYM("__guard_nmi_after"));
+char guard_mc_before_test[1] __asm__(LDSYM("__guard_mc_before"));
+char guard_mc_after_test[1] __asm__(LDSYM("__guard_mc_after"));
 int mint_arch_nx_supported(void) { return 1; }
 int mint_arch_prepare_4level_paging(void) { return 1; }
 void mint_arch_enable_nxe(void) {}
 void mint_arch_enable_write_protect(void) {}
 void mint_arch_load_cr3(uint64_t root) { (void)root; }
+int mint_arch_pat_supported(void) { return 1; }
+int mint_arch_enable_pat_write_combining(void) { return 1; }
 void mint_serial_write(const char *s) { (void)s; }
 void mint_serial_hex64(uint64_t n) { (void)n; }
 
@@ -155,6 +163,20 @@ int main(void) {
         assert(mint_paging_unmap_page_in_tables(t, table_phys, va, &old_phys, &flags, &pt_used, 1));
     }
     assert(pt_used == 0 && t->dynamic_pt_alloc_bitmap == 0);
+
+    /* 26.5.009.0: splitting a write-combining large leaf (PAT bit 12, PCD=PWT=0)
+       must carry PAT into bit 7 of every 4 KiB PTE; dropping it would turn the
+       framebuffer into write-back memory. */
+    const uint64_t pde_pat = 1ULL << 12, pte_pat = 1ULL << 7;
+    const uint64_t wc_va = 0x40000000ULL; /* 1 GiB: a plain 2 MiB leaf */
+    t->pd[1][0] = (t->pd[1][0] & ~(PCD | PWT)) | pde_pat;
+    assert(mint_paging_unmap_page_in_tables(t, table_phys, wc_va, &old_phys, &flags, &pt_used, 1));
+    assert(!(t->pd[1][0] & PS));
+    uint64_t *wc_pt = (uint64_t *)((uint8_t *)t + ((t->pd[1][0] & 0x000FFFFFFFFFF000ULL) - table_phys));
+    for (uint32_t i = 1; i < 512u; ++i)
+        assert((wc_pt[i] & pte_pat) && !(wc_pt[i] & (PCD | PWT)) &&
+               (wc_pt[i] & 0x000FFFFFFFFFF000ULL) == wc_va + (uint64_t)i * 4096u);
+    puts("PASS: splitting a PAT write-combining 2 MiB leaf keeps PAT on every 4 KiB PTE");
     free(t);
     puts("PASS: paging protections/cache flags; low+high alias coherence; dynamic PT reclamation/slot reuse; pool exhaustion/recovery; invalid and duplicate mapping rejection");
     return 0;

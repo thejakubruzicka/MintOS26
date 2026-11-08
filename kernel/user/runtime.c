@@ -203,3 +203,10 @@ int64_t mint_e1000_get_status(MINT_E1000_INFO *out) {
 int64_t mint_e1000_run_loopback_test(void) {
     return mint_syscall3(MINT_SYS_E1000_LOOPBACK_TEST, 0, 0, 0);
 }
+
+int64_t mint_power_get_status(MINT_POWER_INFO *out) {
+    return mint_syscall3(MINT_SYS_POWER_INFO, (uint64_t)(uintptr_t)out, 0, 0);
+}
+int64_t mint_power_request(uint32_t action) {
+    return mint_syscall3(MINT_SYS_POWER_CONTROL, action, MINT_POWER_CONFIRM_TOKEN, 0);
+}

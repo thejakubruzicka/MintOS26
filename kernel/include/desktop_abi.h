@@ -138,6 +138,15 @@ typedef struct mint_fs_dirent {
 
 int mint_display_surface_init(MINT_DISPLAY_SURFACE *surface,
                               const MINT_FRAMEBUFFER_INFO *framebuffer);
+/* Largest scanout (stride x height) the native kernel will drive: 4096x2400
+ * covers 3840x2160 and 2560x1600 GOP modes including stride padding. */
+#define MINT_DISPLAY_MAX_PIXELS (4096ull * 2400ull)
+/* Pixels each attached buffer must hold for the current surface (0 if none). */
+uint64_t mint_display_backbuffer_pixels_required(void);
+/* Attach kernel-owned retained-frame and glass-backdrop buffers. Each must
+ * hold capacity_pixels >= stride*height uint32_t values and must not overlap. */
+int mint_display_attach_backbuffers(uint32_t *backbuffer, uint32_t *background,
+                                    uint64_t capacity_pixels);
 void mint_display_put_pixel(MINT_DISPLAY_SURFACE *surface, int32_t x, int32_t y, uint32_t rgb);
 void mint_display_fill_rect(MINT_DISPLAY_SURFACE *surface, int32_t x, int32_t y,
                             int32_t width, int32_t height, uint32_t rgb);

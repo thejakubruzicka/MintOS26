@@ -1,10 +1,20 @@
-# MintOS26 26.5.008.0 — MintDE 1.0.7
+# MintOS26 26.5.009.0 — MintDE 1.0.8
 
-**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 1.0.7**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
+**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 1.0.8**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
 
 The startup selector defaults to UEFI Desktop (Enter/1 or a three-second timeout). Press 2/M to request the experimental MintDE native handoff. MintDE calls `ExitBootServices`; this handoff is one-way until reset, so keep EFI enabled and retain UEFI Desktop as the recovery path.
 
-## Release highlights
+## 26.5.009.0 highlights — real hardware and VMs
+
+- **Any display mode up to 4K.** The native kernel no longer halts when the firmware's GOP mode is above 1920x1080 or has a padded stride. Display buffers are sized from the actual mode, and the framebuffer is mapped write-combining through the PAT, which should make presenting to a real GPU much faster (not yet measured on hardware).
+- **Pointer fix.** PS/2 mouse deltas are decoded as 9-bit signed values, so fast movements no longer reverse direction. A fixed-point acceleration curve gives precise slow movement.
+- **Shut Down and Restart.** The MintDE menu has Restart… and Shut Down… with a macOS-style confirmation alert, using ACPI S5 and FADT/0xCF9/8042 reset. Terminal adds `power`, `shutdown` and `restart`.
+- **Dell "RAID On" SATA.** Intel RAID-mode controllers are read through their AHCI interface after register validation.
+- **QEMU on Linux and macOS:** `make run` (or `tools/run_qemu.sh`). See `docs/REAL-HARDWARE.md` for the Dell OptiPlex 7040 guide.
+
+Validated live on QEMU 11.1 q35/OVMF: native boot, ACPI power-off, restart and fast pointer motion. Not yet validated in VirtualBox or on physical hardware.
+
+## Earlier release highlights
 
 - MintDE begins on a clean workspace; Launchpad remains in the dock. The About MintOS26 and About MintDE screens are separate, and each has a changelog button hidden until requested.
 - Rounded alpha-blended surfaces with backdrop sampling/specular edges, per-app PNG icon assets, functional mouse-driven Settings dropdowns and menu dropdowns, a software arrow cursor without the duplicate kernel overlay, and an initial resize-grip implementation.
@@ -22,7 +32,7 @@ This release still has **read-only filesystem access and no general persistent f
 
 ## Build and host checks
 
-Requirements: clang, `lld-link`, `ld.lld`, GNU make, Python 3, and Pillow for concept previews.
+Requirements: clang, `lld-link`, `ld.lld`, GNU make, Python 3, and Pillow for concept previews. On macOS: `brew install lld qemu binutils`; Apple clang builds the OS unchanged.
 
 ```sh
 make clean all
@@ -32,11 +42,14 @@ make preview
 
 The build produces the EFI application, native kernel ELF, ring-3 programs, ESP, GPT UEFI disk, raw developer image, populated dynamic/fixed VDIs, blank dynamic VDI and UEFI ISO. Host tests include source checks, production parser/formatter tests, a two-volume/generic-FAT16 test, pixel-level alpha blending and artifact validation.
 
-Host tests do not emulate live AHCI/E1000 DMA or prove MintDE runtime behavior. VirtualBox/VBoxManage and QEMU/OVMF are unavailable in the build environment, so the next guest test is still required.
+Host tests do not emulate live AHCI/E1000 DMA or prove MintDE runtime behavior. On Apple Silicon, run them with `PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check`. One test (`test_context_switch.py`) links ELF-format kernel assembly into a host binary and only runs on a Linux host.
+
+`make run` boots the GPT image in QEMU/OVMF (q35, AHCI, e1000, COM1 to `build/com1-qemu.log`; disks are `snapshot=on`).
 
 ## Next development work
 
-1. Validate MintDE 1.0.7 on the VM at multiple display sizes, especially cursor stability, menu dismissal, resize behavior and both formatted and blank disks attached simultaneously.
+0. **USB input (xHCI + HID) for native MintDE.** Machines with only USB keyboards and mice (including the Dell OptiPlex 7040, whose Skylake PCH has xHCI only) and VirtualBox's default USB tablet have no native input yet. This is the next milestone.
+1. Validate MintDE 1.0.8 on the VM at multiple display sizes, especially cursor stability, menu dismissal, resize behavior and both formatted and blank disks attached simultaneously.
 2. Design bounded general file writes and persistence separately: allocation, directory updates, flush ordering, rollback and reboot verification must be addressed before enabling them.
 3. Improve terminal input/console I/O, process blocking/wakeup and resource cleanup.
 4. Expand VM hardware support incrementally, beginning with ACPI/PCI enumeration and carefully bounded VirtualBox drivers. A detected PCI function is not a driver.

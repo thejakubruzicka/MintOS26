@@ -145,7 +145,7 @@ def main() -> int:
         ("kernel exposes validated storage diagnostics and log syscalls", "MINT_SYS_STORAGE_DIAGNOSTICS" in abi and "MINT_SYS_LOG_READ" in abi),
         ("MintDE Storage & Logs UI includes export and raw IDENTIFY fields", "Storage & Logs" in desktop_src and "export_storage_report" in desktop_src and "reported_lba48_sectors" in desktop_src),
         ("log ring is bounded and supports severity filtering", "MINT_LOG_RING_CAPACITY" in log_src and "minimum_severity" in log_src),
-        ("release source labels this build 26.5.008.0", "VERSION := 26.5.008.0" in (root / "Makefile").read_text()),
+        ("release source labels this build 26.5.009.0", "VERSION := 26.5.009.0" in (root / "Makefile").read_text()),
         ("blank-disk initialization is bounded and writes MBR last after repeated zero-sector validation", "mint_fat16_format_blank" in (root / "kernel/fs/fat16.c").read_text() and "sector_equal_local(mbr,verify_mbr)" in (root / "kernel/fs/fat16.c").read_text() and "MINT_STORAGE_DEVELOPER_DISK_ID" in (root / "kernel/fs/fat16.c").read_text()),
         ("native UI exports LBA0 signature, repeat status, CRC32 and disk marker", "lba0_repeat_status" in desktop_src and "developer_disk_id_match" in desktop_src and "CRC32=" in desktop_src),
         ("MintDE includes driver inventory and explicit network status apps", all(k in desktop_src for k in ["Hardware & Drivers", "Network", "MintDE", "APP_DRIVERS", "APP_NETWORK"])),

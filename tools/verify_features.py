@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-contract checks for MintOS26 26.5.008.0 input/display/audio paths."""
+"""Source-contract checks for MintOS26 26.5.009.0 input/display/audio paths."""
 from pathlib import Path
 s = Path(__file__).resolve().parents[1].joinpath("uefi/main.c").read_text()
 checks = {

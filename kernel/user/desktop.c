@@ -16,7 +16,7 @@ extern const uint8_t mint_icon_mintde_rgba[];
 extern const uint8_t mint_icon_windows_rgba[];
 extern const uint8_t mint_icon_notes_rgba[];
 
-/* MintDE 1.0.7 — native ring-3 desktop for MintOS26 26.5.008.0.
+/* MintDE 1.0.8 — native ring-3 desktop for MintOS26 26.5.009.0.
  * A mouse-driven shell with a menu bar, desktop dock, versioned About panels,
  * bounded native services, and no desktop shortcut clutter. */
 static uint32_t C_WALL = 0x233D67u;
@@ -124,6 +124,14 @@ static uint8_t terminal_output_kind[10]; /* 1 = entered command, 0 = command out
 static uint32_t terminal_output_count;
 static uint32_t terminal_volume_ordinal;
 static char terminal_current_path[96];
+/* Shut Down / Restart confirmation (macOS-style alert). 0 = none,
+ * MINT_POWER_ACTION_SHUTDOWN / _RESTART = asking, 3 = power-off failed. */
+static uint32_t power_confirm;
+static int32_t power_dialog_x, power_dialog_y, power_dialog_w, power_dialog_h;
+static int32_t power_ok_x, power_cancel_x, power_button_y;
+#define POWER_DIALOG_FAILED 3u
+#define POWER_BUTTON_W 132
+#define POWER_BUTTON_H 34
 
 static size_t text_length(const char *s) {
     size_t n = 0; if (s) while (s[n] && n < 128u) ++n; return n;
@@ -524,9 +532,38 @@ static void terminal_run_command(void) {
         terminal_push("Commands: help, clear, ver, uptime, status, cpu");
         terminal_push("pci, resources, drivers, mounts, io, logs, net");
         terminal_push("drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat");
-        terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>"); return;
+        terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
+        terminal_push("power, shutdown, restart (asks for confirmation)"); return;
     }
-    if(terminal_equals(cmd,"ver")) { terminal_push("MintOS26 26.5.008.0 / MintDE 1.0.7"); return; }
+    if(terminal_equals(cmd,"shutdown") || terminal_equals(cmd,"poweroff")) {
+        power_confirm=MINT_POWER_ACTION_SHUTDOWN; terminal_push("Confirm shutdown in the dialog (Enter) or press Esc"); return;
+    }
+    if(terminal_equals(cmd,"restart") || terminal_equals(cmd,"reboot")) {
+        power_confirm=MINT_POWER_ACTION_RESTART; terminal_push("Confirm restart in the dialog (Enter) or press Esc"); return;
+    }
+    if(terminal_equals(cmd,"power")) {
+        MINT_POWER_INFO pi;
+        if(mint_power_get_status(&pi)<0){terminal_push("ACPI power service unavailable");return;}
+        char row[96]="",num[24],hex[24];
+        terminal_append(row,sizeof(row),"ACPI rev ");format_u64(num,sizeof(num),pi.acpi_revision);terminal_append(row,sizeof(row),num);
+        terminal_append(row,sizeof(row)," OEM ");terminal_append(row,sizeof(row),pi.oem_id[0]?pi.oem_id:"?");
+        terminal_append(row,sizeof(row)," tables ");format_u64(num,sizeof(num),pi.table_count);terminal_append(row,sizeof(row),num);
+        terminal_append(row,sizeof(row),(pi.flags&MINT_POWER_HYPERVISOR)?" (virtual machine)":" (hardware)");terminal_push(row);
+        row[0]='\0';terminal_append(row,sizeof(row),"Shutdown: ");
+        if(pi.flags&MINT_POWER_HAVE_S5){terminal_append(row,sizeof(row),"ACPI S5 SLP_TYP ");format_u64(num,sizeof(num),pi.slp_typa);terminal_append(row,sizeof(row),num);
+            terminal_append(row,sizeof(row),"/");format_u64(num,sizeof(num),pi.slp_typb);terminal_append(row,sizeof(row),num);
+            terminal_append(row,sizeof(row)," PM1a_CNT ");format_hex64(hex,sizeof(hex),pi.pm1a_cnt);terminal_append(row,sizeof(row),hex);}
+        else terminal_append(row,sizeof(row),"no \\_S5_ object; power button required");
+        terminal_push(row);
+        row[0]='\0';terminal_append(row,sizeof(row),"Restart: ");
+        if(pi.flags&MINT_POWER_HAVE_RESET_REG){terminal_append(row,sizeof(row),"ACPI reset reg ");format_hex64(hex,sizeof(hex),pi.reset_address);terminal_append(row,sizeof(row),hex);
+            terminal_append(row,sizeof(row),", then 0xCF9/8042");}
+        else terminal_append(row,sizeof(row),"0xCF9, then 8042 pulse, then triple fault");
+        terminal_push(row);
+        terminal_push((pi.flags&MINT_POWER_HAVE_8042)?"FADT reports an 8042 (PS/2) controller":"FADT does not report an 8042; USB input may need firmware emulation");
+        return;
+    }
+    if(terminal_equals(cmd,"ver")) { terminal_push("MintOS26 26.5.009.0 / MintDE 1.0.8"); return; }
     if(terminal_equals(cmd,"net start")) {
         int64_t rc = mint_e1000_start();
         (void)mint_e1000_get_status(&terminal_e1000_info);
@@ -1018,12 +1055,12 @@ static void paint_menu_bar(void) {
     (void)draw_text(input_info.mouse_ready?"Pointer":"Pointer?",w-105,13,input_info.mouse_ready?C_ACCENT:C_ORANGE,1);
 }
 static uint32_t menu_item_count(int32_t menu) {
-    static const uint8_t counts[7]={5,9,4,3,4,3,4};
+    static const uint8_t counts[7]={7,9,4,3,4,3,4};
     return menu>=0 && menu<7 ? counts[menu] : 0u;
 }
 static const char *menu_item_label(int32_t menu,uint32_t item) {
     static const char *const items[7][9]={
-        {"About MintDE","About MintOS","Settings","System Monitor","Hardware & Drivers"},
+        {"About MintDE","About MintOS","Settings","System Monitor","Hardware & Drivers","Restart...","Shut Down..."},
         {"Applications","Files","Notes","Settings","System Monitor","Disk Utility","Storage & Logs","Hardware & Drivers","Network"},
         {"Open Files","Open Notes","Disk Utility","Close Window"},
         {"Open Notes","Open Settings","Save Notes"},
@@ -1034,7 +1071,7 @@ static const char *menu_item_label(int32_t menu,uint32_t item) {
     uint32_t n=menu_item_count(menu); return item<n?items[menu][item]:"";
 }
 static int32_t menu_item_action(int32_t menu,uint32_t item) {
-    if(menu==0){ static const int32_t a[5]={APP_ABOUT_MINTDE,APP_ABOUT_OS,APP_SETTINGS,APP_MONITOR,APP_DRIVERS}; return item<5u?a[item]:-1; }
+    if(menu==0){ static const int32_t a[7]={APP_ABOUT_MINTDE,APP_ABOUT_OS,APP_SETTINGS,APP_MONITOR,APP_DRIVERS,210,211}; return item<7u?a[item]:-1; }
     if(menu==1){ static const int32_t a[9]={201,APP_FILES,APP_NOTES,APP_SETTINGS,APP_MONITOR,APP_DISKS,APP_STORAGE,APP_DRIVERS,APP_NETWORK}; return item<9u?a[item]:-1; }
     if(menu==2){ static const int32_t a[4]={APP_FILES,APP_NOTES,APP_DISKS,202}; return item<4u?a[item]:-1; }
     if(menu==3){ static const int32_t a[3]={APP_NOTES,APP_SETTINGS,203}; return item<3u?a[item]:-1; }
@@ -1136,6 +1173,8 @@ static void menu_execute(int32_t action) {
         case 207: refresh_storage_data(); refresh_driver_catalog(); (void)mint_input_get_info(&input_info); break;
         case 208: window_minimized=1; open_settings_dropdown=0u; break;
         case 209: window_maximized=!window_maximized; window_minimized=0; open_settings_dropdown=0u; break;
+        case 210: power_confirm=MINT_POWER_ACTION_RESTART; break;
+        case 211: power_confirm=MINT_POWER_ACTION_SHUTDOWN; break;
         default: break;
     }
     paint_shell();
@@ -1431,7 +1470,7 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
                 if(settings_category==0u) {
                     (void)draw_text("General",panel_x+22,panel_y+24,C_TEXT,2);
                     (void)draw_text("About MintOS26",panel_x+22,panel_y+70,C_TEXT,1);
-                    (void)draw_text("26.5.008.0  |  x86-64 kernel",panel_x+220,panel_y+70,C_MUTED,1);
+                    (void)draw_text("26.5.009.0  |  x86-64 kernel",panel_x+220,panel_y+70,C_MUTED,1);
                     (void)draw_text("MintDE version",panel_x+22,panel_y+108,C_TEXT,1);
                     (void)draw_text("1.0.2  |  native ring-3 desktop",panel_x+220,panel_y+108,C_MUTED,1);
                     (void)draw_text("Startup recovery",panel_x+22,panel_y+146,C_TEXT,1);
@@ -1804,27 +1843,27 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
             int32_t ax=x+pad+22, ay=y+79, aw=w-2*pad-44;
             app_icon(APP_ABOUT_OS,ax+6,ay+10,82);
             (void)draw_text("MintOS26",ax+108,ay+8,C_TEXT,3);
-            (void)draw_text("Version 26.5.008.0  \xE2\x80\xA2  x86-64",ax+110,ay+55,C_ACCENT,1);
+            (void)draw_text("Version 26.5.009.0  \xE2\x80\xA2  x86-64",ax+110,ay+55,C_ACCENT,1);
             (void)draw_text("The operating system, kernel and hardware services.",ax+110,ay+82,C_MUTED,1);
             round_box(ax+aw-164,ay+18,150,30,9,C_MENU_DARK);
             (void)draw_text(show_changelog==0u?"Changelog  >":show_changelog==1u?"About details":"Version list",
                             ax+aw-154,ay+27,C_ACCENT,1);
             int32_t row_y=ay+119, row_h=(h<620)?45:52, gap=8;
             if(show_changelog==1u) {
-                const char *versions[8]={"26.5.008.0  - VirtualBox E1000 RX loopback and descriptor diagnostics","26.5.007.0  - E1000 TX timeout isolation","26.5.006.0  - E1000 loopback diagnostics and terminal prompt","26.5.005.0  - E1000 driver foundation","26.5.004.0  - Driver foundation release","26.5.003.0  - PNG assets and VFS telemetry","26.5.002.0  - Multi-volume storage","26.5.001.0  - MintDE 1.0 milestone"};
+                const char *versions[8]={"26.5.009.0  - Real-hardware display, mouse, ACPI power and RAID-mode SATA","26.5.008.0  - VirtualBox E1000 RX loopback and descriptor diagnostics","26.5.007.0  - E1000 TX timeout isolation","26.5.006.0  - E1000 loopback diagnostics and terminal prompt","26.5.005.0  - E1000 driver foundation","26.5.004.0  - Driver foundation release","26.5.003.0  - PNG assets and VFS telemetry","26.5.002.0  - Multi-volume storage"};
                 int32_t list_h=(h<620)?36:40, list_gap=6;
                 for(uint32_t ci=0;ci<8u;ci++){ round_box(ax,row_y,aw,list_h,9,C_WINDOW); (void)draw_text(versions[ci],ax+14,row_y+11,C_TEXT,1); (void)draw_text(">",ax+aw-26,row_y+11,C_ACCENT,1); row_y+=list_h+list_gap; }
             } else if(show_changelog==2u) {
-                static const char *const headings[8]={"26.5.008.0 - current","26.5.007.0","26.5.006.0","26.5.005.0","26.5.004.0","26.5.003.0","26.5.002.0","26.5.001.0"};
+                static const char *const headings[8]={"26.5.009.0 - current","26.5.008.0","26.5.007.0","26.5.006.0","26.5.005.0","26.5.004.0","26.5.003.0","26.5.002.0"};
                 static const char *const notes[8][4]={
+                    {"GOP modes up to 4K and padded strides boot; framebuffer write-combined via PAT","PS/2 mouse 9-bit deltas fixed; precise pointer acceleration","ACPI S5 shut down and ACPI/0xCF9/8042 restart","Intel RAID-mode (Dell RAID On) SATA read through its AHCI interface"},
                     {"Use RCTL.LBM_TCVR for VirtualBox's emulated internal loopback path","Snapshot the last transmitted descriptor rather than the next ring slot","Include RX descriptor index, length, errors and buffer address","E1000 remains opt-in; no TCP/IP or external packet transmission"},
                     {"Cleared CTRL.LRST during reset and loopback setup","Added TX descriptor command/length/DMA buffer diagnostics","Added TX/RX ring base and length plus PCI command capture","E1000 remains opt-in; no TCP/IP or external packet transmission"},
                     {"E1000 internal PHY/MAC loopback now reports the exact failing phase","Bounded PHY MDIC access and saved register snapshots added","Terminal history distinguishes root#mintos commands from output","DMA remains opt-in; no TCP/IP or external packet transmission"},
                     {"Fixed terminal volume selection stack overflow","Ring-3 faults now terminate the offending process","Read-only PCI BAR, IRQ and resource inventory","Driver catalog expanded; AHCI remains read-only"},
                     {"Separate PNG app icons and bounded RGBA draw syscall","VFS mount table and per-device block I/O telemetry","PCI / AHCI diagnostics improved","Generic media writes remain gated"},
                     {"Multi-volume FAT16 read-only mount registry","MintDE menus, About pages and terminal diagnostics","Verified disk images and blank-disk formatting","General persistent file writes still disabled"},
-                    {"Separate About MintOS and About MintDE","Safe UEFI Desktop / MintDE boot selector","Read-only Files navigation and driver inventory","Cooperative ring-3 scheduler and syscall smoke tests"},
-                    {"Disk Utility and explicit blank-media confirmation","Read-only FAT16 validation and volume navigation","Storage & Logs and bounded kernel log ring","UEFI Desktop retained as normal boot path"}
+                    {"Separate About MintOS and About MintDE","Safe UEFI Desktop / MintDE boot selector","Read-only Files navigation and driver inventory","Cooperative ring-3 scheduler and syscall smoke tests"}
                 };
                 uint32_t ver=changelog_version<8u?changelog_version:0u;
                 round_box(ax,row_y,aw,36,9,C_MENU_DARK); (void)draw_text(headings[ver],ax+14,row_y+10,C_ACCENT,1); row_y+=44;
@@ -1841,7 +1880,7 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
                     round_box(ax,row_y,aw,row_h,10,C_WINDOW);
                     (void)fill(ax,row_y,3,row_h,(i==3u&&!storage_snapshot.readonly_mount_active)?C_ORANGE:C_ACCENT);
                     (void)draw_text(labels[i],ax+14,row_y+6,C_MUTED,1);
-                    (void)draw_text(values[i],ax+156,row_y+6,C_TEXT,1);
+                    (void)draw_text(values[i],ax+196,row_y+6,C_TEXT,1);
                     row_y+=row_h+gap;
                 }
                 (void)draw_text("Recovery: restart the VM and choose UEFI Desktop in the boot selector.",ax,y+h-34,C_MUTED,1);
@@ -1850,27 +1889,27 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
             int32_t ax=x+pad+22, ay=y+79, aw=w-2*pad-44;
             app_icon(APP_ABOUT_MINTDE,ax+6,ay+10,82);
             (void)draw_text("MintDE",ax+108,ay+8,C_TEXT,3);
-            (void)draw_text("Version 1.0.7  \xE2\x80\xA2  Native desktop environment",ax+110,ay+55,C_ACCENT,1);
+            (void)draw_text("Version 1.0.8  \xE2\x80\xA2  Native desktop environment",ax+110,ay+55,C_ACCENT,1);
             (void)draw_text("The desktop shell is versioned separately from MintOS.",ax+110,ay+82,C_MUTED,1);
             round_box(ax+aw-164,ay+18,150,30,9,C_MENU_DARK);
             (void)draw_text(show_changelog==0u?"Changelog  >":show_changelog==1u?"About details":"Version list",
                             ax+aw-154,ay+27,C_ACCENT,1);
             int32_t row_y=ay+119, row_h=(h<620)?45:52, gap=8;
             if(show_changelog==1u) {
-                const char *versions[8]={"MintDE 1.0.7  - VirtualBox loopback and RX diagnostics","MintDE 1.0.6  - E1000 loopback failure diagnostics","MintDE 1.0.5  - E1000 loopback diagnostics and terminal prompt","MintDE 1.0.4  - E1000 driver UI","MintDE 1.0.3  - Dock, menus and window polish","MintDE 1.0.2  - PNG icons and glass","MintDE 1.0.1  - Workspace polish","MintDE 1.0.0  - Native desktop milestone"};
+                const char *versions[8]={"MintDE 1.0.8  - Shut Down / Restart and precise pointer","MintDE 1.0.7  - VirtualBox loopback and RX diagnostics","MintDE 1.0.6  - E1000 loopback failure diagnostics","MintDE 1.0.5  - E1000 loopback diagnostics and terminal prompt","MintDE 1.0.4  - E1000 driver UI","MintDE 1.0.3  - Dock, menus and window polish","MintDE 1.0.2  - PNG icons and glass","MintDE 1.0.1  - Workspace polish"};
                 int32_t list_h=(h<620)?36:40, list_gap=6;
                 for(uint32_t ci=0;ci<8u;ci++){ round_box(ax,row_y,aw,list_h,9,C_WINDOW); (void)draw_text(versions[ci],ax+14,row_y+11,C_TEXT,1); (void)draw_text(">",ax+aw-26,row_y+11,C_ACCENT,1); row_y+=list_h+list_gap; }
             } else if(show_changelog==2u) {
-                static const char *const headings[8]={"MintDE 1.0.7 - current","MintDE 1.0.6","MintDE 1.0.5","MintDE 1.0.4","MintDE 1.0.3","MintDE 1.0.2","MintDE 1.0.1","MintDE 1.0.0"};
+                static const char *const headings[8]={"MintDE 1.0.8 - current","MintDE 1.0.7","MintDE 1.0.6","MintDE 1.0.5","MintDE 1.0.4","MintDE 1.0.3","MintDE 1.0.2","MintDE 1.0.1"};
                 static const char *const notes[8][4]={
+                    {"MintDE menu adds Restart... and Shut Down... with a confirmation alert","Terminal adds power, shutdown and restart commands","Pointer keeps its direction on fast moves; slow moves are more precise","Desktop follows the firmware resolution up to 4K"},
                     {"Uses the VirtualBox emulated loopback buffer path for RX self-test","Reports the actual TX descriptor and full RX descriptor state","Terminal and COM1 keep the prompt and failure details distinct","External packet transmission and TCP/IP remain disabled"},
                     {"Cleared the link-reset bit before submitting the diagnostic frame","Terminal shows TX command, descriptor length and DMA ring metadata","Loopback failure state is preserved before normal mode restoration","External packet transmission remains disabled"},
                     {"E1000 loopback stages and register state shown after failure","Terminal input history uses root#mintos > prompt","Bounded PHY MDIC access and loopback restoration added","External packet transmission remains disabled"},
                     {"Terminal disk selection no longer uses a huge stack snapshot","PCI BAR/IRQ resources are visible for driver bring-up","Ring-3 exceptions are contained to the affected process","New diagnostics commands: resources, io, mounts and drivers"},
                     {"PNG app icons rendered through a bounded bitmap syscall","Settings drop-downs and fixed content bounds","Corrected cursor damage and dock redraw ordering","Alpha blended panels and window resizing retained"},
                     {"Launchpad is accessible from the dock","Separate About panels and hidden changelog entry","FAT16 per-volume selection in Files","Resizable window and bounded terminal commands"},
-                    {"Initial MintDE shell with a draggable window and menu bar","Separate About MintOS and About MintDE identity","UEFI Desktop remains the recovery path","Persistent disk writes remain disabled"},
-                    {"Initial native ring-3 desktop shell","Menu bar, dock and basic desktop window","Separate MintDE version from MintOS","Experimental one-way kernel handoff"}
+                    {"Initial MintDE shell with a draggable window and menu bar","Separate About MintOS and About MintDE identity","UEFI Desktop remains the recovery path","Persistent disk writes remain disabled"}
                 };
                 uint32_t ver=changelog_version<8u?changelog_version:0u;
                 round_box(ax,row_y,aw,36,9,C_MENU_DARK); (void)draw_text(headings[ver],ax+14,row_y+10,C_ACCENT,1); row_y+=44;
@@ -1887,7 +1926,7 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
                     round_box(ax,row_y,aw,row_h,10,C_WINDOW);
                     (void)fill(ax,row_y,3,row_h,i==3u?C_ORANGE:C_BLUE);
                     (void)draw_text(labels[i],ax+14,row_y+6,C_MUTED,1);
-                    (void)draw_text(values[i],ax+156,row_y+6,C_TEXT,1);
+                    (void)draw_text(values[i],ax+196,row_y+6,C_TEXT,1);
                     row_y+=row_h+gap;
                 }
                 (void)draw_text("MintDE is a native ring-3 process; it is not the UEFI Desktop.",ax,y+h-34,C_MUTED,1);
@@ -1901,6 +1940,75 @@ static void paint_home_window(int32_t x, int32_t y, int32_t w, int32_t h) {
         (void)fill(gx+5,gy+14,9,1,C_MUTED); (void)fill(gx+9,gy+10,5,1,C_MUTED);
         (void)fill(gx+13,gy+6,1,1,C_MUTED);
     }
+}
+
+static void paint_power_dialog(void) {
+    if (!power_confirm) return;
+    int32_t w=(int32_t)display.width, h=(int32_t)display.height;
+    power_dialog_w=w<600?w-24:560; power_dialog_h=176;
+    power_dialog_x=(w-power_dialog_w)/2; power_dialog_y=(h-power_dialog_h)/2-60;
+    if(power_dialog_y<60) power_dialog_y=60;
+    int32_t x=power_dialog_x, y=power_dialog_y, dw=power_dialog_w, dh=power_dialog_h;
+    const char *title, *detail, *ok;
+    if (power_confirm==MINT_POWER_ACTION_RESTART) {
+        title="Are you sure you want to restart your computer now?";
+        detail="Session (RAM) notes, files and settings are not saved to disk."; ok="Restart";
+    } else if (power_confirm==MINT_POWER_ACTION_SHUTDOWN) {
+        title="Are you sure you want to shut down your computer now?";
+        detail="Session (RAM) notes, files and settings are not saved to disk."; ok="Shut Down";
+    } else {
+        title="MintOS could not switch this computer off.";
+        detail="ACPI soft-off was unavailable or ignored. Hold the power button."; ok="OK";
+    }
+    glass_box(x+2,y+10,dw,dh,16,0x0B1620u,70u);
+    glass_box(x,y,dw,dh,16,C_WINDOW,242u);
+    round_box(x+26,y+26,52,52,14,C_ACCENT);
+    round_box(x+39,y+39,26,26,13,C_WINDOW);
+    round_box(x+45,y+45,14,14,7,C_ACCENT);
+    (void)draw_text(title,x+98,y+32,C_TEXT,1);
+    (void)draw_text(detail,x+98,y+58,C_MUTED,1);
+    power_button_y=y+dh-POWER_BUTTON_H-22;
+    power_ok_x=x+dw-POWER_BUTTON_W-22;
+    power_cancel_x=power_confirm==POWER_DIALOG_FAILED?-1000:power_ok_x-POWER_BUTTON_W-12;
+    if (power_cancel_x>0) {
+        round_box(power_cancel_x,power_button_y,POWER_BUTTON_W,POWER_BUTTON_H,9,C_MENU_DARK);
+        (void)draw_text("Cancel",power_cancel_x+42,power_button_y+10,C_TEXT,1);
+    }
+    round_box(power_ok_x,power_button_y,POWER_BUTTON_W,POWER_BUTTON_H,9,C_BLUE);
+    int32_t ok_w=(int32_t)text_length(ok)*8;
+    (void)draw_text(ok,power_ok_x+(POWER_BUTTON_W-ok_w)/2,power_button_y+10,0xFFFFFFu,1);
+}
+static void run_power_action(void) {
+    uint32_t action=power_confirm;
+    if (action!=MINT_POWER_ACTION_SHUTDOWN && action!=MINT_POWER_ACTION_RESTART) {
+        power_confirm=0; paint_shell(); return;
+    }
+    (void)mint_ui_frame_begin();
+    int32_t w=(int32_t)display.width, h=(int32_t)display.height;
+    (void)fill(0,0,w,h,0x0E1318u);
+    const char *msg=action==MINT_POWER_ACTION_RESTART?"Restarting...":"Shutting down...";
+    (void)draw_text(msg,(w-(int32_t)text_length(msg)*16)/2,h/2-14,0xE7F0F6u,2);
+    (void)mint_ui_frame_end();
+    (void)mint_write(1,action==MINT_POWER_ACTION_RESTART?"[MintDE] restart confirmed\r\n":"[MintDE] shutdown confirmed\r\n",
+                     action==MINT_POWER_ACTION_RESTART?28u:29u);
+    (void)mint_power_request(action);
+    /* Only reached when the platform ignored every power-off path. */
+    power_confirm=POWER_DIALOG_FAILED;
+    paint_shell();
+}
+static int handle_power_dialog_click(int32_t x, int32_t y) {
+    if (!power_confirm) return 0;
+    if (y>=power_button_y && y<power_button_y+POWER_BUTTON_H) {
+        if (x>=power_ok_x && x<power_ok_x+POWER_BUTTON_W) {
+            if (power_confirm==POWER_DIALOG_FAILED) { power_confirm=0; paint_shell(); }
+            else run_power_action();
+            return 1;
+        }
+        if (power_cancel_x>0 && x>=power_cancel_x && x<power_cancel_x+POWER_BUTTON_W) {
+            power_confirm=0; paint_shell(); return 1;
+        }
+    }
+    return 1; /* modal: swallow clicks elsewhere */
 }
 
 static void paint_shell(void) {
@@ -1951,7 +2059,7 @@ static void paint_shell(void) {
        the source for bounded cursor and window damage restoration. */
     background_snapshot_ready=mint_ui_capture_background()==0;
     if(!window_minimized && (library_open || app_window_open)) paint_home_window(cached_win_x,cached_win_y,win_w,win_h);
-    paint_menu_dropdown(); paint_dock(); paint_cursor();
+    paint_menu_dropdown(); paint_dock(); paint_power_dialog(); paint_cursor();
     last_clock_second=-1;
     (void)mint_ui_frame_end();
 }
@@ -2184,6 +2292,14 @@ static void activate_setting(uint32_t id) {
 static void handle_key(const MINT_DESKTOP_KEY_EVENT *key) {
     if (!key || !key->pressed) return;
     uint32_t ch = key->codepoint;
+    if (power_confirm) {
+        if (ch == 27u && power_confirm != POWER_DIALOG_FAILED) { power_confirm = 0; paint_shell(); }
+        else if (ch == '\n' || ch == '\r') {
+            if (power_confirm == POWER_DIALOG_FAILED) { power_confirm = 0; paint_shell(); }
+            else run_power_action();
+        }
+        return;
+    }
     if (ch == 27u && open_settings_dropdown) { open_settings_dropdown=0u; paint_shell(); return; }
     if (ch == 27u) { library_open = 0; app_window_open = 0; window_minimized = 0; window_maximized = 0; window_focused = 0; window_resizing=0u; open_settings_dropdown=0u; paint_shell(); return; }
 
@@ -2310,7 +2426,10 @@ static void repaint_pointer_move(int32_t old_x,int32_t old_y) {
         paint_home_window(cached_win_x,cached_win_y,cached_win_w,cached_win_h);
     if(active_menu>=0 && rects_intersect(rx,ry,rw,rh,menu_left(active_menu),44,214,(int32_t)menu_item_count(active_menu)*31+8))
         paint_menu_dropdown();
-    paint_dock(); paint_cursor(); (void)mint_ui_frame_end();
+    paint_dock();
+    if(power_confirm && rects_intersect(rx,ry,rw,rh,power_dialog_x,power_dialog_y,power_dialog_w,power_dialog_h+12))
+        paint_power_dialog();
+    paint_cursor(); (void)mint_ui_frame_end();
 }
 static int handle_files_pointer_click(int32_t px,int32_t py) {
     if(!app_window_open || selected_app!=APP_FILES || window_minimized) return 0;
@@ -2386,6 +2505,7 @@ static void handle_pointer_button(const MINT_DESKTOP_POINTER_EVENT *p) {
     if (!p || !(p->changed_buttons & 1u)) return;
     int32_t x = p->x, y = p->y;
     if (!(p->buttons & 1u)) { window_dragging = 0; window_resizing=0u; return; }
+    if (handle_power_dialog_click(x,y)) return;
 
     if(active_menu>=0 && handle_menu_dropdown_click(x,y)) return;
     if (y >= 0 && y < 42) { handle_menu_bar_click(x); return; }
@@ -2589,7 +2709,7 @@ int64_t mint_user_main(void) {
     }
     apply_palette(); refresh_files();
     paint_shell();
-    static const char ready[] = "[user-desktop] MintDE 1.0.7; E1000 diagnostics, dock, split About pages, mouse menus and settings ready\n";
+    static const char ready[] = "[user-desktop] MintDE 1.0.8; ACPI power menu, E1000 diagnostics, dock, split About pages, mouse menus and settings ready\n";
     (void)mint_write(1, ready, sizeof(ready) - 1u);
     for (;;) {
         MINT_DESKTOP_EVENT events[16];

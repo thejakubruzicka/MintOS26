@@ -4,7 +4,7 @@
 Uses the repository wallpaper and smooth DejaVu system fonts for concept art.
 These are concept previews, not screenshots from a live VM or pixel-exact
 output of the freestanding userspace text rasterizer. The About previews are
-version-separated concept pages for MintOS26 and MintDE 1.0.7.
+version-separated concept pages for MintOS26 and MintDE 1.0.8.
 """
 from pathlib import Path
 import sys
@@ -344,7 +344,7 @@ def about_preview(out, mintde=False):
     glass_panel(im,box,tint=(239,247,251,226),radius=29,blur=13)
     d=ImageDraw.Draw(im,'RGBA'); draw_traffic_lights(im,302,148)
     title='MintDE' if mintde else 'MintOS26'
-    version='Version 1.0.2' if mintde else 'Version 26.5.008.0'
+    version='Version 1.0.2' if mintde else 'Version 26.5.009.0'
     subtitle='Mint Desktop Environment' if mintde else 'x86-64 operating system'
     icon='settings' if mintde else 'finder'
     color=C['mint'] if mintde else C['blue']
@@ -355,7 +355,7 @@ def about_preview(out, mintde=False):
     rows = ( [('INTERFACE','Menu bar, draggable windows, software pointer and dock'),
               ('BUILT-IN APPS','Files, Notes, Settings, System Monitor and storage tools'),
               ('INPUT','Kernel event service, PS/2 keyboard and mouse'),
-              ('STATUS','MintDE 1.0.7; native boot is still experimental')]
+              ('STATUS','MintDE 1.0.8; native boot is still experimental')]
             if mintde else
             [('BOOT MODEL','UEFI Desktop is the safe default and recovery environment'),
              ('KERNEL','GDT/TSS, IDT, paging, NX and guarded exception stacks'),
@@ -369,26 +369,26 @@ def about_preview(out, mintde=False):
         text(d,(349,y+10),label,F_SMALL,C['muted'])
         text(d,(545,y+11),value,F_MED,C['text'])
     text(d,(326,751),'About MintOS26' if not mintde else 'About MintDE',F_SMALL,C['muted'])
-    text(d,(326,777),'Separate versions: MintOS26 26.5.008.0  •  MintDE 1.0.7',F_SMALL,C['muted'])
+    text(d,(326,777),'Separate versions: MintOS26 26.5.009.0  •  MintDE 1.0.8',F_SMALL,C['muted'])
     dock(im)
     im.save(out,optimize=False,compress_level=2)
 
 def main():
     defaults = [
-        ROOT/'previews/mintos26-26.5.008.0-native-shell-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-native-shell-settings-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-storage-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-drivers-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-files-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-disk-utility-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-about-mintos-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-about-mintde-preview.png',
-        ROOT/'previews/mintos26-26.5.008.0-menu-dropdown-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-native-shell-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-native-shell-settings-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-storage-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-drivers-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-files-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-disk-utility-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-about-mintos-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-about-mintde-preview.png',
+        ROOT/'previews/mintos26-26.5.009.0-menu-dropdown-preview.png',
     ]
     outs = [Path(sys.argv[i]) if len(sys.argv)>i else defaults[i-1] for i in range(1,10)]
     for out in outs: out.parent.mkdir(parents=True,exist_ok=True)
     desktop_preview(outs[0]); settings_preview(outs[1]); storage_preview(outs[2]); drivers_preview(outs[3]); files_preview(outs[4]); disk_utility_preview(outs[5]); about_preview(outs[6],False); about_preview(outs[7],True); menu_dropdown_preview(outs[8])
-    labels = ['MintDE Clean Workspace','MintDE Settings','Storage & Logs','Hardware & Drivers','MintDE Files','MintDE Disk Utility','About MintOS26','About MintDE 1.0.7','MintDE File Menu Dropdown']
+    labels = ['MintDE Clean Workspace','MintDE Settings','Storage & Logs','Hardware & Drivers','MintDE Files','MintDE Disk Utility','About MintOS26','About MintDE 1.0.8','MintDE File Menu Dropdown']
     for label,out in zip(labels,outs):
         print(f'Rendered {label} concept: {out} (1920x1080; static concept, not live VM)')
 

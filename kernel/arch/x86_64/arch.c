@@ -155,6 +155,43 @@ void mint_arch_enable_nxe(void) {
     __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(msr_efer) : "memory");
 }
 
+/* Page Attribute Table. The power-on PAT is PA0..PA7 = WB,WT,UC-,UC,WB,WT,UC-,UC;
+ * every existing MintOS mapping uses only PAT index 0 (WB), 1 (PWT) or 3
+ * (PCD|PWT). PA4 (PAT bit set, PCD=PWT=0) is unused, so reprogramming it to
+ * write-combining changes no live mapping. Follows the SDM 11.12.4 sequence:
+ * interrupts off, caches flushed around the MSR write, TLB flushed after. */
+#define MSR_IA32_PAT 0x277u
+#define PAT_TYPE_WC 0x01u
+static int pat_write_combining_ready;
+
+int mint_arch_pat_supported(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1u), "c"(0));
+    return (edx & (1u << 16)) != 0; /* CPUID.01H:EDX.PAT */
+}
+
+int mint_arch_enable_pat_write_combining(void) {
+    if (pat_write_combining_ready) return 1;
+    if (!mint_arch_pat_supported()) return 0;
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    /* Program the whole table rather than patching PA4 so a firmware-modified
+     * PAT cannot silently change what PWT or PCD|PWT mappings mean:
+     * PA0..3 = WB,WT,UC-,UC and PA4..7 = WC,WT,UC-,UC. */
+    const uint32_t lo = 0x00070406u;
+    const uint32_t hi = 0x00070400u | PAT_TYPE_WC;
+    uint64_t cr3;
+    __asm__ volatile("wbinvd" ::: "memory");
+    __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(MSR_IA32_PAT) : "memory");
+    __asm__ volatile("wbinvd" ::: "memory");
+    __asm__ volatile("mov %%cr3, %0; mov %0, %%cr3" : "=r"(cr3) :: "memory");
+    uint32_t check_lo, check_hi;
+    __asm__ volatile("rdmsr" : "=a"(check_lo), "=d"(check_hi) : "c"(MSR_IA32_PAT));
+    if (flags & (1ULL << 9)) __asm__ volatile("sti" ::: "memory");
+    pat_write_combining_ready = check_hi == hi && check_lo == lo;
+    return pat_write_combining_ready;
+}
+
 void mint_arch_enable_write_protect(void) {
     uint64_t cr0;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));

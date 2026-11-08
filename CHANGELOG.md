@@ -1,5 +1,16 @@
 # MintOS26 changelog
 
+## 26.5.009.0 / MintDE 1.0.8 — Real-hardware display, input, power and SATA
+
+- The native kernel now boots with GOP modes above 1920x1080 or with padded strides (up to 4096x2400). Display backbuffers are sized from the real mode and claimed from high memory.
+- The framebuffer is mapped write-combining through a fully programmed PAT (PA4 = WC); edge pages are split so neighbouring MMIO stays uncached.
+- Fixed PS/2 mouse decoding to use 9-bit signed deltas. Fast motion no longer reverses direction. Added a fixed-point acceleration curve.
+- Added ACPI table parsing, S5 shut down, and FADT/0xCF9/8042 restart, with new versioned syscalls `MINT_SYS_POWER_INFO` and `MINT_SYS_POWER_CONTROL`.
+- MintDE adds Restart… and Shut Down… with a confirmation alert, plus Terminal `power`, `shutdown` and `restart` commands.
+- Intel RAID-mode (class 01:04:00, Dell "RAID On") SATA controllers are accepted after AHCI register validation. Storage remains read-only.
+- Added a QEMU/OVMF runner for Linux and macOS, and a macOS (Apple Silicon) host-test compiler wrapper.
+- Validated live on QEMU 11.1 q35/OVMF: native boot, ACPI power-off and restart. VirtualBox and physical hardware are still to be run.
+
 ## 26.5.008.0 / MintDE 1.0.7 — VirtualBox E1000 RX loopback diagnosis
 
 - Switched the internal E1000 self-test to RCTL.LBM_TCVR, the loopback-buffer path used by VirtualBox's emulated 82540EM. The earlier MAC-loopback mode could complete TX while sending the frame toward the virtual network backend rather than the guest RX ring.

@@ -29,3 +29,11 @@ The loopback test now snapshots failure registers before restoring the prior CTR
 ## 26.5.008.0 E1000 diagnostic follow-up
 
 The user's 26.5.007.0 COM1 trace showed TX completion but no RX descriptor completion. The diagnostic now uses the TCVR loopback-buffer mode specific to VirtualBox's emulated Intel 82540EM and reports the actual submitted TX descriptor plus RX descriptor state. This mode is a hypothesis grounded in the emulator's implementation, not a promise about physical E1000 cards. Validate `net start` / `net test` in a snapshot VM before enabling interrupts or external packet paths.
+
+
+## 26.5.009.0 hardware-compatibility notes
+
+- **Display:** still the firmware GOP framebuffer (no GPU driver), now write-combined through PAT entry PA4 and supported up to 4096x2400 including stride padding.
+- **ACPI:** new read-only table parser (RSDP/XSDT/RSDT/FADT/DSDT/SSDT, checksummed and bounded) used for S5 soft-off and reset. There is no AML interpreter; `_PTS`/`_GTS` are not executed.
+- **SATA:** Intel class 01:04:00 (RST "RAID On") controllers are accepted only after the ABAR's AHCI version and ports-implemented registers validate, and before bus mastering is enabled. RAID volumes are not assembled.
+- **Input:** PS/2 deltas are decoded as 9-bit two's complement. USB HID (xHCI) is the next driver milestone. A detected xHCI controller is still inventory only.

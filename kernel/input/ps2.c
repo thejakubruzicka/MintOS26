@@ -151,20 +151,58 @@ void mint_input_process_keyboard_byte(uint8_t byte) {
     (void)mint_desktop_event_post(&event);
 }
 
+int32_t mint_ps2_mouse_delta(uint8_t low, int negative) {
+    return negative ? (int32_t)low - 256 : (int32_t)low;
+}
+
+/* Integer-only (no SSE in the kernel) pointer acceleration in Q8 fixed point.
+ * Speed is an octagonal |v| estimate in counts per packet. Slow motion gets
+ * 2 px/count for precise targeting, normal motion keeps the long-standing
+ * 4 px/count VirtualBox feel, and fast flicks ramp to 7 px/count so a 1080p-
+ * to-4K screen is crossable without lifting the mouse. Sub-pixel remainders
+ * are carried so slow drags do not stall or drift. */
+static int32_t accel_remainder_x, accel_remainder_y;
+uint32_t mint_ps2_mouse_gain_q8(uint32_t speed) {
+    if (speed <= 1u) return 512u;
+    if (speed < 6u) return 512u + (speed - 1u) * 512u / 5u;
+    if (speed <= 12u) return 1024u;
+    if (speed < 36u) return 1024u + (speed - 12u) * 768u / 24u;
+    return 1792u;
+}
+void mint_ps2_mouse_accelerate(int32_t dx, int32_t dy, int32_t *px, int32_t *py) {
+    uint32_t ax = (uint32_t)(dx < 0 ? -dx : dx), ay = (uint32_t)(dy < 0 ? -dy : dy);
+    uint32_t speed = ax > ay ? ax + ay / 2u : ay + ax / 2u;
+    int32_t gain = (int32_t)mint_ps2_mouse_gain_q8(speed);
+    if (!dx) accel_remainder_x = 0;
+    if (!dy) accel_remainder_y = 0;
+    int32_t sx = dx * gain + accel_remainder_x;
+    int32_t sy = dy * gain + accel_remainder_y;
+    /* Round toward zero and keep the signed remainder for the next packet. */
+    int32_t qx = sx / 256, qy = sy / 256;
+    accel_remainder_x = sx - qx * 256;
+    accel_remainder_y = sy - qy * 256;
+    if (px) *px = qx;
+    if (py) *py = qy;
+}
+
 void mint_input_process_mouse_byte(uint8_t byte) {
     if (mouse_packet_index == 0u && (byte & 0x08u) == 0) return; /* packet sync */
     mouse_packet[mouse_packet_index++] = byte;
     if (mouse_packet_index < 3u) return;
     mouse_packet_index = 0;
-    /* Ignore X/Y overflow packets; they cannot be represented accurately. */
-    if (mouse_packet[0] & 0xC0u) return;
-    int32_t dx = (int32_t)(int8_t)mouse_packet[1];
-    int32_t dy = -(int32_t)(int8_t)mouse_packet[2];
+    /* PS/2 movement is 9-bit two's complement: the low eight bits are in
+     * bytes 1/2 and the sign bits are byte-0 bits 4 (X) and 5 (Y). Reading the
+     * low byte as int8_t inverts any motion beyond +/-127 counts, which real
+     * mice and coalescing hypervisors produce during fast movement. Overflow
+     * bits (6/7) are ignored like Linux psmouse; the 9-bit value saturates. */
+    int32_t dx = mint_ps2_mouse_delta(mouse_packet[1], (mouse_packet[0] & 0x10u) != 0);
+    int32_t dy = -mint_ps2_mouse_delta(mouse_packet[2], (mouse_packet[0] & 0x20u) != 0);
     MINT_DISPLAY_INFO display = {0};
     if (!mint_display_current_info(&display) || !display.width || !display.height) return;
-    /* Four pixels/count feels natural in VirtualBox's PS/2 emulation. */
     int32_t old_x = mouse_x, old_y = mouse_y;
-    mouse_x += dx * 4; mouse_y += dy * 4;
+    int32_t px = 0, py = 0;
+    mint_ps2_mouse_accelerate(dx, dy, &px, &py);
+    mouse_x += px; mouse_y += py;
     if (mouse_x < 0) mouse_x = 0;
     if (mouse_y < 0) mouse_y = 0;
     if ((uint32_t)mouse_x >= display.width) mouse_x = (int32_t)display.width - 1;
@@ -187,7 +225,7 @@ void mint_input_process_mouse_byte(uint8_t byte) {
         event.type = MINT_DESKTOP_EVENT_POINTER_BUTTON;
         event.timestamp_ms = mint_timer_ticks() * 10u;
         event.data.pointer.x = mouse_x; event.data.pointer.y = mouse_y;
-        event.data.pointer.dx = dx * 4; event.data.pointer.dy = dy * 4;
+        event.data.pointer.dx = px; event.data.pointer.dy = py;
         event.data.pointer.buttons = buttons;
         event.data.pointer.changed_buttons = changed;
         ++pointer_button_count;
@@ -222,6 +260,7 @@ void mint_input_get_counters(uint64_t *keyboard, uint64_t *pointer_motion,
 int mint_input_init(void) {
     keyboard_online = 0; mouse_online = 0; modifiers = 0; extended_prefix = 0;
     mouse_packet_index = 0; mouse_buttons = 0;
+    accel_remainder_x = 0; accel_remainder_y = 0;
     keyboard_event_count = 0; pointer_motion_count = 0; pointer_button_count = 0;
     MINT_DISPLAY_INFO display = {0};
     if (mint_display_current_info(&display) && display.width && display.height) {

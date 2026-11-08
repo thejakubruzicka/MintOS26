@@ -50,7 +50,7 @@ def main():
     print('PASS: EFI volume contains 12 separate valid PNG app icons')
     release_changelog,release_size=fat_read(esp,'MINTOS26/CHANGELOG.TXT')
     fs_roadmap,fs_size=fat_read(esp,'MINTOS26/FILESYS.TXT')
-    assert release_size>500 and b'26.5.008.0' in release_changelog, 'release changelog missing from EFI volume'
+    assert release_size>500 and b'26.5.009.0' in release_changelog, 'release changelog missing from EFI volume'
     assert fs_size>500 and b'ext4' in fs_roadmap.lower(), 'filesystem roadmap missing from EFI volume'
     print('PASS: release changelog and filesystem roadmap are available as Files-visible EFI volume documents')
     assert disk[512:520]==b'EFI PART';hdr=bytearray(disk[512:1024]);crc=struct.unpack_from('<I',hdr,16)[0];struct.pack_into('<I',hdr,16,0);assert zlib.crc32(hdr[:92])&0xffffffff==crc;elba=struct.unpack_from('<Q',disk,512+72)[0];entry_count,entry_size=struct.unpack_from('<II',disk,512+80);assert elba==2 and entry_count==128 and entry_size==128;esp_start,esp_end=struct.unpack_from('<QQ',disk,2*S+32);assert esp_start==2048 and esp_end>=esp_start;print('PASS: GPT UEFI disk and EFI System Partition')
@@ -61,7 +61,7 @@ def main():
     print('PASS: developer data volume contains all 12 separate PNG app icons')
     data_changelog,dc_size=fat_read(vol,'MINTOS26/DEVELOP/CHANGELOG.TXT')
     driver_roadmap,dr_size=fat_read(vol,'MINTOS26/DEVELOP/DRIVERS.TXT')
-    assert dc_size>500 and b'26.5.008.0' in data_changelog, 'changelog missing from developer volume'
+    assert dc_size>500 and b'26.5.009.0' in data_changelog, 'changelog missing from developer volume'
     assert dr_size>500 and b'LBA48' in driver_roadmap, 'driver roadmap missing from developer volume'
     print('PASS: changelog and driver roadmap are available on the developer volume')
     assert len(iso)%ISO_SECTOR==0 and iso[16*ISO_SECTOR+1:16*ISO_SECTOR+6]==b'CD001';br=iso[17*ISO_SECTOR:18*ISO_SECTOR];assert br[1:6]==b'CD001' and b'EL TORITO SPECIFICATION' in br;cat_lba=struct.unpack_from('<I',br,71)[0];cat=iso[cat_lba*ISO_SECTOR:(cat_lba+1)*ISO_SECTOR];assert cat[1]==0xEF and cat[30:32]==b'\x55\xaa';assert sum(struct.unpack('<16H',cat[:32]))&0xffff==0;img_lba=struct.unpack_from('<I',cat,40)[0];assert iso[img_lba*ISO_SECTOR:img_lba*ISO_SECTOR+len(esp)]==esp;print('PASS: El Torito UEFI platform catalog and embedded FAT boot image')

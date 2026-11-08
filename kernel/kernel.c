@@ -18,6 +18,7 @@
 #include "include/pci.h"
 #include "include/storage_diag.h"
 #include "include/log.h"
+#include "include/power.h"
 #include "include/desktop_services.h"
 #include "include/ramfs.h"
 
@@ -512,6 +513,37 @@ static void native_desktop_task(void *argument) {
     }
 }
 
+/* Size the retained frame and glass backdrop from the real GOP mode instead of
+ * a fixed 1920x1080 array, so padded strides and modes up to 4K boot. Buffers
+ * come from the top of RAM to keep low memory free for 32-bit DMA devices. */
+static int attach_display_backbuffers(const MINT_FRAMEBUFFER_INFO *f) {
+    uint64_t pixels = mint_display_backbuffer_pixels_required();
+    mint_serial_write("[display] GOP mode ");
+    mint_serial_dec64(f->width); mint_serial_write("x"); mint_serial_dec64(f->height);
+    mint_serial_write(" stride="); mint_serial_dec64(f->pixels_per_scanline);
+    mint_serial_write(" format="); mint_serial_dec64(f->pixel_format);
+    mint_serial_write(" base="); mint_serial_hex64(f->base);
+    mint_serial_write("\n");
+    if (!pixels) return 0;
+    uint64_t pages = (pixels * sizeof(uint32_t) + MINT_PAGE_SIZE - 1u) / MINT_PAGE_SIZE;
+    uint64_t back = mint_physmem_claim_contiguous_high(pages);
+    uint64_t backdrop = back ? mint_physmem_claim_contiguous_high(pages) : 0;
+    if (!back || !backdrop ||
+        !mint_display_attach_backbuffers((uint32_t *)(uintptr_t)back,
+                                         (uint32_t *)(uintptr_t)backdrop,
+                                         pages * MINT_PAGE_SIZE / sizeof(uint32_t))) {
+        if (backdrop) (void)mint_physmem_release_contiguous(backdrop, pages);
+        if (back) (void)mint_physmem_release_contiguous(back, pages);
+        mint_serial_write("[display] could not reserve backbuffers; drawing directly to scanout\n");
+        return 0;
+    }
+    mint_serial_write("[display] retained backbuffer + backdrop attached: 2 x ");
+    mint_serial_dec64(pages * MINT_PAGE_SIZE / 1024u);
+    mint_serial_write(" KiB at "); mint_serial_hex64(back);
+    mint_serial_write(" / "); mint_serial_hex64(backdrop); mint_serial_write("\n");
+    return 1;
+}
+
 void mint_exception_display(uint64_t vector, uint64_t rip, uint64_t error) {
     if (!active_framebuffer || !active_pixels) return;
     const MINT_FRAMEBUFFER_INFO *f = active_framebuffer;
@@ -532,7 +564,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     __asm__ volatile("cli; cld" ::: "memory");
     mint_serial_init();
     mint_log_init();
-    mint_serial_write("\nMintOS26 26.5.008.0 native kernel entry\n");
+    mint_serial_write("\nMintOS26 26.5.009.0 native kernel entry\n");
     if (!boot || boot->magic != MINT_BOOT_INFO_MAGIC ||
         boot->abi_version != MINT_BOOT_INFO_ABI ||
         boot->struct_size < sizeof(MINT_BOOT_INFO)) {
@@ -581,6 +613,18 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     } else {
         mint_serial_write("[paging] retaining firmware tables; page-backed heap disabled\n");
     }
+    if (paging_ok) {
+        /* Real GPUs (e.g. a GOP framebuffer on a discrete PCIe card) are many
+           times faster to present to when write-combined than uncached. */
+        if (mint_paging_set_framebuffer_write_combining(f->base, f->size))
+            mint_serial_write("[display] framebuffer remapped write-combining via PAT\n");
+        else
+            mint_serial_write("[display] PAT write-combining unavailable; framebuffer stays uncached\n");
+        (void)attach_display_backbuffers(f);
+    }
+    /* ACPI tables are only read; nothing is written until a confirmed
+       shutdown/restart request. Works without paging via firmware tables. */
+    (void)mint_power_init(boot->acpi_rsdp_physical);
     int vmalloc_ok = arena_reserved && mint_vmalloc_init();
     int vmalloc_test_ok = vmalloc_ok && mint_vmalloc_selftest();
     mint_serial_write(vmalloc_ok ? "[vmalloc] transactional physical release path ready\n"

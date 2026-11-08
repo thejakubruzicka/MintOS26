@@ -1,4 +1,4 @@
-# MintOS26 26.5.008.0 / MintDE 1.0.7 — Test Guide
+# MintOS26 26.5.009.0 / MintDE 1.0.8 — Test Guide
 
 ## Host build and test
 
@@ -8,12 +8,31 @@ make check
 make preview
 ```
 
+On macOS with Apple Silicon (`brew install lld qemu binutils`), run the host tests through the bundled wrapper. It builds host test programs for x86_64 and runs them under Rosetta 2:
+
+```sh
+PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
+```
+
+`tools/test_context_switch.py` links ELF-format kernel assembly into a host program and only runs on a Linux host. On macOS it fails at assembly time; this is not a MintOS regression. (`tools/test_paging.py` now names linker-script symbols portably and runs on both.) 26.5.009.0 adds `tools/test_acpi.py` (ACPI parser against synthetic firmware tables) and `tools/test_hardware_compat.py` (display buffers for 1080p/padded/1440p/4K modes, PAT/WC, RAID-mode AHCI and PS/2 contracts).
+
+## QEMU/OVMF quick run (Linux or macOS)
+
+`make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
+
+### Power management test (26.5.009.0)
+
+1. In native MintDE, open Terminal and run `power`. It reports the ACPI revision, `\_S5_` SLP_TYP values, the PM1a control port and the restart method.
+2. MintDE menu → **Restart…** → Restart (or Enter). The machine must reset and return to the boot selector or UEFI Desktop.
+3. MintDE menu → **Shut Down…** → Shut Down. The machine must power off; QEMU exits. If the platform ignores S5, the alert says so; then use the power button.
+4. Esc or Cancel must dismiss the alert without side effects.
+
 Host tests cover source contracts, UEFI/ISO/GPT construction, ELF permissions, memory management, scheduler/syscalls, UI/service contracts, FAT16 parser/formatter behavior, multiple mounted volumes, generic FAT16 browsing without MintOS seed files, RGBA bitmap scaling/alpha blending, VFS mount-table safety, per-device block-I/O counters and VDI/raw payload verification. They do not emulate live AHCI DMA, guest pointer rendering or live menu interaction.
 
 ## UEFI boot selector
 
 1. Use a disposable VM copy and snapshot. Keep **Enable EFI** active.
-2. Attach `MintOS26-26.5.008.0-UEFI.iso` to the optical drive.
+2. Attach `MintOS26-26.5.009.0-UEFI.iso` to the optical drive.
 3. Start the VM. Press **1** or **Enter** for UEFI Desktop; press **2** or **M** to request MintDE. No input selects UEFI Desktop after three seconds.
 4. MintDE exits UEFI boot services and the handoff is one-way until reset. If it fails, reset the VM; do not remove the UEFI Desktop recovery route.
 
@@ -28,12 +47,12 @@ Host tests cover source contracts, UEFI/ISO/GPT construction, ELF permissions, m
 
 ## Storage mount-only test
 
-Attach the populated `MintOS26-26.5.008.0-SATA-data-512MiB-VDI-dynamic.vdi` as a separate SATA data disk. Storage & Logs should show the correct 512 MiB capacity, MBR signature and FAT16 read-only mount if the guest read path succeeds. Files should list it alongside every other validated FAT16 volume. No general file writes or persistent Notes/Settings are supported.
+Attach the populated `MintOS26-26.5.009.0-SATA-data-512MiB-VDI-dynamic.vdi` as a separate SATA data disk. Storage & Logs should show the correct 512 MiB capacity, MBR signature and FAT16 read-only mount if the guest read path succeeds. Files should list it alongside every other validated FAT16 volume. No general file writes or persistent Notes/Settings are supported.
 
 ## Disk Utility destructive test
 
 1. Take a fresh VM snapshot and configure COM1 as **Raw File** logging.
-2. Disconnect existing data disks from the disposable test VM. Keep the ISO optical drive attached. Attach **only** `MintOS26-26.5.008.0-SATA-blank-512MiB-VDI-dynamic.vdi` as SATA data.
+2. Disconnect existing data disks from the disposable test VM. Keep the ISO optical drive attached. Attach **only** `MintOS26-26.5.009.0-SATA-blank-512MiB-VDI-dynamic.vdi` as SATA data.
 3. Boot UEFI Desktop and launch MintDE. Open Disk Utility and verify the selected disk's model, serial and capacity.
 4. Enter the exact confirmation phrase shown by the app (for example `FORMAT sda`) only after verifying that the selected device is the blank disposable disk. The operation destroys data on that disk.
 5. Save the complete COM1 log and screenshot. The formatter writes an MBR FAT16 partition and checks it by read-back and a read-only mount. If any operation reports an error, preserve the first failure and later records; do not infer success from a later unrelated mount message.
@@ -44,7 +63,7 @@ Attach one populated developer VDI and one blank VDI. The populated volume shoul
 
 ## Runtime boundaries
 
-VirtualBox/VBoxManage and QEMU/OVMF are not installed in the build environment. Report VM validation separately from host tests. The E1000 driver is opt-in and has not been validated live here; it provides bounded polling rings and a VirtualBox-specific TCVR internal-loopback test, not a general packet interface. No TCP/IP, DHCP, DNS, sockets, functional GPU acceleration, USB mass storage, NVMe driver, ACPI power transitions, native audio or macOS `.kext` compatibility is claimed from PCI discovery alone.
+QEMU/OVMF is available on the 26.5.009.0 development host; VirtualBox is not. Report VM validation separately from host tests and name the hypervisor. The E1000 driver is opt-in and has not been validated live here; it provides bounded polling rings and a VirtualBox-specific TCVR internal-loopback test, not a general packet interface. No TCP/IP, DHCP, DNS, sockets, functional GPU acceleration, USB mass storage, NVMe driver, ACPI power transitions, native audio or macOS `.kext` compatibility is claimed from PCI discovery alone.
 
 
 ## E1000 loopback diagnostics in 26.5.008.0

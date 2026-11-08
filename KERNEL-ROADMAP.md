@@ -1,4 +1,4 @@
-# MintOS26 Kernel Roadmap — 26.5.008.0 / MintDE 1.0.7
+# MintOS26 Kernel Roadmap — 26.5.009.0 / MintDE 1.0.8
 
 ## Current status
 
@@ -8,7 +8,11 @@
 - **Storage:** logs from 26.5.001.0 confirm one MBR/FAT16 developer volume mounted read-only alongside a blank second SATA disk. The current kernel can register multiple read-only FAT16 volumes and browse generic FAT16 without seed-file dependencies. General writes and Notes/Settings persistence remain disabled.
 - **Drivers:** PCI resource inventory plus an experimental opt-in Intel 82540EM/E1000 polling driver with bounded TX/RX rings and an internal loopback diagnostic. The actual VirtualBox loopback still needs live validation; no TCP/IP stack is present. VMware SVGA acceleration, USB mass storage, native NVMe, native audio, ACPI power transitions and hotplug remain incomplete.
 
+- **26.5.009.0 additions:** GOP modes up to 4096x2400 with padded strides (per-mode backbuffers from high memory), write-combined framebuffer via PAT, PS/2 9-bit delta fix and acceleration, ACPI S5 shutdown and FADT/0xCF9/8042 restart, Intel RAID-mode AHCI acceptance. Validated live on QEMU q35/OVMF; physical hardware and VirtualBox still pending.
+
 ## Next milestones
+
+0. **USB input for native MintDE:** polled xHCI with BIOS handoff and HID boot keyboard/mouse plus report-protocol tablet. This is the gating item for USB-only real hardware (Dell OptiPlex 7040) and VirtualBox's default USB tablet.
 
 1. **MintDE 1.0.3 stabilization:** validate cursor stability, menu dismissal, alpha blend appearance, resize hit targets, Launchpad and multiple-volume Files behavior in VirtualBox at several screen resolutions.
 2. **Prepare general file I/O:** define a narrow write API with explicit device selection, bounds and safe allocation/directory updates. Design flush ordering, error rollback and reboot-survival tests before enabling general writes. Keep Disk Utility isolated and destructive.

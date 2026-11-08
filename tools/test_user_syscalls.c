@@ -187,6 +187,8 @@ int main(void){
     MINT_FRAMEBUFFER_INFO framebuffer={(uint64_t)(uintptr_t)display_pixels,sizeof(display_pixels),640,480,640,1};
     MINT_DISPLAY_SURFACE surface={0};
     CHECK(mint_display_surface_init(&surface,&framebuffer),"register safe display metadata service");
+    static uint32_t display_back[640u * 480u], display_backdrop[640u * 480u];
+    CHECK(mint_display_attach_backbuffers(display_back,display_backdrop,640u * 480u),"attach per-mode display backbuffers as the kernel does");
     MINT_ADDRESS_SPACE space={0};
     CHECK(mint_address_space_create(&space),"create isolated test address space");
     CHECK(mint_address_space_region_reserve(&space,USER_CODE_VA,4096,MINT_PAGE_MAP_EXEC,MINT_ASPACE_REGION_IMAGE_TEXT),"reserve RX code region");

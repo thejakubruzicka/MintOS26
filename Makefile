@@ -1,4 +1,4 @@
-VERSION := 26.5.008.0
+VERSION := 26.5.009.0
 CC := clang
 LINK := lld-link
 PYTHON := python3
@@ -25,7 +25,7 @@ USER_ELF := $(BUILD)/user-init.elf
 USER_C_FLAGS := -target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -mno-red-zone -mno-sse -mno-mmx -mgeneral-regs-only -mcmodel=large -Wall -Wextra -Werror -O2 -Ikernel/include -Ikernel/user/include
 USER_BLOB_ASM := $(BUILD)/user-elf-blob.S
 USER_BLOB_OBJ := $(BUILD)/user-elf-blob.obj
-KERNEL_OBJS := $(BUILD)/kernel.obj $(BUILD)/arch.obj $(BUILD)/arch-core.obj $(BUILD)/physmem.obj $(BUILD)/serial.obj $(BUILD)/scheduler.obj $(BUILD)/syscall.obj $(BUILD)/paging.obj $(BUILD)/heap.obj $(BUILD)/vmalloc.obj $(BUILD)/address_space.obj $(BUILD)/elf-loader.obj $(BUILD)/process.obj $(BUILD)/user-elf-blob.obj $(USER_DESKTOP_BLOB_OBJ) $(BUILD)/desktop-event.obj $(BUILD)/display-surface.obj $(BUILD)/desktop-services.obj $(BUILD)/ramfs.obj $(BUILD)/ps2-input.obj $(BUILD)/pci.obj $(BUILD)/e1000.obj $(BUILD)/storage-block.obj $(BUILD)/ahci.obj $(BUILD)/storage-diag.obj $(BUILD)/fat16-ro.obj $(BUILD)/driver-catalog.obj $(BUILD)/storage-probe.obj $(BUILD)/ata-identify.obj $(BUILD)/vfs.obj $(BUILD)/log.obj $(BUILD)/wallpaper.obj
+KERNEL_OBJS := $(BUILD)/kernel.obj $(BUILD)/arch.obj $(BUILD)/arch-core.obj $(BUILD)/physmem.obj $(BUILD)/serial.obj $(BUILD)/scheduler.obj $(BUILD)/syscall.obj $(BUILD)/paging.obj $(BUILD)/heap.obj $(BUILD)/vmalloc.obj $(BUILD)/address_space.obj $(BUILD)/elf-loader.obj $(BUILD)/process.obj $(BUILD)/user-elf-blob.obj $(USER_DESKTOP_BLOB_OBJ) $(BUILD)/desktop-event.obj $(BUILD)/display-surface.obj $(BUILD)/desktop-services.obj $(BUILD)/ramfs.obj $(BUILD)/ps2-input.obj $(BUILD)/pci.obj $(BUILD)/e1000.obj $(BUILD)/storage-block.obj $(BUILD)/ahci.obj $(BUILD)/storage-diag.obj $(BUILD)/fat16-ro.obj $(BUILD)/driver-catalog.obj $(BUILD)/storage-probe.obj $(BUILD)/ata-identify.obj $(BUILD)/vfs.obj $(BUILD)/log.obj $(BUILD)/acpi-power.obj $(BUILD)/wallpaper.obj
 KERNEL_FLAGS := -target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mno-sse -mno-mmx -mgeneral-regs-only -mcmodel=small -Wall -Wextra -O2
 ISO := $(BUILD)/mintos26-$(VERSION)-uefi.iso
 WALL := assets/wallpaper-1920x1080.rgb
@@ -45,7 +45,7 @@ $(BUILD):
 	mkdir -p $(BUILD)
 $(BUILD)/main.obj: uefi/main.c uefi/font_aa.h | $(BUILD)
 	$(CC) $(EFI_FLAGS) -c $< -o $@
-$(BUILD)/kernel.obj: kernel/kernel.c kernel/include/e1000.h kernel/include/boot_abi.h kernel/include/arch.h kernel/include/physmem.h kernel/include/serial.h kernel/include/task.h kernel/include/syscall.h kernel/include/paging.h kernel/include/heap.h kernel/include/vmalloc.h kernel/include/address_space.h kernel/include/elf_loader.h kernel/include/process.h kernel/include/desktop_abi.h kernel/include/desktop_services.h kernel/include/ramfs.h kernel/include/input.h kernel/include/pci.h kernel/include/storage_diag.h kernel/include/storage_diag_internal.h kernel/include/log.h kernel/include/uapi/mintos/syscall.h | $(BUILD)
+$(BUILD)/kernel.obj: kernel/kernel.c kernel/include/power.h kernel/include/e1000.h kernel/include/boot_abi.h kernel/include/arch.h kernel/include/physmem.h kernel/include/serial.h kernel/include/task.h kernel/include/syscall.h kernel/include/paging.h kernel/include/heap.h kernel/include/vmalloc.h kernel/include/address_space.h kernel/include/elf_loader.h kernel/include/process.h kernel/include/desktop_abi.h kernel/include/desktop_services.h kernel/include/ramfs.h kernel/include/input.h kernel/include/pci.h kernel/include/storage_diag.h kernel/include/storage_diag_internal.h kernel/include/log.h kernel/include/uapi/mintos/syscall.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/arch.obj: kernel/arch/x86_64/arch.S | $(BUILD)
 	$(CC) -target x86_64-unknown-none-elf -c $< -o $@
@@ -57,7 +57,7 @@ $(BUILD)/serial.obj: kernel/console/serial.c kernel/include/serial.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/scheduler.obj: kernel/task/scheduler.c kernel/include/task.h kernel/include/arch.h kernel/include/serial.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
-$(BUILD)/syscall.obj: kernel/abi/syscall.c kernel/include/e1000.h kernel/include/syscall.h kernel/include/task.h kernel/include/arch.h kernel/include/desktop_abi.h kernel/include/input.h kernel/include/desktop_services.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/fat16.h kernel/include/vfs.h kernel/include/pci.h kernel/include/uapi/mintos/syscall.h | $(BUILD)
+$(BUILD)/syscall.obj: kernel/abi/syscall.c kernel/include/power.h kernel/include/e1000.h kernel/include/syscall.h kernel/include/task.h kernel/include/arch.h kernel/include/desktop_abi.h kernel/include/input.h kernel/include/desktop_services.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/fat16.h kernel/include/vfs.h kernel/include/pci.h kernel/include/uapi/mintos/syscall.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/paging.obj: kernel/mm/paging.c kernel/include/paging.h kernel/include/arch.h kernel/include/serial.h kernel/include/boot_abi.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
@@ -73,7 +73,7 @@ $(BUILD)/process.obj: kernel/proc/process.c kernel/include/process.h kernel/incl
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(USER_START_OBJ): kernel/user/crt0.S | $(BUILD)
 	$(CC) -target x86_64-unknown-none-elf -c $< -o $@
-$(USER_RUNTIME_OBJ): kernel/user/runtime.c kernel/include/e1000.h kernel/include/e1000_core.h kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/fat16.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/vfs.h kernel/include/pci.h | $(BUILD)
+$(USER_RUNTIME_OBJ): kernel/user/runtime.c kernel/include/power.h kernel/include/e1000.h kernel/include/e1000_core.h kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/fat16.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/vfs.h kernel/include/pci.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(USER_APP_OBJ): kernel/user/init.c kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
@@ -115,9 +115,11 @@ $(BUILD)/storage-probe.obj: kernel/fs/storage_diag.c kernel/include/storage_diag
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/ata-identify.obj: kernel/diag/ata_identify.c kernel/include/storage_diag.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/acpi-power.obj: kernel/power/acpi.c kernel/include/power.h kernel/include/paging.h kernel/include/serial.h kernel/include/log.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/log.obj: kernel/console/log.c kernel/include/log.h kernel/include/serial.h kernel/include/task.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
-$(USER_DESKTOP_OBJ): kernel/user/desktop.c kernel/include/e1000.h kernel/include/e1000_core.h kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/fat16.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/vfs.h kernel/include/pci.h | $(BUILD)
+$(USER_DESKTOP_OBJ): kernel/user/desktop.c kernel/include/power.h kernel/include/e1000.h kernel/include/e1000_core.h kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/fat16.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/vfs.h kernel/include/pci.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(USER_DESKTOP_ELF): $(USER_START_OBJ) $(USER_DESKTOP_OBJ) $(USER_RUNTIME_OBJ) $(ICON_ASSET_OBJ) kernel/user/user.ld
 	ld.lld -s -nostdlib -static -z max-page-size=0x1000 -T kernel/user/user.ld -o $@ $(USER_START_OBJ) $(USER_DESKTOP_OBJ) $(USER_RUNTIME_OBJ) $(ICON_ASSET_OBJ)
@@ -181,6 +183,8 @@ check: all
 	$(PYTHON) tools/test_desktop_boundary.py
 	$(PYTHON) tools/test_ramfs_settings.py
 	$(PYTHON) tools/test_ps2_input.py
+	$(PYTHON) tools/test_hardware_compat.py
+	$(PYTHON) tools/test_acpi.py
 	$(PYTHON) tools/test_pci.py
 	$(PYTHON) tools/test_driver_foundation.py
 	$(PYTHON) tools/test_terminal_stack_usage.py
@@ -203,10 +207,6 @@ preview: | $(BUILD)
 	$(PYTHON) tools/render_native_shell_preview.py previews/mintos26-$(VERSION)-native-shell-preview.png previews/mintos26-$(VERSION)-native-shell-settings-preview.png previews/mintos26-$(VERSION)-storage-preview.png previews/mintos26-$(VERSION)-drivers-preview.png previews/mintos26-$(VERSION)-files-preview.png previews/mintos26-$(VERSION)-disk-utility-preview.png previews/mintos26-$(VERSION)-about-mintos-preview.png previews/mintos26-$(VERSION)-about-mintde-preview.png previews/mintos26-$(VERSION)-menu-dropdown-preview.png
 	$(PYTHON) tools/render_boot_selector_preview.py previews/mintos26-$(VERSION)-boot-selector-preview.png
 run: all
-	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
-	  FW=$$(find /usr/share/OVMF /usr/share/qemu /usr/share/edk2 \( -name 'OVMF.fd' -o -name 'OVMF_CODE*.fd' \) 2>/dev/null | head -n1); \
-	  if [ -n "$$FW" ]; then qemu-system-x86_64 -m 512M -bios "$$FW" -device ich9-ahci,id=ahci -drive if=none,id=boot,format=raw,file=$(DISK) -device ide-hd,drive=boot,bus=ahci.0 -drive if=none,id=data,format=raw,file=$(DATA) -device ide-hd,drive=data,bus=ahci.1; \
-	  else echo 'QEMU is installed but OVMF was not found. See README for VirtualBox EFI steps.'; exit 1; fi; \
-	else echo 'QEMU/OVMF not found. Boot the ISO in VirtualBox with Enable EFI and attach the data disk to SATA.'; fi
+	tools/run_qemu.sh
 clean:
 	rm -f $(BUILD)/*

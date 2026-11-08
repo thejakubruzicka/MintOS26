@@ -1,0 +1,10 @@
+#!/bin/bash
+# macOS (Apple Silicon) host-test wrapper, used as:
+#   PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
+# Cross-target builds (-target x86_64-unknown-none-elf / -pc-win32-coff) pass
+# through unchanged. Host test programs are built for x86_64 and run under
+# Rosetta 2 because they contain x86 inline assembly. Linux ld accepts
+# undefined weak symbols; Mach-O ld needs dynamic_lookup for the same tests.
+for a in "$@"; do case "$a" in -target|--target=*) exec /usr/bin/clang "$@";; esac; done
+for a in "$@"; do case "$a" in -c|-E|-S) exec /usr/bin/clang -arch x86_64 "$@";; esac; done
+exec /usr/bin/clang -arch x86_64 -Wl,-undefined,dynamic_lookup "$@"

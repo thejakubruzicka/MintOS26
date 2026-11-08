@@ -16,6 +16,11 @@ int mint_arch_nx_supported(void);
 int mint_arch_prepare_4level_paging(void);
 void mint_arch_enable_nxe(void);
 void mint_arch_enable_write_protect(void);
+/* CPUID PAT support, and reprogramming the unused PAT entry PA4 to WC.
+ * After success, a 4 KiB PTE with bit 7 (or a 2 MiB PDE with bit 12) set and
+ * PCD=PWT=0 maps write-combining memory. */
+int mint_arch_pat_supported(void);
+int mint_arch_enable_pat_write_combining(void);
 void mint_arch_load_cr3(uint64_t physical_root);
 void mint_timer_init(void);
 void mint_arch_enable_input_irqs(int keyboard_enabled, int mouse_enabled);

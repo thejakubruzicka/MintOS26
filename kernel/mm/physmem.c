@@ -203,6 +203,32 @@ uint64_t mint_physmem_claim_contiguous_below(uint64_t pages, uint64_t max_addres
     }
     return 0;
 }
+/* Claim from the top of the highest range that fits. Large CPU-only buffers
+ * (display backbuffers can exceed 30 MiB at 4K) use this so they do not
+ * consume the low memory that DMA devices restricted below 4 GiB need.
+ * Ranges are clipped to MINT_PHYSICAL_MAP_LIMIT at init, so the result is
+ * always inside the identity map. */
+uint64_t mint_physmem_claim_contiguous_high(uint64_t pages) {
+    if (!pages || pages > UINT64_MAX / MINT_PAGE_SIZE || pages > free_pages) return 0;
+    uint64_t bytes = pages * MINT_PAGE_SIZE;
+    int record = find_free_record();
+    if (record < 0) return 0;
+    for (uint32_t k = range_count; k-- > 0;) {
+        if (ranges[k].pages < pages) continue;
+        uint64_t end = range_end(&ranges[k]);
+        if (end > MINT_PHYSICAL_MAP_LIMIT || end < bytes) continue;
+        uint64_t base = end - bytes;
+        if (base & (MINT_PAGE_SIZE - 1u)) continue;
+        allocations[record] = (struct allocation_record){base, pages, 1};
+        ranges[k].pages -= pages;
+        free_pages -= pages;
+        claimed_pages += pages;
+        compact_empty_ranges();
+        return base;
+    }
+    return 0;
+}
+
 uint64_t mint_physmem_claim_contiguous(uint64_t pages) {
     return mint_physmem_claim_contiguous_below(pages, MINT_PHYSICAL_MAP_LIMIT);
 }
