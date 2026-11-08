@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Source-contract checks for MintOS26 26.5.008.0 input/display/audio paths."""
+from pathlib import Path
+s = Path(__file__).resolve().parents[1].joinpath("uefi/main.c").read_text()
+checks = {
+    "UEFI Absolute Pointer GUID": "GUID_ABSOLUTE_POINTER" in s and "0x8d59d32b" in s,
+    "UEFI Simple Pointer GUID": "GUID_SIMPLE_POINTER" in s and "0x31878c87" in s,
+    "Simple Pointer Mode ABI uses 64-bit counts/mm values": "u64 ResolutionX,ResolutionY,ResolutionZ; u8 LeftButton,RightButton" in s,
+    "relative motion uses advertised resolution, low sensitivity and per-device residuals": "scale_relative_delta" in s and "(i64)resolution*200" in s and "POINTER_MAX_STEP 12" in s and "relative_remainder_x_fp[MAX_POINTER_DEVICES]" in s,
+    "old hard ±500 raw-count clamp removed": "if(dx>500)dx=500" not in s and "if(dy>500)dy=500" not in s,
+    "diagnostics show raw counts and scaled pixel deltas": all(x in s for x in ["last_rel_raw_dx", "last_rel_resolution_x", " px="]),
+    "USB I/O protocol GUID matches UEFI": "GUID_USB_IO={0x2b2f68d6" in s,
+    "USB I/O enumeration and HID boot-protocol support": all(x in s for x in ["LocateHandleBuffer(EFI_LOCATE_BY_PROTOCOL,&GUID_USB_IO", "req.Request=0x0b", "UsbSyncInterruptTransfer"]),
+    "generic HID report descriptors are requested": all(x in s for x in ["req.Value=0x2100", "req.Value=0x2200", "parse_hid_pointer_descriptor"]),
+    "HID absolute X/Y reports normalized to display": "(m->absolute_axes&3u)==3u" in s and "(x-m->x_min)*(screen_w-1)" in s,
+    "USB pointer polling can supply absolute and relative events": "poll_usb_mouse_fallback" in s and "usb_abs_changed" in s,
+    "bounded PS/2 fallback waits for zero firmware samples": "timer_wakeups>200&&absolute_samples==0&&relative_samples==0&&usb_mouse_reports==0" in s,
+    "movement counters track per-device button transitions": "relative_buttons_known" in s and "relative_last_buttons" in s,
+    "fallback diagnostics visible in System Monitor": "draw_text(x,y+445,fallback_detail" in s,
+    "fallback diagnostics show USB poll count": 'append_str(buf,sizeof(buf),&n," poll:")' in s and "usb_mouse_polls" in s,
+    "enumerates all Absolute Pointer handles": "LocateHandleBuffer(EFI_LOCATE_BY_PROTOCOL,&GUID_ABSOLUTE_POINTER" in s,
+    "enumerates all Simple Pointer handles": "LocateHandleBuffer(EFI_LOCATE_BY_PROTOCOL,&GUID_SIMPLE_POINTER" in s,
+    "resolves each protocol on its handle": "HandleProtocol(handles[i],&GUID_ABSOLUTE_POINTER" in s and "HandleProtocol(handles[i],&GUID_SIMPLE_POINTER" in s,
+    "bounds number of discovered devices": "MAX_POINTER_DEVICES 16" in s,
+    "controller connection pass before discovery": s.index("connect_uefi_controllers(); absolute_pointer=0") < s.index("LocateHandleBuffer(EFI_LOCATE_BY_PROTOCOL,&GUID_ABSOLUTE_POINTER"),
+    "absolute coordinate normalization": "(vx*(screen_w-1))/rx" in s and "(vy*(screen_h-1))/ry" in s,
+    "guards malformed and oversized absolute coordinate ranges": "(maxx-minx)<=0xffffffffULL" in s and "absolute_rejected_samples++" in s,
+    "relative protocols drained each polling frame": s.index("for(UINTN i=0;i<relative_pointer_count;i++)") < s.index("if(absolute_changed||rel_changed){"),
+    "relative input can run when absolute state is unchanged": "if(absolute_changed||rel_changed)" in s and "int nx=absolute_changed?abs_x:mouse_x+rel_dx" in s,
+    "diagnostics distinguish successful polls from movement": all(x in s for x in ["absolute_samples", "relative_samples", "absolute_motion_samples", "relative_motion_samples"]),
+    "diagnostics expose not-ready and error outcomes": all(x in s for x in ["absolute_not_ready", "relative_not_ready", "absolute_errors", "relative_errors"]),
+    "UEFI timer event initialized at 100 Hz": "CreateEvent(EVT_TIMER,TPL_APPLICATION" in s and "TIMER_PERIODIC,100000ULL" in s,
+    "main input loop waits on UEFI events": "bs->WaitForEvent(n,events,&index)" in s and "wait_for_ui_event();" in s,
+    "pointer and keyboard WaitForInput events included": "absolute_pointers[i]->WaitForInput" in s and "relative_pointers[i]->WaitForInput" in s and "conin->WaitForKey" in s,
+    "event wakeups have visible diagnostics": all(x in s for x in ["timer_wakeups", "keyboard_wakeups", "absolute_event_wakeups", "relative_event_wakeups", "event_detail"]),
+    "muted colors have stronger contrast on light panels": all(x in s for x in ["0x506777", "0x4f6b60", "0x4d687c"]),
+    "monitor rows are separated for 1080p 2x text": all(x in s for x in ["y+325,pointer_label", "y+365,pointer_detail", "y+405,event_detail"]),
+    "settings appearance and language/time pages use pop-up dropdowns": all(x in s for x in ["settings_page==0", "Language & Time", "settings_dropdown=5", "settings_dropdown=6", "settings_popup_select"]),
+    "raw absolute ranges and mapped cursor are visible": all(x in s for x in ["last_abs_minx", "last_abs_maxx", "last_abs_miny", "last_abs_maxy", "pointer_detail"]),
+    "relative sample details include movement and buttons": all(x in s for x in ["last_rel_dx", "last_rel_dy", "last_rel_left", "last_rel_right"]),
+    "firmware GOP mode enumeration": "gop->QueryMode" in s and "gop_mode_count" in s,
+    "runtime GOP mode switching": "cycle_graphics_mode" in s and "gop->SetMode" in s and "k.ScanCode==0x0e" in s,
+    "display mode uses a selectable GOP dropdown": all(x in s for x in ["Display mode", "settings_dropdown=4", "activate_gop_mode(gop_modes[opt])"]),
+    "PCI audio controller diagnostic": "pci_cfg_read32" in s and "detect_audio_controller" in s,
+    "honest audio-driver status": "native driver not loaded" in s,
+    "sound test command": "SOUND TEST" in s and "SAY CHIME" in s,
+    "UEFI desktop links the shared event queue implementation": "desktop-event-uefi.obj" in Path(__file__).resolve().parents[1].joinpath("Makefile").read_text() and "mint_desktop_event_push" in s and "dispatch_desktop_events" in s,
+    "UEFI desktop links the shared framebuffer surface implementation": "display-surface-uefi.obj" in Path(__file__).resolve().parents[1].joinpath("Makefile").read_text() and "mint_display_surface_init" in s and "mint_display_fill_rect" in s,
+    "keyboard input is normalized through the versioned desktop event ABI": "ev.type=MINT_DESKTOP_EVENT_KEY" in s and "mint_desktop_event_push" in s,
+    "pointer movement and button transitions are normalized through the desktop event ABI": "MINT_DESKTOP_EVENT_POINTER_BUTTON" in s and "MINT_DESKTOP_EVENT_POINTER_MOVE" in s and "dispatch_desktop_events(&dirty)" in s,
+    "UEFI main loop limits event batch size and drains shared queue": "key_budget=32" in s and "dispatch_desktop_events(&dirty)" in s,
+}
+for name, ok in checks.items():
+    print(("PASS: " if ok else "FAIL: ") + name)
+if not all(checks.values()):
+    raise SystemExit(1)

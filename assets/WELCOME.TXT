@@ -1,0 +1,5 @@
+Welcome to MintOS26 26.3.004.5!
+
+Open Applications to explore Finder, Terminal, Notes, Calculator, Settings, System Monitor, Calendar, Clock, Code Studio, Network and Install Assistant.
+
+Attach the writable SATA data image in VirtualBox to keep notes and settings across reboots.

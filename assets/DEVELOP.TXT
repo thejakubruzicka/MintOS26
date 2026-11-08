@@ -1,0 +1,12 @@
+MintOS26 Developer Corner - 26.3.004.5
+
+The source tree now includes a freestanding x86-64 kernel core and a cooperative scheduler.
+- kernel/task: task slots, per-task stack, sleep/wake and round-robin dispatch.
+- kernel/abi: internal syscall dispatcher.
+- kernel/include/uapi/mintos: versioned initial syscall-number contract.
+- kernel/arch/x86_64: GDT, IDT, PIT/PIC, interrupt and task-switch assembly.
+
+This milestone is cooperative only. It is not a Linux compatibility layer and has no ring-3 userspace yet.
+Use `make all check`; see docs/KERNEL_ROADMAP.md before building additional subsystems.
+
+MintOS26 native-kernel development continues in version 26.3.004.5.

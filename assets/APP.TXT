@@ -1,0 +1,6 @@
+MintOS26 application development notes
+
+The current desktop runs as a UEFI PE/COFF application and uses the firmware boot services. It is not yet a post-ExitBootServices kernel.
+For now, the most reliable way to add an application is to modify uefi/main.c in the source package, add a renderer and input handler, then run make clean all check preview.
+
+Please keep hardware-dependent code behind explicit capability checks. Network can attempt a plain HTTP GET through UEFI HTTP services if firmware networking is available; MintOS has no native TCP/IP stack, HTTPS or browser in 26.3.004.5.

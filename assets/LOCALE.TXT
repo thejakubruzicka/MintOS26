@@ -1,0 +1,5 @@
+Language and time notes - MintOS26 26.3.004.5
+
+English is the complete default interface language. Czech and German currently localize primary app names and window titles; the rest of the UI is still English.
+Timezone presets: firmware local time, UTC, Central Europe fixed UTC+1, US Eastern fixed UTC-5. Fixed offset presets do not apply daylight-saving transitions automatically. Accurate UTC conversion depends on the timezone metadata supplied by UEFI.
+The release reads firmware time. It does not yet set the hardware clock.

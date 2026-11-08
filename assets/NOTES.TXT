@@ -1,0 +1,2 @@
+Welcome to MintOS26 Notes.
+Your notes are stored on the attached writable data volume.

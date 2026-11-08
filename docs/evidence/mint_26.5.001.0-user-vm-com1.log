@@ -1,0 +1,275 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H
+MintOS26 26.5.001.0 native kernel entry
+[arch] kernel GDT loaded; 64-bit TSS installed at selector 0x18
+[arch] dedicated guarded stacks configured for RSP0, double fault, NMI and machine check
+[arch] IDT installed for exceptions 0..31, PIT/PS2 IRQs and DPL3 int-0x80 gate
+[arch] maskable interrupts remain disabled until PIT/PIC initialization
+[pci] enumerating PCI configuration space via mechanism 1
+[pci] 00:00.0 vendor=8086 device=1237 class=06:00 prog-if=00
+[pci] 00:01.0 vendor=8086 device=7000 class=06:01 prog-if=00
+[pci] 00:01.1 vendor=8086 device=7111 class=01:01 prog-if=8A [mass-storage controller]
+[pci] 00:02.0 vendor=15AD device=0405 class=03:00 prog-if=00 [display device; no GPU driver attached]
+[pci] 00:03.0 vendor=8086 device=100E class=02:00 prog-if=00 [network controller]
+[pci] 00:04.0 vendor=80EE device=CAFE class=08:80 prog-if=00
+[pci] 00:05.0 vendor=8086 device=2415 class=04:01 prog-if=00
+[pci] 00:06.0 vendor=106B device=003F class=0C:03 prog-if=10
+[pci] 00:07.0 vendor=8086 device=7113 class=06:80 prog-if=00
+[pci] 00:0B.0 vendor=8086 device=265C class=0C:03 prog-if=20
+[pci] 00:0D.0 vendor=8086 device=2829 class=01:06 prog-if=01 [mass-storage controller]
+[pci] enumeration complete found=11 stored=11 scanned-slots=8206 overflow=0
+[mm] UEFI descriptors: 114
+[mm] conventional pages: 1374957
+[mm] merged free ranges: 5
+[paging] installed 64 GiB identity map plus FFFF8000 higher-half direct-map alias
+[paging] 2 MiB leaves; kernel image split into protected 4 KiB pages
+[paging] NX enabled; text RX, rodata R/NX, data RW/NX
+[paging] framebuffer identity range marked uncached
+[paging] eight non-present guard pages installed around RSP0/DF/NMI/MC stacks
+[log][INFO][BLOCK][#1] storage diagnostics started; media writes are disabled
+[ahci] controller 00:0D.0 vendor=0x0000000000008086 device=0x0000000000002829 BAR5=0x00000000F0624000
+[ahci] controller PI=0x0000000000000003
+[log][INFO][AHCI][#2] controller ready; generic media writes remain blocked
+[log][INFO][AHCI][#3] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][INFO][PARTITION][#4] MintOS26 FAT16 candidate validated; read-only mount verification pending
+[block] sda controller-index=0 port=0 sectors=1048576 bytes=536870912 capacity-source=LBA48 read-only=yes
+[identify] sda lba28_raw=1048576 lba48_supported=yes lba48_raw=1048576 selected_sectors=1048576
+[log][INFO][FAT16][#5] MintOS26 FAT16 BPB and cluster geometry validated read-only
+[storage] sda LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x00000000BAF972B3 repeat=MATCH MBR-disk-id=0x0000000026300421 developer-marker=MATCH
+[storage] sda filesystem: MintOS26 FAT16 candidate validated; read-only mount verification pending
+[log][INFO][AHCI][#6] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][WARN][PARTITION][#7] bad MBR signature; inspect LBA0 bytes and verify attached disk image
+[block] sdb controller-index=0 port=1 sectors=1048719 bytes=536944128 capacity-source=LBA48 read-only=yes
+[identify] sdb lba28_raw=1048719 lba48_supported=yes lba48_raw=1048719 selected_sectors=1048719
+[storage] sdb LBA0 signature=0x0000000000000000 0x0000000000000000 CRC32=0x00000000B2AA7578 repeat=MATCH MBR-disk-id=0x0000000000000000 developer-marker=MISMATCH/UNKNOWN
+[storage] sdb filesystem: bad MBR signature; inspect LBA0 bytes and verify attached disk image
+[log][INFO][PARTITION][#8] MintOS26 FAT16 validated and mounted read-only; media writes remain disabled
+[storage] read-only FAT16 mount verified on block index 0; Notes and Settings seed files readable
+[storage] diagnostic probe complete controllers=1 devices=2 readonly-mounted=1 persistent=no writes-disabled=yes
+[log][INFO][BLOCK][#9] read-only filesystem validation completed; persistent writes remain disabled
+[mm] excluded physical range pages: 0
+[mm] claimed test physical frame at 0x0000000000133000
+[paging] higher-half direct-map alias self-test passed
+[paging] dynamic map/unmap and higher-half alias self-test passed
+[heap] 256 KiB contiguous identity-mapped kernel heap online at 0x0000000000134000
+[vmalloc] 16 MiB virtual arena initialized (4096 pages)
+[vmalloc] invalid free or mapping ownership mismatch
+[vmalloc] alloc/map/zero/write/unmap/free self-test passed
+[vmalloc] repeated allocate/free table-reclaim test passed
+[vmalloc] transactional physical release path ready
+[paging] dynamic PT active/peak/reclaimed=2/3/73
+[vmalloc] used/peak pages=0/5 allocations/frees=66/66 failed/rollback/free-errors=0/0/1
+[aspace] independent roots, isolated user mappings, CR3 switch and cleanup passed
+[settings] versioned theme/accent/scale/wallpaper/reduced-motion API ready (session memory)
+[vfs] session RAM filesystem online files=3 max-files=8 bytes-per-file=4096 (volatile across reboot)
+[desktop-core] seeded two bounded userspace event-service probes
+[desktop-core] settings service + session RAM filesystem + bounded display/event services ready
+[irq] legacy PIC remapped; IRQ0 alone is unmasked
+[timer] PIT channel 0 configured near 100 Hz; waiting for first IRQ
+[input] PS/2 keyboard online (IRQ1, set-1 translation)
+[input] PS/2 mouse online (IRQ12, 3-byte packets)
+[kernel] enabling maskable interrupts after IDT/PIC/PIT/input setup
+[proc] process table initialized; bounded ELF64 loader enabled
+[sched] cooperative round-robin scheduler initialized
+[sched] created pid=1 name=desktop-status
+[sched] created pid=2 name=heartbeat
+[sched] created pid=3 name=abi-smoke
+[sched] created pid=4 name=ring3-smoke-a
+[sched] created pid=5 name=ring3-smoke-b
+[sched] created pid=6 name=native-desktop
+[kernel] enabling interrupts and entering scheduler
+[sched] per-task CR3, transition-state and RFLAGS switching online
+[sched] task start pid=1 name=desktop-status
+[sched] task start pid=2 name=heartbeat
+[sched] task start pid=3 name=abi-smoke
+[abi] Linux-inspired write syscall contract online
+[abi] getpid returned 3
+[abi] clock_gettime status=0 uptime=0s
+[sched] task exited pid=3 name=abi-smoke total-exited=1
+[sched] task start pid=4 name=ring3-smoke-a
+[ring3] worker 1 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=4 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=4
+[sched] task start pid=5 name=ring3-smoke-b
+[ring3] worker 2 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=5 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=5
+[sched] task start pid=6 name=native-desktop
+[sched] first activation user root pid=4 cr3=0x0000000000174000
+[sched] first activation user root pid=5 cr3=0x0000000000184000
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=4 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 1 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=4 name=ring3-smoke-a total-exited=2
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=5 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 2 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=5 name=ring3-smoke-b total-exited=3
+[desktop-ui] launching native shell as a persistent ring-3 process
+[proc] loaded ELF64 process pid=6 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-desktop] MintDE 1.0.0; dock, split About pages, mouse menus and settings ready
+[sched] first activation user root pid=6 cr3=0x0000000000174000
+[sched] user task yield enabled pid=6
+[task] heartbeat pid=2 ticks=501
+[task] heartbeat pid=2 ticks=1001
+[task] heartbeat pid=2 ticks=1501
+[task] heartbeat pid=2 ticks=2001
+[task] heartbeat pid=2 ticks=2501
+[task] heartbeat pid=2 ticks=3002
+[task] heartbeat pid=2 ticks=3502
+[task] heartbeat pid=2 ticks=4002
+[task] heartbeat pid=2 ticks=4502
+[task] heartbeat pid=2 ticks=5002
+[task] heartbeat pid=2 ticks=5502
+[task] heartbeat pid=2 ticks=6002
+[task] heartbeat pid=2 ticks=6502
+[task] heartbeat pid=2 ticks=7002
+[task] heartbeat pid=2 ticks=7503
+[task] heartbeat pid=2 ticks=8003
+[task] heartbeat pid=2 ticks=8503
+[task] heartbeat pid=2 ticks=9004
+[task] heartbeat pid=2 ticks=9504
+[task] heartbeat pid=2 ticks=10004
+[task] heartbeat pid=2 ticks=10504
+[task] heartbeat pid=2 ticks=11004
+[log][WARN][PARTITION][#10] explicitly confirmed blank developer disk initialization requested
+[log][ERROR][FAT16][#11] blank disk initialization failed; inspect Disk Utility result and storage log
+[log][INFO][PARTITION][#12] FAT16 volume verified and mounted read-only after disk operation
+[task] heartbeat pid=2 ticks=11504
+[task] heartbeat pid=2 ticks=12004
+[task] heartbeat pid=2 ticks=12504
+[task] heartbeat pid=2 ticks=13004
+[task] heartbeat pid=2 ticks=13504
+[task] heartbeat pid=2 ticks=14004
+[task] heartbeat pid=2 ticks=14504
+[task] heartbeat pid=2 ticks=15004
+[task] heartbeat pid=2 ticks=15504
+[task] heartbeat pid=2 ticks=16004
+[task] heartbeat pid=2 ticks=16504
+[task] heartbeat pid=2 ticks=17004
+[task] heartbeat pid=2 ticks=17504
+[task] heartbeat pid=2 ticks=18004
+[task] heartbeat pid=2 ticks=18504
+[task] heartbeat pid=2 ticks=19004
+[task] heartbeat pid=2 ticks=19504
+[task] heartbeat pid=2 ticks=20004
+[task] heartbeat pid=2 ticks=20504
+[task] heartbeat pid=2 ticks=21004
+[task] heartbeat pid=2 ticks=21504
+[task] heartbeat pid=2 ticks=22004
+[task] heartbeat pid=2 ticks=22504
+[task] heartbeat pid=2 ticks=23004
+[task] heartbeat pid=2 ticks=23504
+[task] heartbeat pid=2 ticks=24004
+[task] heartbeat pid=2 ticks=24504
+[task] heartbeat pid=2 ticks=25004
+[task] heartbeat pid=2 ticks=25504
+[task] heartbeat pid=2 ticks=26004
+[task] heartbeat pid=2 ticks=26504
+[task] heartbeat pid=2 ticks=27004
+[task] heartbeat pid=2 ticks=27504
+[task] heartbeat pid=2 ticks=28004
+[task] heartbeat pid=2 ticks=28504
+[task] heartbeat pid=2 ticks=29004
+[task] heartbeat pid=2 ticks=29504
+[task] heartbeat pid=2 ticks=30004
+[task] heartbeat pid=2 ticks=30504
+[task] heartbeat pid=2 ticks=31004
+[task] heartbeat pid=2 ticks=31504
+[task] heartbeat pid=2 ticks=32004
+[task] heartbeat pid=2 ticks=32504
+[task] heartbeat pid=2 ticks=33004
+[task] heartbeat pid=2 ticks=33504
+[task] heartbeat pid=2 ticks=34004
+[task] heartbeat pid=2 ticks=34504
+[task] heartbeat pid=2 ticks=35004
+[task] heartbeat pid=2 ticks=35504
+[task] heartbeat pid=2 ticks=36004
+[task] heartbeat pid=2 ticks=36505
+[task] heartbeat pid=2 ticks=37005
+[task] heartbeat pid=2 ticks=37505
+[task] heartbeat pid=2 ticks=38005
+[task] heartbeat pid=2 ticks=38505
+[task] heartbeat pid=2 ticks=39005
+[task] heartbeat pid=2 ticks=39506
+[task] heartbeat pid=2 ticks=40006
+[task] heartbeat pid=2 ticks=40506
+[task] heartbeat pid=2 ticks=41006
+[task] heartbeat pid=2 ticks=41506
+[task] heartbeat pid=2 ticks=42006
+[task] heartbeat pid=2 ticks=42506
+[task] heartbeat pid=2 ticks=43006
+[task] heartbeat pid=2 ticks=43506
+[task] heartbeat pid=2 ticks=44006
+[task] heartbeat pid=2 ticks=44506
+[task] heartbeat pid=2 ticks=45006
+[task] heartbeat pid=2 ticks=45506
+[task] heartbeat pid=2 ticks=46006
+[task] heartbeat pid=2 ticks=46506
+[task] heartbeat pid=2 ticks=47006
+[task] heartbeat pid=2 ticks=47506
+[task] heartbeat pid=2 ticks=48007
+[task] heartbeat pid=2 ticks=48507
+[task] heartbeat pid=2 ticks=49007
+[task] heartbeat pid=2 ticks=49509
+[task] heartbeat pid=2 ticks=50009
+[task] heartbeat pid=2 ticks=50509
+[task] heartbeat pid=2 ticks=51009
+[task] heartbeat pid=2 ticks=51509
+[task] heartbeat pid=2 ticks=52009
+[task] heartbeat pid=2 ticks=52509
+[task] heartbeat pid=2 ticks=53009
+[task] heartbeat pid=2 ticks=53509
+[task] heartbeat pid=2 ticks=54009
+[task] heartbeat pid=2 ticks=54510
+[task] heartbeat pid=2 ticks=55010
+[task] heartbeat pid=2 ticks=55510
+[task] heartbeat pid=2 ticks=56011
+[task] heartbeat pid=2 ticks=56511
+[task] heartbeat pid=2 ticks=57011
+[task] heartbeat pid=2 ticks=57511
+[task] heartbeat pid=2 ticks=58011
+[task] heartbeat pid=2 ticks=58511
+[task] heartbeat pid=2 ticks=59011
+[task] heartbeat pid=2 ticks=59511
+[task] heartbeat pid=2 ticks=60011
+[task] heartbeat pid=2 ticks=60512
+[task] heartbeat pid=2 ticks=61012
+[task] heartbeat pid=2 ticks=61512
+[task] heartbeat pid=2 ticks=62013
+[task] heartbeat pid=2 ticks=62513
+[task] heartbeat pid=2 ticks=63013
+[task] heartbeat pid=2 ticks=63513
+[task] heartbeat pid=2 ticks=64013
+[task] heartbeat pid=2 ticks=64513
+[task] heartbeat pid=2 ticks=65013
+[task] heartbeat pid=2 ticks=65513
+[task] heartbeat pid=2 ticks=66013
+[task] heartbeat pid=2 ticks=66513
+[task] heartbeat pid=2 ticks=67013
+[task] heartbeat pid=2 ticks=67513
+[task] heartbeat pid=2 ticks=68013
+[task] heartbeat pid=2 ticks=68514
+[task] heartbeat pid=2 ticks=69015
+[task] heartbeat pid=2 ticks=69515
+[task] heartbeat pid=2 ticks=70015
+[task] heartbeat pid=2 ticks=70516
+[task] heartbeat pid=2 ticks=71016
+[task] heartbeat pid=2 ticks=71516
+[task] heartbeat pid=2 ticks=72016
+[task] heartbeat pid=2 ticks=72516
+[task] heartbeat pid=2 ticks=73016
+[log][WARN][PARTITION][#13] explicitly confirmed blank developer disk initialization requested
+[log][INFO][PARTITION][#14] FAT16 volume verified and mounted read-only after disk operation
+[log][INFO][PARTITION][#15] developer disk initialized; FAT16 read-only validation completed
+[task] heartbeat pid=2 ticks=73516
+[task] heartbeat pid=2 ticks=74016
+[task] heartbeat pid=2 ticks=74516

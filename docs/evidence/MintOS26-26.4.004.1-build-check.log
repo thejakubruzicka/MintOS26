@@ -1,0 +1,543 @@
+python3 tools/verify_uefi.py build/BOOTX64.EFI build/mintos26-efi-volume.img build/mintos26-26.4.004.1-uefi.img build/mintos26-data-512m.img build/mintos26-26.4.004.1-uefi.iso build/mintos26-kernel.elf build/user-init.elf build/user-desktop.elf
+PASS: PE32+ x86_64 EFI application
+PASS: FAT16 EFI volume includes UEFI fallback, wallpaper, developer docs, kernel, smoke-test ELF and native desktop ELF
+PASS: GPT UEFI disk and EFI System Partition
+PASS: 512 MiB MBR/FAT16 data disk with Documents, developer templates, smoke ELF and desktop ELF
+PASS: El Torito UEFI platform catalog and embedded FAT boot image
+INFO: EFI 168,960 bytes; ESP 32 MiB; ISO 32 MiB; boot disk 128 MiB; data disk 512 MiB; kernel ELF 6,398,328 bytes; user ELF 8,472 bytes
+python3 tools/verify_native_desktop.py build/user-desktop.elf
+PASS: native desktop is a static ELF64 x86-64 executable
+PASS: native desktop has RX text and separate RW/NX data
+PASS: bounded display fill and text syscalls are versioned
+PASS: userspace runtime wraps drawing and bounded sleep services
+PASS: native shell queries display dimensions before rendering
+PASS: native shell handles desktop keyboard and pointer events
+PASS: kernel validates text buffers and bounds before drawing
+PASS: kernel launches shell only after both ring-3 smoke workers pass
+PASS: native shell keeps firmware desktop fallback path
+PASS: native shell draws a macOS-inspired menu bar, app library and centered dock
+PASS: native shell displays actual keyboard and mouse readiness
+PASS: native shell handles shortcuts and pointer interactions
+PASS: kernel PS/2 bridge is compiled into native kernel
+PASS: scheduler limits activation logging to once per process
+PASS: native window drag restores its retained background
+PASS: display service retains a backbuffer and presents the damage rectangle
+PASS: native event loop batches events and coalesces pointer motion
+PASS: Settings exposes live hardware-event counters and queue drops
+PASS: native font uses proportional anti-aliased DejaVu-derived glyph masks
+PASS: native draw-text supports mixed-case ASCII with bounded fractional-size presets
+PASS: Settings appearance rows are mouse hit targets that mutate the versioned settings API
+PASS: Settings controls support keyboard focus, Enter/Space activation and refresh
+PASS: menu bar labels route clicks to applications and window actions
+PASS: window controls close, minimize and maximize/restore
+PASS: application library renders visible cards and hit-tests the same grid
+PASS: native shell requests a kernel-owned photo wallpaper with color-grade variants
+PASS: wallpaper resource is embedded only in the native kernel
+PASS: bounded read-only PCI discovery is part of the kernel
+PASS: PCI inventory remains read-only; AHCI enables required command bits without reprogramming BARs
+python3 tools/verify_features.py
+PASS: UEFI Absolute Pointer GUID
+PASS: UEFI Simple Pointer GUID
+PASS: Simple Pointer Mode ABI uses 64-bit counts/mm values
+PASS: relative motion uses advertised resolution, low sensitivity and per-device residuals
+PASS: old hard ±500 raw-count clamp removed
+PASS: diagnostics show raw counts and scaled pixel deltas
+PASS: USB I/O protocol GUID matches UEFI
+PASS: USB I/O enumeration and HID boot-protocol support
+PASS: generic HID report descriptors are requested
+PASS: HID absolute X/Y reports normalized to display
+PASS: USB pointer polling can supply absolute and relative events
+PASS: bounded PS/2 fallback waits for zero firmware samples
+PASS: movement counters track per-device button transitions
+PASS: fallback diagnostics visible in System Monitor
+PASS: fallback diagnostics show USB poll count
+PASS: enumerates all Absolute Pointer handles
+PASS: enumerates all Simple Pointer handles
+PASS: resolves each protocol on its handle
+PASS: bounds number of discovered devices
+PASS: controller connection pass before discovery
+PASS: absolute coordinate normalization
+PASS: guards malformed and oversized absolute coordinate ranges
+PASS: relative protocols drained each polling frame
+PASS: relative input can run when absolute state is unchanged
+PASS: diagnostics distinguish successful polls from movement
+PASS: diagnostics expose not-ready and error outcomes
+PASS: UEFI timer event initialized at 100 Hz
+PASS: main input loop waits on UEFI events
+PASS: pointer and keyboard WaitForInput events included
+PASS: event wakeups have visible diagnostics
+PASS: muted colors have stronger contrast on light panels
+PASS: monitor rows are separated for 1080p 2x text
+PASS: settings appearance and language/time pages use pop-up dropdowns
+PASS: raw absolute ranges and mapped cursor are visible
+PASS: relative sample details include movement and buttons
+PASS: firmware GOP mode enumeration
+PASS: runtime GOP mode switching
+PASS: display mode uses a selectable GOP dropdown
+PASS: PCI audio controller diagnostic
+PASS: honest audio-driver status
+PASS: sound test command
+PASS: UEFI desktop links the shared event queue implementation
+PASS: UEFI desktop links the shared framebuffer surface implementation
+PASS: keyboard input is normalized through the versioned desktop event ABI
+PASS: pointer movement and button transitions are normalized through the desktop event ABI
+PASS: UEFI main loop limits event batch size and drains shared queue
+python3 tools/test_pointer_math.py
+PASS: HID boot-mouse/tablet layouts and report decoding; relative scaling bounds 9/12/7 px
+python3 tools/test_mint26_features.py
+PASS: release reports 26.4.004.1
+PASS: launcher contains twelve apps
+PASS: Calendar and month-navigation handlers exist
+PASS: Clock uses UEFI RuntimeServices time
+PASS: Czech/German app labels are available
+PASS: timezone and 12/24-hour settings persist
+PASS: cursor styles are selectable and persistent
+PASS: font scale uses bilinear coverage sampling
+PASS: Code Studio loads and saves a C starter
+PASS: Install Assistant clearly states staging limits
+PASS: Network app explicitly disclaims TCP/IP
+PASS: settings tabs and dropdown selection are wired
+PASS: settings and notes support persistence
+PASS: documentation contains developer and locale notes
+PASS: 512 MiB writable data image requested
+PASS: Finder enumerates UEFI Simple File System volumes
+PASS: Finder navigates, previews, creates, and deletes files
+PASS: Settings uses interactive dropdown controls
+PASS: launcher and settings text are width-fitted
+PASS: UEFI HTTP GET is firmware-mediated and bounded
+PASS: native shell batches drawing into explicit frames
+PASS: native windows support title-bar dragging and release
+PASS: native kernel is an opt-in ELF64 boot path
+python3 tools/verify_kernel.py
+PASS: freestanding x86-64 ELF
+PASS: kernel entry remains at reserved 64 MiB physical address
+PASS: ELF permissions separate RX code and RW data segments
+PASS: IRQ0 vector 32 is present in the kernel IDT
+PASS: entry point uses UEFI Microsoft x64 ABI
+PASS: stable handoff includes framebuffer and memory map
+PASS: kernel has its own GDT and reloads code/data segments
+PASS: kernel owns IDT and installs CPU exception vectors 0..31
+PASS: kernel installs 64-bit TSS and dedicated IST stacks for double fault, NMI and machine check
+PASS: page fault panic reports CR2 and decodes error bits
+PASS: exception stubs cover all 32 vectors with error-code variants
+PASS: exception panic logs vector, RIP, error and flags
+PASS: early COM1 UART logger is bounded and emits CRLF
+PASS: legacy PIC is remapped with timer-only baseline and conditional PS/2 masks
+PASS: PIT channel 0 configured near 100 Hz
+PASS: IRQ dispatcher increments ticks and sends PIC EOI
+PASS: IRQ assembly saves GPRs, restores stack, and returns with iretq
+PASS: kernel enables interrupts only after PIC/PIT init and updates live timer display
+PASS: kernel validates UEFI descriptors and counts conventional pages
+PASS: runtime 4 KiB mapping API splits huge pages and invalidates TLB
+PASS: kernel validates page-map changes and guard translations before scheduler
+PASS: physical page allocator tracks exact claims and supports safe release/coalescing
+PASS: kernel has its own 64 GiB identity map, split kernel pages and guarded NX/WP setup
+PASS: linker creates guard pages around four kernel/IST stacks
+PASS: paging explicitly enables PAE/PSE and refuses unsafe LA57 transition
+PASS: higher-half 64 GiB direct-map alias shares the PDPT and invalidates both aliases
+PASS: kernel uses page-backed 256 KiB heap with split/coalesce and free validation
+PASS: kernel reports paging and heap status independently
+PASS: kernel status screen uses its framebuffer without UEFI services
+PASS: SIMD and red zone disabled for kernel code
+PASS: kernel is an opt-in one-way command; normal UEFI UI remains default
+PASS: loader validates ELF, rejects W+X/overlap and allocates by permissions
+PASS: loader exits boot services before handoff
+python3 tools/test_kernel_timer.py
+PASS: PIT reload divisor rounds to ~100 Hz
+PASS: PIC starts with only master IRQ0 unmasked
+PASS: PIC bases are remapped away from CPU exception vectors
+PASS: PIT receives a valid low/high divisor in mode 3
+PASS: IRQ0 counts timer ticks while IRQ1/IRQ12 dispatch input
+PASS: IRQ stub synthesizes vector/error fields
+PASS: IRQ path preserves general-purpose registers and returns via iretq
+PASS: kernel initializes timer before STI
+PASS: kernel status worker sleeps on timer ticks and updates the live display
+PASS: unhandled PIC IRQ lines remain masked
+python3 tools/verify_scheduler.py
+PASS: context-switch assembly saves/restores SysV callee-saved registers
+PASS: task bootstrap fabricates six-register, RFLAGS and return-address frame
+PASS: bounded static task slots and dedicated stacks
+PASS: round-robin dispatch rotates its candidate and switches contexts
+PASS: sleep blocks a task until the PIT deadline
+PASS: task return marks a slot dead and returns to scheduler
+PASS: dead slots can be reused instead of limiting lifetime task creation
+PASS: task lifecycle metrics distinguish live, created and exited tasks
+PASS: idle scheduler halts with interrupts enabled when no work is ready
+PASS: timer IRQ only updates tick count and never context-switches
+PASS: kernel starts status, heartbeat, ABI smoke and two ring-3 process workers
+PASS: context switching preserves RFLAGS across user/kernel IF states
+PASS: scheduler activates kernel root before dispatch and each task process root before resume
+PASS: scheduler stores per-task user transition and exit state
+PASS: Linux-inspired syscall-number subset is explicitly versioned
+PASS: syscall dispatcher handles write, yield, getpid, monotonic time and exit
+PASS: kernel flags preserve freestanding no-red-zone/no-SIMD assumptions
+PASS: kernel exposes a generic ELF64 process and ring-3 syscall path
+PASS: context switch symbol is present in linked kernel
+PASS: linked context switch includes stack store/load and ret
+python3 tools/test_syscall_dispatch.py
+PASS: write returns the number of bytes written
+PASS: write sends exact bytes to the serial console
+PASS: write rejects unsupported file descriptors
+PASS: write rejects a null non-empty buffer
+PASS: write enforces its bounded transfer size
+PASS: getpid returns the current task ID
+PASS: sched_yield calls the task yield hook
+PASS: sleep hook records a bounded scheduler deadline request
+PASS: clock_gettime accepts CLOCK_MONOTONIC
+PASS: clock_gettime converts 100 Hz ticks to nanoseconds
+PASS: clock_gettime rejects unsupported realtime clock
+PASS: unknown syscalls return ENOSYS
+python3 tools/test_user_syscalls.py
+PASS: initialize production address-space manager
+PASS: initialize kernel desktop event service
+PASS: queue synthetic desktop-service event
+PASS: register safe display metadata service
+PASS: create isolated test address space
+PASS: reserve RX code region
+PASS: reserve RW data region
+PASS: allocate private code and data frames
+PASS: map RX and RW user pages
+PASS: activate user address space
+PASS: user write accepts a mapped read-only code buffer
+PASS: user write copies from user memory into kernel-owned buffer
+PASS: unmapped user buffer returns EFAULT without dereference
+PASS: user write enforces transfer limit
+PASS: user getpid returns current task ID
+PASS: user clock_gettime writes through validated user copy
+PASS: clock_gettime wrote expected time into user data page
+PASS: clock_gettime rejects a read-only code destination
+PASS: user sched_yield dispatches through the task scheduler
+PASS: user sleep-ticks syscall blocks through the task scheduler
+PASS: user sleep-ticks rejects a zero interval
+PASS: user sleep-ticks rejects unbounded intervals
+PASS: desktop event poll rejects read-only user output without consuming event
+PASS: desktop event poll copies one queued event into validated user memory
+PASS: userspace receives event payload and type intact
+PASS: desktop event poll reports empty queue without blocking
+PASS: display-info rejects read-only user output
+PASS: display-info copies current display metadata to userspace
+PASS: userspace receives safe display dimensions without a framebuffer pointer
+PASS: display rectangle syscall accepts bounded in-range draw command
+PASS: display rectangle syscall draws through kernel-owned surface
+PASS: display rectangle syscall rejects zero width
+PASS: display rectangle syscall rejects oversized width
+PASS: prepare valid text buffer in writable userspace memory
+PASS: display text syscall copies bounded text and validates scale
+PASS: display text syscall rasterizes anti-aliased glyphs into registered surface
+PASS: display text syscall rejects unmapped userspace string
+PASS: display text syscall rejects oversized strings
+PASS: display text syscall rejects unsupported font scale
+PASS: input-info returns readiness and runtime event counters
+PASS: input-info exposes key, pointer-motion and button counters
+PASS: desktop settings query writes the versioned settings contract
+PASS: userspace sees default theme and settings version
+PASS: settings syscall accepts a validated user preferences structure
+PASS: settings values remain available to userspace after an update
+PASS: settings syscall rejects invalid enum values
+PASS: prepare a bounded userspace path for the RAM filesystem
+PASS: userspace opens a writable session file and receives a process-owned handle
+PASS: filesystem write validates and copies user bytes
+PASS: filesystem close releases user file handle
+PASS: userspace can reopen its session note for reading
+PASS: filesystem read copies data back to writable user memory
+PASS: notes contents survive close and reopen in the same session
+PASS: filesystem closes reopened note handle
+PASS: filesystem list returns bounded directory entries
+PASS: begin retained frame before capturing desktop background
+PASS: draw base region into retained frame
+PASS: capture unobstructed desktop background in kernel memory
+PASS: commit overlay region as one frame
+PASS: frame commit presents the overlay region
+PASS: restore old window rectangle from retained desktop background
+PASS: present a moved window region without redrawing the whole screen
+PASS: partial present restores uncovered pixels and preserves unrelated scanout
+PASS: restore-rectangle syscall rejects zero-size damage
+PASS: int-0x80 trap checks vector and ring-3 origin
+PASS: user exit switches back to kernel root and records exit status
+PASS: destroy address space and release user frames
+PASS: no mock physical-page leak after user syscall test
+PASS: ring-3 syscall validation tests complete
+python3 tools/verify_userspace.py
+PASS: ring-3 code/data GDT descriptors are present
+PASS: int-0x80 IDT gate has DPL 3
+PASS: syscall stub saves GPRs and returns using iretq
+PASS: user exit restores the selected task local stack and interrupt flags
+PASS: per-task user return record is ABI-checked for assembly offsets
+PASS: cooperative user sched_yield is now enabled
+PASS: kernel runs two concurrent-lifetime user process workers
+PASS: C userspace runtime includes yield wrapper and multiple yield probes
+PASS: freestanding CRT enters C main and exits through syscall ABI
+PASS: userspace runtime wraps core syscalls and desktop services
+PASS: kernel exposes validated desktop event-poll and display-info services
+PASS: runtime tests actual queued desktop event and safe display metadata
+PASS: standalone user ELF is embedded as read-only payload
+PASS: native desktop ELF is embedded under distinct read-only symbols
+PASS: kernel seeds only bounded synthetic events for the userspace ABI probe
+PASS: user pointers are validated before physical-backed copies
+PASS: user write syscall copies into kernel-owned buffer
+PASS: clock_gettime copies to a validated writable user mapping
+PASS: trusted ELF loader initializes RX pages without writable user PTEs
+PASS: ELF64 loader validates class, endianness, machine, bounds and W+X
+PASS: ELF64 loader rejects dynamic/interpreter images and validates entry
+PASS: ELF64 loader maps BSS-zeroed segments plus private user stack
+PASS: process owns an address space and independent privilege-transition stack
+PASS: process exit reaps address space and transition stack
+PASS: scheduler task contains process association and privilege stack state
+PASS: kernel launches the user process through generic ELF loader
+PASS: kernel reports ELF64 ring-3 process result
+PASS: UAPI documents MintOS syscall numbers without claiming Linux compatibility
+PASS: linked ELF has user/process-entry symbols
+PASS: embedded static user ELF is within bounded image size (8472 bytes)
+PASS: embedded native desktop ELF is within bounded image size (34208 bytes)
+PASS: kernel ELF retains separated RX, R and RW PT_LOAD segments
+python3 tools/verify_elf_loader.py build/user-init.elf
+PASS: static ELF64 x86-64 user image (8472 bytes), entry=0x1000200000, 2 load segments
+PASS: separate RX text and RW data/BSS, no W+X, bounded static image suitable for the kernel loader
+PASS: C user-init program exercises the syscall runtime and desktop service boundary
+python3 tools/test_context_switch.py
+PASS: first-run context enters task A and yields back to caller
+PASS: task B has an independent stack and resumes its own entry
+PASS: task A resumes after its previous switch call
+PASS: task A resumes with its own saved RFLAGS (DF test), then clears DF
+PASS: task B resumes after its previous switch call
+PASS: task A preserves the full call stack across repeated switches
+PASS: task B preserves the full call stack across repeated switches
+python3 tools/test_physmem.py
+PASS: C physical-memory parser normalizes ranges, clips low RAM, ignores reserved ranges, tracks claims, rejects partial/double frees, coalesces ranges, reserves spans, and transactionally releases batches
+python3 tools/test_paging.py
+PASS: paging protections/cache flags; low+high alias coherence; dynamic PT reclamation/slot reuse; pool exhaustion/recovery; invalid and duplicate mapping rejection
+python3 tools/test_heap.py
+PASS: kernel heap aligns allocations, splits/reuses blocks, rejects invalid/double frees, coalesces, and returns used bytes to zero
+python3 tools/test_vmalloc.py
+PASS: virtual arena first-fit, zeroing, exact-base free, fragmentation, rollback, slot reuse, allocator metrics, 1000 allocate/free cycles, transactional free rollback, and no backing-frame/mapping leaks
+python3 tools/test_address_space.py
+PASS: manager init with supervisor template
+PASS: create two independent roots
+PASS: root pages are independent
+PASS: share only supervisor direct-map PML4 entry
+PASS: private lower PML4 allows user subtree while retaining supervisor leaf restrictions
+PASS: copy shared low kernel mapping template
+PASS: user region starts unmapped and is private
+PASS: allocate address-space-owned user frames
+PASS: reject mapping without a reserved virtual region
+PASS: reserve same VA independently plus a cross-owner probe region
+PASS: reject overlapping virtual-region reservations
+PASS: reject writable executable regions
+PASS: query region metadata by contained virtual address
+PASS: map the same virtual address in separately reserved roots
+PASS: lookup physical offset and enforce writable non-executable leaf
+PASS: the same VA resolves to a different frame in the other root
+PASS: reject another address-space's frame inside an otherwise valid region
+PASS: reject duplicate leaf mapping
+PASS: reject addresses outside private user window
+PASS: activate address space A
+PASS: refuse to destroy the active address space
+PASS: switch CR3 to address space B and update active state
+PASS: restore kernel root
+PASS: mapping changes request TLB invalidation
+PASS: allocate frame for mapping rollback test
+PASS: reserve second region for mapping rollback test
+PASS: simulate partial page-table allocation failure
+PASS: mapping failure rolls back newly-created table pages
+PASS: release frame after rolled-back mapping
+PASS: release unmapped rollback region
+PASS: unmap returns correct frame and permissions
+PASS: reject repeated unmap
+PASS: unmap the peer address-space mapping
+PASS: release now-unmapped user frame
+PASS: release regions after their mappings are removed
+PASS: destroy address space A and reclaim its tables
+PASS: destroy address space B and reclaim mapped frames
+PASS: no physical page leaks after address-space teardown
+PASS: create empty address space for ELF loader
+PASS: load static ELF64 PT_LOAD segments and allocate private stack
+PASS: ELF loader preserves RX text and records entry/stack layout
+PASS: ELF loader creates RW+NX data and stack mappings
+PASS: activate loaded ELF address space for verification
+PASS: ELF loader copies segment bytes and leaves BSS/data mapping valid
+PASS: teardown loaded ELF address space cleanly
+PASS: ELF load/teardown returns all mock pages
+PASS: simulate private-root creation failure
+PASS: root creation failure releases partial allocations
+PASS: address-space isolation, mapping permissions, rollback, switching and teardown tests complete
+python3 tools/verify_address_space.py
+PASS: private user window is bounded between 64 and 512 GiB
+PASS: each address space receives an independent root and private PDPT
+PASS: shared higher-half direct map remains supervisor-only
+PASS: private intermediate and leaf entries require user permission
+PASS: data frames belong to one address space and cannot be cross-mapped
+PASS: address-space teardown rejects active roots and frees private subtrees
+PASS: kernel exercises two roots with the same VA mapping to separate frames
+PASS: host test covers rollback, address isolation and no leaks
+PASS: runtime isolation self-test reports a specific failure stage
+PASS: kernel cleanup releases only regions successfully reserved by the runtime test
+PASS: address-space tests are included in release suite
+python3 tools/test_desktop_boundary.py
+PASS: queue accepts exactly its configured capacity
+PASS: queue overflow is explicit and counted
+PASS: events preserve FIFO order
+PASS: queue wrap-around preserves bounded count
+PASS: wrapped events drain in correct FIFO order
+PASS: production event-queue self-test passes
+PASS: surface accepts valid GOP descriptor with padded stride
+PASS: software frame begins using bounded backbuffer
+PASS: frame draw targets the backbuffer
+PASS: scanout is unchanged before frame commit
+PASS: frame commit publishes completed pixels to scanout
+PASS: surface uses stride rather than visible width
+PASS: surface clips out-of-bounds pixels
+PASS: rectangle fill clips safely at display edges
+PASS: rectangle fill respects the visible width
+PASS: surface accepts GOP RGB-byte pixel format
+PASS: pixel-channel order is handled explicitly
+PASS: anti-aliased font accepts a native text surface
+PASS: native text service renders mixed-case proportional glyphs
+PASS: native text service changes pixels for visible glyphs
+PASS: native text service blends anti-aliased glyph edges
+PASS: initialize surface for bounded typography presets
+PASS: typography presets increase smoothly without integer-multiplier jumps
+PASS: surface rejects undersized framebuffer mapping
+PASS: surface rejects unsupported GOP pixel format
+PASS: surface rejects missing framebuffer descriptor
+PASS: shared desktop ABI queue and framebuffer boundary tests complete
+python3 tools/test_ramfs_settings.py
+PASS: settings service exposes versioned defaults
+PASS: settings service accepts valid theme preferences
+PASS: settings update increments generation and retains values
+PASS: settings service rejects unsupported theme enum
+PASS: rejected settings leave the active settings unchanged
+PASS: RAM filesystem starts with welcome, notes and about files
+PASS: RAM filesystem normalizes case when opening names
+PASS: RAM filesystem reads a built-in file
+PASS: file handles are isolated by owner process
+PASS: closed handles cannot be reused
+PASS: built-in files reject write access
+PASS: RAM filesystem writes bounded note contents
+PASS: RAM filesystem closes writable handle
+PASS: notes persist across app handles during the session
+PASS: RAM filesystem releases note handle
+PASS: RAM filesystem rejects path traversal names
+PASS: two processes can hold independent file handles
+PASS: process exit reaps every file handle owned by that process
+PASS: reaping one process handles leaves another process unaffected
+PASS: owner cleanup releases remaining handles
+PASS: session RAMFS and desktop settings tests complete
+python3 tools/test_block.py
+PASS: block registry rejects a null device
+PASS: block registry accepts a valid 512-byte device
+PASS: block registry reports registered device
+PASS: block layer writes an in-range sector
+PASS: block layer reads exact sector contents
+PASS: block layer rejects an LBA at capacity
+PASS: block layer rejects out-of-range writes
+PASS: block registry accepts a read-only device
+PASS: block layer enforces read-only device flag
+PASS: block layer tests complete
+python3 tools/test_fat16.py
+PASS: register in-memory FAT16 block disk
+PASS: mount valid MBR partition and FAT16 BPB with VFAT directory name
+PASS: parse FAT16 geometry and cluster size
+PASS: write existing preallocated FAT16 file in place
+PASS: read back persisted FAT16 file bytes
+PASS: write compact settings record to FAT16
+PASS: read back settings record from FAT16
+PASS: reject writes beyond existing file cluster allocation
+PASS: reject path traversal and unsupported path syntax
+PASS: block layer guards device capacity during filesystem access
+PASS: unmount clears active volume state
+PASS: FAT16 mount/read/write tests complete
+python3 tools/test_fat16_image.py build/mintos26-data-512m.img
+PASS: open disposable copy of generated 512 MiB FAT16 image
+PASS: generated data image is sector aligned
+PASS: register generated image as a bounded block device
+PASS: production FAT16 driver mounts the generated MBR/VFAT image
+PASS: mount uses the data partition at LBA 2048
+PASS: mount parses the generated 16 KiB cluster geometry
+PASS: read welcome document through the production VFAT path resolver
+PASS: read preseeded Notes file from the generated data volume
+PASS: locate the preallocated empty settings record in the long-name directory
+PASS: write Notes in place using the production filesystem over the generated image
+PASS: verify in-place Notes data and directory size on disk
+PASS: write Settings record into the preallocated on-disk cluster
+PASS: verify persistent Settings bytes and file size on disk
+PASS: generated FAT16 image read/write integration checks complete
+python3 tools/test_storage_persistence.py
+PASS: storage service discovers and mounts the FAT16 data volume
+PASS: settings defaults initialized and seeded on persistent volume
+PASS: settings service commits preference record to disk
+PASS: settings survive service reinitialization from FAT16
+PASS: Notes write-through commits text to FAT16
+PASS: Notes reload after RAM filesystem reinitialization
+PASS: persistent mount remains active after service reload
+PASS: storage/settings/notes persistence integration tests complete
+python3 tools/verify_storage.py
+PASS: block layer: bounds every sector access against device capacity
+PASS: block layer: honors block device read-only state
+PASS: block layer: uses a bounded device registry
+PASS: AHCI driver: marks AHCI MMIO range uncached
+PASS: AHCI driver: identifies disk capacity before registration
+PASS: AHCI driver: bounds command and engine waits
+PASS: AHCI driver: has a sector-write command path
+PASS: AHCI driver: has a sector-read command path
+PASS: AHCI driver: checks AHCI task-file errors
+PASS: AHCI driver: registers attached ATA disks with block layer
+PASS: FAT16: walks FAT16 cluster chains with EOC checks
+PASS: FAT16: bounds path parsing
+PASS: FAT16: supports the bundled VFAT DOCUMENTS directory
+PASS: FAT16: rejects non-FAT16 cluster counts
+PASS: FAT16: validates partition bounds
+PASS: FAT16: publishes file size only after data sectors are written
+PASS: persistence: loads and saves settings via the filesystem
+PASS: persistence: loads and writes notes through persistent storage
+PASS: persistence: preserves RAM-only fallback when the volume is absent
+Storage source verification: 19 PASS, 0 FAIL
+python3 tools/test_ps2_input.py
+PASS: PS/2 keyboard set-1 decoder, modifiers, extended keys, mouse packets and button events
+PASS: IDT contains keyboard IRQ1 and mouse IRQ12 gates
+PASS: assembly has hardware IRQ1/IRQ12 stubs
+PASS: PIC acknowledges slave mouse IRQs before master cascade
+PASS: native kernel initializes PS/2 after desktop event service
+PASS: userspace can query validated hardware input readiness
+python3 tools/test_pci.py
+PASS: decode a present PCI display function
+PASS: PCI BDF and vendor/device identifiers are decoded
+PASS: PCI class, subclass, programming interface and revision are decoded
+PASS: PCI multifunction header and command/status fields are decoded
+PASS: absent PCI function is rejected
+PASS: out-of-range PCI device number is rejected
+PASS: out-of-range PCI function number is rejected
+PASS: PCI inventory uses a bounded device array
+python3 tools/verify_arch_hardening.py
+PASS: TSS layout is packed and asserted to 104 bytes
+PASS: GDT contains the 16-byte TSS descriptor
+PASS: task register is loaded from selector 0x18
+PASS: GDT includes DPL3 code and data selectors
+PASS: IDT exposes a DPL3 int-0x80 gate
+PASS: RSP0 stack is initialized and can be updated
+PASS: double-fault, NMI and machine-check use separate IST stacks
+PASS: all four stacks have before/after guard pages in linker layout
+PASS: page-table builder leaves declared guard PTEs non-present
+PASS: page-fault panic records CR2 and error bits before framebuffer panic rendering
+PASS: kernel screen reports TSS/IST and stack guards
+PASS: guard/stack linker symbols present in ELF
+PASS: every 16 KiB stack has aligned 4 KiB guard page below and above
+python3 tools/verify_vmalloc.py
+PASS: 16 MiB virtual arena has bounded page count and resides below the identity-map limit
+PASS: paging removes every arena page before installing CR3
+PASS: physical allocator can reserve address spans without any active claims
+PASS: arena is physically reserved before any regular frame claim
+PASS: allocator zeroes each frame and maps it with explicit flags
+PASS: allocator records physical ownership, validates frees and rolls back failed mappings
+PASS: kernel boot tests mapped arena allocation, write/read and cleanup
+PASS: kernel reports active/peak/reclaimed PT tables and VMALLOC health counters
+PASS: VMALLOC self-test repeats allocation/free cycles and checks PT count returns to baseline
+PASS: paging owns a bitmap for reusable dynamic PT slots and reclaims completely empty tables
+PASS: VMALLOC exposes high-water and failure/rollback counters
+PASS: VMALLOC releases physical ownership transactionally and restores mappings on failure
+PASS: physical batch release validates all claims and duplicate pages before commit
+PASS: build compiles vmalloc module and runs its host-side test
+build/BOOTX64.EFI:                  PE32+ executable for EFI (application), x86-64, 4 sections
+build/mintos26-efi-volume.img:      DOS/MBR boot sector, code offset 0x3c+2, OEM-ID "MINTOS26", sectors/cluster 4, root entries 512, Media descriptor 0xf8, sectors/FAT 64, sectors/track 63, heads 255, sectors 65536 (volumes > 32 MB), serial number 0x26310001, label: "MINTOS26   ", FAT (16 bit)
+build/mintos26-26.4.004.1-uefi.img: DOS/MBR boot sector; partition 1 : ID=0xee, start-CHS (0x0,0,2), end-CHS (0x3ff,255,63), startsector 1, 262143 sectors, extended partition table (last)
+build/mintos26-data-512m.img:       DOS/MBR boot sector; partition 1 : ID=0x6, start-CHS (0x3ff,254,63), end-CHS (0x3ff,254,63), startsector 2048, 1046528 sectors, extended partition table (last)
+build/mintos26-26.4.004.1-uefi.iso: ISO 9660 CD-ROM filesystem data 'MintOS26 26.4.004.1 UEFI' (bootable)

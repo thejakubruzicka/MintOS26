@@ -1,0 +1,7 @@
+MINTOS26 SETTINGS V1
+NOTE: Read-only seed file; runtime preferences remain session-only until persistence is qualified.
+theme=light
+accent=mint
+ui_scale=1
+wallpaper=0
+reduce_motion=0

@@ -1,0 +1,147 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "../kernel/include/task.h"
+#include "../kernel/include/arch.h"
+#include "../kernel/include/serial.h"
+#include "../kernel/include/syscall.h"
+#include "../kernel/include/address_space.h"
+#include "../kernel/include/uapi/mintos/syscall.h"
+#include "../kernel/include/storage_diag.h"
+#include "../kernel/include/log.h"
+#include "../kernel/include/block.h"
+#include "../kernel/include/fat16.h"
+#include "../kernel/include/vfs.h"
+#include "../kernel/include/pci.h"
+#include "../kernel/include/driver_catalog.h"
+#include "../kernel/include/e1000.h"
+
+static char output[2048];
+static size_t output_len;
+static uint64_t fake_ticks = 12345;
+static uint64_t yield_calls;
+static uint64_t sleep_calls;
+static uint64_t last_sleep_ticks;
+
+static MINT_STORAGE_SNAPSHOT mock_storage_snapshot;
+const MINT_STORAGE_SNAPSHOT *mint_storage_diag_snapshot(void) { return &mock_storage_snapshot; }
+void mint_driver_catalog_snapshot(MINT_DRIVER_CATALOG *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->version = MINT_DRIVER_CATALOG_VERSION;
+}
+uint32_t mint_log_read_recent(MINT_LOG_RECORD *out, uint32_t capacity,
+                              uint32_t minimum_severity, uint32_t component_filter) {
+    (void)out; (void)capacity; (void)minimum_severity; (void)component_filter;
+    return 0u;
+}
+/* New storage services are deliberately unavailable in this legacy trusted-kernel
+ * dispatcher fixture. Dedicated tests exercise their production implementations. */
+const MINT_BLOCK_DEVICE *mint_block_get(uint32_t index) { (void)index; return 0; }
+uint32_t mint_block_count(void) { return 0u; }
+int mint_block_io_stats(uint32_t index,MINT_BLOCK_IO_STATS *out) {
+    if(index!=0u||!out)return 0;memset(out,0,sizeof(*out));out->version=MINT_BLOCK_IO_STATS_VERSION;return 1;
+}
+int mint_vfs_mount_table_snapshot(MINT_VFS_MOUNT_TABLE *out) {
+    if(!out)return 0;memset(out,0,sizeof(*out));out->version=MINT_VFS_ABI_VERSION;return 1;
+}
+static MINT_PCI_INVENTORY mock_pci_inventory;
+int mint_e1000_init(void) { return 1; }
+int mint_e1000_get_info(MINT_E1000_INFO *out) {
+    if (!out) return 0;
+    memset(out,0,sizeof(*out)); out->version=MINT_E1000_INFO_VERSION;
+    out->struct_size=sizeof(*out); out->state=MINT_E1000_ACTIVE;
+    out->bus=0; out->device=3; out->function=0; out->mmio_base=0xF0000000ULL;
+    out->tx_submitted=2; out->tx_completed=2; out->rx_received=1; return 1;
+}
+int mint_e1000_loopback_test(void) { return 1; }
+const MINT_PCI_INVENTORY *mint_pci_get_inventory(void) { return &mock_pci_inventory; }
+int mint_fat16_format_blank(uint32_t block_index) { (void)block_index; return -MINT_ENODEV; }
+int64_t mint_fat16_list_dir(const char *path, MINT_FAT16_DIRENT *entries, uint32_t capacity) {
+    (void)path; (void)entries; (void)capacity; return -MINT_ENODEV;
+}
+int64_t mint_fat16_read_file(const char *path, void *buffer, size_t capacity) {
+    (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV;
+}
+int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out) {
+    if (!out) return 0; memset(out,0,sizeof(*out)); return 1;
+}
+int mint_fat16_volume_select(uint32_t ordinal) { (void)ordinal; return 0; }
+void mint_storage_diag_recheck(void) { }
+void mint_log_emit(uint32_t severity, uint32_t component, const char *message) {
+    (void)severity; (void)component; (void)message;
+}
+
+void mint_serial_putc(char c) {
+    if (output_len + 1 < sizeof(output)) {
+        output[output_len++] = c;
+        output[output_len] = 0;
+    }
+}
+void mint_serial_write(const char *s) { if (s) while (*s) mint_serial_putc(*s++); }
+void mint_serial_init(void) {}
+void mint_serial_hex64(uint64_t value) { (void)value; }
+void mint_serial_dec64(uint64_t value) { (void)value; }
+uint64_t mint_timer_ticks(void) { return fake_ticks; }
+int mint_input_keyboard_ready(void) { return 1; }
+int mint_input_mouse_ready(void) { return 0; }
+void mint_input_get_counters(uint64_t *keyboard, uint64_t *motion, uint64_t *buttons) {
+    if (keyboard) *keyboard = 0;
+    if (motion) *motion = 0;
+    if (buttons) *buttons = 0;
+}
+uint64_t mint_task_current_pid(void) { return 42; }
+void mint_task_yield(void) { yield_calls++; }
+void mint_task_sleep_ticks(uint64_t ticks) { sleep_calls++; last_sleep_ticks = ticks; }
+_Noreturn void mint_task_exit(void) { abort(); }
+static int mock_exit_seen;
+static uint64_t mock_exit_code;
+void mint_task_user_exit_reset(void) { mock_exit_seen = 0; mock_exit_code = 0; }
+void mint_task_user_exit_record(uint64_t code) { mock_exit_seen = 1; mock_exit_code = code; }
+int mint_task_user_exit_seen(void) { return mock_exit_seen; }
+uint64_t mint_task_user_exit_code(void) { return mock_exit_code; }
+/* The legacy trusted-kernel syscall test does not initialize an address space.
+ * User-mode symbols are stubbed here; the separate user-syscall test exercises
+ * their production implementations against a mock physical-memory backend. */
+const MINT_ADDRESS_SPACE *mint_address_space_current(void) { return 0; }
+int mint_address_space_validate_user_range(const MINT_ADDRESS_SPACE *space, uint64_t va, size_t n, int wr) { (void)space; (void)va; (void)n; (void)wr; return 0; }
+int mint_address_space_copy_from_user(const MINT_ADDRESS_SPACE *space, void *dst, uint64_t src, size_t n) { (void)space; (void)dst; (void)src; (void)n; return 0; }
+int mint_address_space_copy_to_user(const MINT_ADDRESS_SPACE *space, uint64_t dst, const void *src, size_t n) { (void)space; (void)dst; (void)src; (void)n; return 0; }
+int mint_address_space_activate_kernel(void) { return 0; }
+
+#define EXPECT(cond, name) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", name); return 1; } else { printf("PASS: %s\n", name); } } while (0)
+
+int main(void) {
+    const char bytes[] = "mint";
+    output_len = 0; output[0] = 0;
+    EXPECT(mint_syscall_dispatch(MINT_SYS_WRITE, 1, (uintptr_t)bytes, 4, 0, 0, 0) == 4,
+           "write returns the number of bytes written");
+    EXPECT(output_len == 4 && memcmp(output, "mint", 4) == 0,
+           "write sends exact bytes to the serial console");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_WRITE, 7, (uintptr_t)bytes, 4, 0, 0, 0) == -MINT_EBADF,
+           "write rejects unsupported file descriptors");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_WRITE, 1, 0, 1, 0, 0, 0) == -MINT_EFAULT,
+           "write rejects a null non-empty buffer");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_WRITE, 1, (uintptr_t)bytes, 513, 0, 0, 0) == -MINT_EINVAL,
+           "write enforces its bounded transfer size");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_GETPID, 0, 0, 0, 0, 0, 0) == 42,
+           "getpid returns the current task ID");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_SCHED_YIELD, 0, 0, 0, 0, 0, 0) == 0 && yield_calls == 1,
+           "sched_yield calls the task yield hook");
+    mint_task_sleep_ticks(3u);
+    EXPECT(sleep_calls == 1 && last_sleep_ticks == 3u,
+           "sleep hook records a bounded scheduler deadline request");
+    mint_timespec64 ts = {-1,-1};
+    EXPECT(mint_syscall_dispatch(MINT_SYS_CLOCK_GETTIME, MINT_CLOCK_MONOTONIC,
+                                 (uintptr_t)&ts, 0, 0, 0, 0) == 0,
+           "clock_gettime accepts CLOCK_MONOTONIC");
+    EXPECT(ts.tv_sec == 123 && ts.tv_nsec == 450000000,
+           "clock_gettime converts 100 Hz ticks to nanoseconds");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_CLOCK_GETTIME, MINT_CLOCK_REALTIME,
+                                 (uintptr_t)&ts, 0, 0, 0, 0) == -MINT_EINVAL,
+           "clock_gettime rejects unsupported realtime clock");
+    EXPECT(mint_syscall_dispatch(9999, 0, 0, 0, 0, 0, 0) == -MINT_ENOSYS,
+           "unknown syscalls return ENOSYS");
+    return 0;
+}
