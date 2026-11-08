@@ -1,0 +1,183 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+
+MintOS26 26.5.008.0 native kernel entry
+[arch] kernel GDT loaded; 64-bit TSS installed at selector 0x18
+[arch] dedicated guarded stacks configured for RSP0, double fault, NMI and machine check
+[arch] IDT installed for exceptions 0..31, PIT/PS2 IRQs and DPL3 int-0x80 gate
+[arch] maskable interrupts remain disabled until PIT/PIC initialization
+[pci] enumerating PCI configuration space via mechanism 1
+[pci] 00:00.0 vendor=8086 device=29C0 class=06:00 prog-if=00
+[pci] 00:01.0 vendor=1234 device=1111 class=03:00 prog-if=00 [display device; no GPU driver attached]
+[pci] 00:02.0 vendor=8086 device=100E class=02:00 prog-if=00 [network controller]
+[pci] 00:1F.0 vendor=8086 device=2918 class=06:01 prog-if=00
+[pci] 00:1F.2 vendor=8086 device=2922 class=01:06 prog-if=01 [mass-storage controller]
+[pci] 00:1F.3 vendor=8086 device=2930 class=0C:05 prog-if=00
+[pci] enumeration complete found=6 stored=6 scanned-slots=8199 overflow=0
+[mm] UEFI descriptors: 122
+[mm] conventional pages: 233750
+[mm] merged free ranges: 7
+[paging] installed 64 GiB identity map plus FFFF8000 higher-half direct-map alias
+[paging] 2 MiB leaves; kernel image split into protected 4 KiB pages
+[paging] NX enabled; text RX, rodata R/NX, data RW/NX
+[paging] framebuffer identity range marked uncached
+[paging] eight non-present guard pages installed around RSP0/DF/NMI/MC stacks
+[log][INFO][BLOCK][#1] storage diagnostics started; media writes are disabled
+[ahci] controller 00:1F.2 vendor=0x0000000000008086 device=0x0000000000002922 BAR5=0x0000000081060000
+[ahci] controller PI=0x000000000000003F
+[log][INFO][AHCI][#2] controller ready; serialized DMA with bounded polling; generic media writes rem
+[log][INFO][AHCI][#3] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][WARN][PARTITION][#4] partition table valid, but no supported FAT16 partition type was found
+[block] sda controller-index=0 port=0 sectors=262144 bytes=134217728 capacity-source=LBA48 read-only=yes
+[identify] sda lba28_raw=262144 lba48_supported=yes lba48_raw=262144 selected_sectors=262144
+[log][WARN][PARTITION][#5] partition type is not one of the supported FAT16 types
+[storage] sda LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x0000000009056F07 repeat=MATCH MBR-disk-id=0x0000000000000000 developer-marker=MISMATCH/UNKNOWN
+[storage] sda filesystem: partition table valid, but no supported FAT16 partition type was found
+[log][INFO][AHCI][#6] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][INFO][PARTITION][#7] MintOS26 FAT16 candidate validated; read-only mount verification pending
+[block] sdb controller-index=0 port=1 sectors=1048576 bytes=536870912 capacity-source=LBA48 read-only=yes
+[identify] sdb lba28_raw=1048576 lba48_supported=yes lba48_raw=1048576 selected_sectors=1048576
+[log][INFO][FAT16][#8] MintOS26 FAT16 BPB and cluster geometry validated read-only
+[storage] sdb LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x000000000A7162F4 repeat=MATCH MBR-disk-id=0x0000000026300421 developer-marker=MATCH
+[storage] sdb filesystem: MintOS26 FAT16 candidate validated; read-only mount verification pending
+[ahci] controller-index=0 port=2 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#9] implemented port link is not active (SSTS DET/IPM check failed)
+[ahci] controller-index=0 port=3 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#10] implemented port link is not active (SSTS DET/IPM check failed)
+[ahci] controller-index=0 port=4 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#11] implemented port link is not active (SSTS DET/IPM check failed)
+[ahci] controller-index=0 port=5 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#12] implemented port link is not active (SSTS DET/IPM check failed)
+[log][INFO][PARTITION][#13] MintOS26 FAT16 mounted read-only; seed files readable; writes disabled
+[storage] FAT16 mounted read-only on block index 1; Notes and Settings seed files readable
+[storage] diagnostic probe complete controllers=1 devices=2 readonly-mounted=yes volumes=1 persistent=no writes-disabled=yes
+[log][INFO][BLOCK][#14] read-only filesystem validation completed; persistent writes remain disabled
+[mm] excluded physical range pages: 0
+[mm] claimed test physical frame at 0x0000000000134000
+[paging] higher-half direct-map alias self-test passed
+[paging] dynamic map/unmap and higher-half alias self-test passed
+[heap] 256 KiB contiguous identity-mapped kernel heap online at 0x0000000000135000
+[vmalloc] 16 MiB virtual arena initialized (4096 pages)
+[vmalloc] invalid free or mapping ownership mismatch
+[vmalloc] alloc/map/zero/write/unmap/free self-test passed
+[vmalloc] repeated allocate/free table-reclaim test passed
+[vmalloc] transactional physical release path ready
+[paging] dynamic PT active/peak/reclaimed=2/3/73
+[vmalloc] used/peak pages=0/5 allocations/frees=66/66 failed/rollback/free-errors=0/0/1
+[aspace] independent roots, isolated user mappings, CR3 switch and cleanup passed
+[settings] versioned theme/accent/scale/wallpaper/reduced-motion API ready (session memory)
+[vfs] session RAM filesystem online files=3 max-files=8 bytes-per-file=4096 (volatile across reboot)
+[desktop-core] seeded two bounded userspace event-service probes
+[desktop-core] settings service + session RAM filesystem + bounded display/event services ready
+[e1000] Intel 82540EM detected by read-only PCI scan; driver idle, DMA disabled; use Terminal `net start`
+[log][INFO][E1000][#15] Intel 82540EM detected; driver remains idle until explicit net start; DMA disabled
+[irq] legacy PIC remapped; IRQ0 alone is unmasked
+[timer] PIT channel 0 configured near 100 Hz; waiting for first IRQ
+[input] PS/2 keyboard online (IRQ1, set-1 translation)
+[input] PS/2 mouse online (IRQ12, 3-byte packets)
+[kernel] enabling maskable interrupts after IDT/PIC/PIT/input setup
+[proc] process table initialized; bounded ELF64 loader enabled
+[sched] cooperative round-robin scheduler initialized
+[sched] created pid=1 name=desktop-status
+[sched] created pid=2 name=heartbeat
+[sched] created pid=3 name=abi-smoke
+[sched] created pid=4 name=ring3-smoke-a
+[sched] created pid=5 name=ring3-smoke-b
+[sched] created pid=6 name=native-desktop
+[kernel] enabling interrupts and entering scheduler
+[sched] per-task CR3, transition-state and RFLAGS switching online
+[sched] task start pid=1 name=desktop-status
+[sched] task start pid=2 name=heartbeat
+[sched] task start pid=3 name=abi-smoke
+[abi] Linux-inspired write syscall contract online
+[abi] getpid returned 3
+[abi] clock_gettime status=0 uptime=0s
+[sched] task exited pid=3 name=abi-smoke total-exited=1
+[sched] task start pid=4 name=ring3-smoke-a
+[ring3] worker 1 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=4 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=4
+[sched] task start pid=5 name=ring3-smoke-b
+[ring3] worker 2 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=5 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=5
+[sched] task start pid=6 name=native-desktop
+[sched] first activation user root pid=4 cr3=0x0000000000175000
+[sched] first activation user root pid=5 cr3=0x0000000000185000
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=4 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 1 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=4 name=ring3-smoke-a total-exited=2
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=5 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 2 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=5 name=ring3-smoke-b total-exited=3
+[desktop-ui] launching native shell as a persistent ring-3 process
+[proc] loaded ELF64 process pid=6 entry=0x0000001000200000 segments=2 stack-pages=4
+[proc] entering ring 3 at ELF entry
+[user-desktop] MintDE 1.0.7; E1000 diagnostics, dock, split About pages, mouse menus and settings ready
+[sched] first activation user root pid=6 cr3=0x0000000000175000
+[sched] user task yield enabled pid=6
+[task] heartbeat pid=2 ticks=501
+[task] heartbeat pid=2 ticks=1001
+[task] heartbeat pid=2 ticks=1501
+[task] heartbeat pid=2 ticks=2001
+[task] heartbeat pid=2 ticks=2501
+[task] heartbeat pid=2 ticks=3001
+[task] heartbeat pid=2 ticks=3501
+[task] heartbeat pid=2 ticks=4001
+[task] heartbeat pid=2 ticks=4501
+[task] heartbeat pid=2 ticks=5001
+[task] heartbeat pid=2 ticks=5501
+[task] heartbeat pid=2 ticks=6001
+[task] heartbeat pid=2 ticks=6501
+[task] heartbeat pid=2 ticks=7001
+[task] heartbeat pid=2 ticks=7501
+[task] heartbeat pid=2 ticks=8001
+[task] heartbeat pid=2 ticks=8501
+[task] heartbeat pid=2 ticks=9001
+[task] heartbeat pid=2 ticks=9501
+[task] heartbeat pid=2 ticks=10001
+[task] heartbeat pid=2 ticks=10501
+[task] heartbeat pid=2 ticks=11001
+[task] heartbeat pid=2 ticks=11501
+[task] heartbeat pid=2 ticks=12001
+[task] heartbeat pid=2 ticks=12501
+[task] heartbeat pid=2 ticks=13001
+[task] heartbeat pid=2 ticks=13501
+[task] heartbeat pid=2 ticks=14001
+[task] heartbeat pid=2 ticks=14501
+[task] heartbeat pid=2 ticks=15001
+[task] heartbeat pid=2 ticks=15501
+[task] heartbeat pid=2 ticks=16001
+[task] heartbeat pid=2 ticks=16501
+[task] heartbeat pid=2 ticks=17001
+[task] heartbeat pid=2 ticks=17501
+[task] heartbeat pid=2 ticks=18001
+[task] heartbeat pid=2 ticks=18501
+[task] heartbeat pid=2 ticks=19001
+[task] heartbeat pid=2 ticks=19501
+[task] heartbeat pid=2 ticks=20001
+[task] heartbeat pid=2 ticks=20501
+[MintDE terminal] root#mintos > net status
+[MintDE terminal] root#mintos > net start
+[e1000] Intel 82540EM driver active; bounded polling RX/TX rings initialized; MAC=52:54:00:12:34:56 DMA below 4 GiB; interrupts masked
+[log][INFO][E1000][#16] Intel 82540EM initialized with bounded polling RX/TX rings; interrupts masked
+[MintDE terminal] root#mintos > net test
+[e1000] loopback FAIL stage=4 STATUS=0x0000000080080783 CTRL=0x0000000000140060 RCTL=0x00000000040080DA TCTL=0x000000000103F0FA TDH/TDT=0x0000000000000001/0x0000000000000001 RDH/RDT=0x0000000000000000/0x0000000000000007 TXIDX/TXD=0x0000000000000000/0x0000000000000001 RXIDX/RXD/LEN/ERR/BUF=0x0000000000000000/0x0000000000000000/0x0000000000000000/0x0000000000000000/0x0000000000219000 TXCMD/LEN/BUF=0x000000000000000B/0x000000000000003C/0x000000000021D000 TDBAL/H/LEN=0x0000000000217000/0x0000000000000000/0x0000000000000080 RDBAL/H/LEN=0x0000000000218000/0x0000000000000000/0x0000000000000080 PCI-CMD=0x0000000000000007 MDIC=0x0000000000000000 PHYCTRL/PHYSTS=0x0000000000001140/0x000000000000794D
+[log][WARN][E1000][#17] RX descriptor completion timed out
+[MintDE terminal] root#mintos > net status
+[task] heartbeat pid=2 ticks=21001
+[task] heartbeat pid=2 ticks=21501
+[task] heartbeat pid=2 ticks=22001
+[task] heartbeat pid=2 ticks=22501
