@@ -1,4 +1,4 @@
-VERSION := 26.5.011.0
+VERSION := 26.5.012.0
 CC := clang
 LINK := lld-link
 PYTHON := python3
@@ -17,7 +17,7 @@ USER_RUNTIME_OBJ := $(BUILD)/user-runtime.obj
 USER_APP_OBJ := $(BUILD)/user-init.obj
 USER_DESKTOP_OBJ := $(BUILD)/user-desktop.obj
 MINTDE_HEADERS := kernel/user/mintde/mintde.h kernel/user/mintde/gfx.h kernel/user/mintde/font.h kernel/user/include/mintos/runtime.h $(wildcard kernel/include/*.h kernel/include/uapi/mintos/*.h)
-MINTDE_OBJS := $(BUILD)/mintde-gfx.obj $(BUILD)/mintde-font.obj $(BUILD)/mintde-widgets.obj $(BUILD)/mintde-apps.obj $(BUILD)/mintde-web.obj $(BUILD)/mintde-netcore.obj $(BUILD)/mintde-mem.obj
+MINTDE_OBJS := $(BUILD)/mintde-gfx.obj $(BUILD)/mintde-font.obj $(BUILD)/mintde-widgets.obj $(BUILD)/mintde-apps.obj $(BUILD)/mintde-web.obj $(BUILD)/mintde-netcore.obj $(BUILD)/mintde-mem.obj $(BUILD)/crypto-sha2.obj $(BUILD)/crypto-aead.obj $(BUILD)/crypto-x25519.obj $(BUILD)/crypto-pubkey.obj $(BUILD)/crypto-x509.obj $(BUILD)/crypto-roots_data.obj $(BUILD)/crypto-tls.obj $(BUILD)/crypto-random.obj
 USER_DESKTOP_ELF := $(BUILD)/user-desktop.elf
 USER_DESKTOP_BLOB_ASM := $(BUILD)/desktop-elf-blob.S
 USER_DESKTOP_BLOB_OBJ := $(BUILD)/desktop-elf-blob.obj
@@ -131,8 +131,11 @@ $(BUILD)/acpi-power.obj: kernel/power/acpi.c kernel/include/power.h kernel/inclu
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
 $(BUILD)/log.obj: kernel/console/log.c kernel/include/log.h kernel/include/serial.h kernel/include/task.h kernel/include/address_space.h kernel/include/process.h kernel/include/elf_loader.h kernel/include/paging.h | $(BUILD)
 	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
-$(BUILD)/mintde-web.obj: kernel/user/mintde/web.c $(MINTDE_HEADERS) | $(BUILD)
-	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/mintde-web.obj: kernel/user/mintde/web.c $(MINTDE_HEADERS) $(wildcard kernel/user/crypto/*.h) | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -Ikernel/user/crypto -c $< -o $@
+CRYPTO_HEADERS := $(wildcard kernel/user/crypto/*.h)
+$(BUILD)/crypto-%.obj: kernel/user/crypto/%.c $(CRYPTO_HEADERS) kernel/user/include/mintos/runtime.h | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -Ikernel/user/crypto -c $< -o $@
 $(BUILD)/mintde-mem.obj: kernel/lib/mem.c | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-netcore.obj: kernel/net/netcore.c kernel/include/net.h | $(BUILD)
@@ -143,8 +146,8 @@ $(BUILD)/mintde-font.obj: kernel/user/mintde/font_data.c kernel/user/mintde/font
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-widgets.obj: kernel/user/mintde/widgets.c $(MINTDE_HEADERS) kernel/user/include/mintos/runtime.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
-$(BUILD)/mintde-apps.obj: kernel/user/mintde/apps.c $(MINTDE_HEADERS) kernel/user/include/mintos/runtime.h kernel/include/power.h | $(BUILD)
-	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/mintde-apps.obj: kernel/user/mintde/apps.c $(MINTDE_HEADERS) $(wildcard kernel/user/crypto/*.h) kernel/user/include/mintos/runtime.h kernel/include/power.h | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -Ikernel/user/crypto -c $< -o $@
 $(USER_DESKTOP_OBJ): kernel/user/desktop.c $(MINTDE_HEADERS) kernel/include/power.h kernel/include/e1000.h kernel/include/e1000_core.h kernel/user/include/mintos/runtime.h kernel/include/uapi/mintos/syscall.h kernel/include/desktop_abi.h kernel/include/ramfs.h kernel/include/storage_diag.h kernel/include/fat16.h kernel/include/driver_catalog.h kernel/include/log.h kernel/include/block.h kernel/include/vfs.h kernel/include/pci.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(USER_DESKTOP_ELF): $(USER_START_OBJ) $(USER_DESKTOP_OBJ) $(MINTDE_OBJS) $(USER_RUNTIME_OBJ) $(ICON_ASSET_OBJ) kernel/user/user.ld
@@ -187,6 +190,10 @@ check: all
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DMINT_USB_HOST_TEST -DMINT_NET_USERSPACE tools/test_usb_net.c kernel/usb/xhci.c kernel/net/netcore.c -o $(BUILD)/test-usb-net
 	$(BUILD)/test-usb-net
 	$(PYTHON) tools/test_usb_net_contracts.py
+	$(PYTHON) tools/test_crypto.py
+	$(PYTHON) tools/test_x509.py
+	$(PYTHON) tools/test_tls.py
+	$(PYTHON) tools/test_tls_contracts.py
 	$(PYTHON) tools/test_e1000_driver.py
 	$(PYTHON) tools/verify_uefi.py $(EFI) $(ESP) $(DISK) $(DATA) $(ISO) $(KERNEL) $(USER_ELF) $(USER_DESKTOP_ELF)
 	$(PYTHON) tools/verify_native_desktop.py $(USER_DESKTOP_ELF)

@@ -1,13 +1,15 @@
 /* MintDE Web — a small text-first web browser on the MintOS TCP/IP stack.
  *
- * HTTP/1.0 only (MintOS has no TLS yet, so https:// pages get an explanatory
- * page instead). The fetched HTML is turned into a token stream (words,
+ * HTTP/1.0 over plain TCP or TLS 1.3 (kernel/user/crypto: certificates are
+ * verified against the Mozilla roots; certificate errors stop the load and
+ * cannot be bypassed). The fetched HTML is turned into a token stream (words,
  * spaces, line/paragraph breaks, rules and list bullets with bold, heading,
  * preformatted and link styles), laid out with the Inter faces and drawn with
  * the gfx layer. No CSS, scripts, images or forms; the address bar searches
- * the classic-web engine wiby.me for anything that is not an address.
+ * DuckDuckGo Lite for anything that is not an address.
  * Everything is statically sized and every parse step is bounds-checked. */
 #include "mintde.h"
+#include "tls.h"
 
 #define S (&gfx_screen)
 static gfx_rect R(int32_t x, int32_t y, int32_t w, int32_t h) { return gfx_rect_xywh(x, y, w, h); }
@@ -19,10 +21,10 @@ static int str_eq(const char *a, const char *b) {
     return a[i] == b[i];
 }
 
-#define WEB_RAW_MAX   (384u * 1024u)
-#define WEB_POOL_MAX  (192u * 1024u)
-#define WEB_TOK_MAX   16384u
-#define WEB_RUN_MAX   16384u
+#define WEB_RAW_MAX   (1024u * 1024u)
+#define WEB_POOL_MAX  (384u * 1024u)
+#define WEB_TOK_MAX   32768u
+#define WEB_RUN_MAX   32768u
 #define WEB_LINK_MAX  512u
 #define WEB_HREF_MAX  200u
 #define WEB_URL_MAX   256u
@@ -32,11 +34,11 @@ static int str_eq(const char *a, const char *b) {
 
 enum { TK_WORD = 1, TK_SPACE, TK_BR, TK_PARA, TK_HR, TK_BULLET };
 enum { ST_BOLD = 1, ST_H1 = 2, ST_H2 = 4, ST_H3 = 8, ST_PRE = 16 };
-enum { WS_IDLE = 0, WS_RESOLVE, WS_CONNECT, WS_RECEIVE };
+enum { WS_IDLE = 0, WS_RESOLVE, WS_CONNECT, WS_TLS, WS_RECEIVE };
 
 typedef struct web_tok { uint8_t kind, style, indent, reserved; int16_t link; uint16_t len; uint32_t off; } web_tok;
 typedef struct web_run { uint32_t tok; int32_t x, y; int32_t w; uint8_t font, kind; uint16_t reserved; } web_run;
-typedef struct web_url { char host[80]; uint16_t port; char path[WEB_URL_MAX - 96]; } web_url;
+typedef struct web_url { char host[80]; uint16_t port; uint8_t secure; char path[WEB_URL_MAX - 96]; } web_url;
 
 static uint8_t raw[WEB_RAW_MAX];
 static uint32_t raw_len;
@@ -49,12 +51,15 @@ static uint32_t run_count;
 static char links[WEB_LINK_MAX][WEB_HREF_MAX];
 static uint32_t link_count;
 static int32_t doc_height, layout_width = -1, scroll_y;
+static int32_t main_token = -1;          /* first token inside <main>/<article>/role=main */
+static int scroll_to_main;
 static char page_title[96];
 static char address[WEB_URL_MAX];
 static size_t address_len;
 static int address_focused, address_replace;
 static web_url page_url;
-static int page_is_internal;
+static int page_is_internal, page_secure;
+static MINT_TLS web_tls;
 static char history[WEB_HISTORY][WEB_URL_MAX];
 static uint32_t hist_count, hist_pos;
 static char status_text[96];
@@ -95,11 +100,12 @@ static void set_status(const char *a, const char *b) {
 }
 
 /* ------------------------------------------------------------------ URLs */
-/* 1 = http URL, -1 = https (unsupported), 0 = not a URL. */
+/* 1 = http(s) URL, 0 = not a URL. */
 static int url_parse(const char *in, web_url *u) {
     const char *p = in;
-    if (prefix_ci(p, "https://")) return -1;
-    if (prefix_ci(p, "http://")) p += 7;
+    u->secure = 0;
+    if (prefix_ci(p, "https://")) { p += 8; u->secure = 1; }
+    else if (prefix_ci(p, "http://")) p += 7;
     size_t n = 0;
     while (*p && *p != '/' && *p != ':' && *p != '?' && *p != '#' && n + 1u < sizeof(u->host)) u->host[n++] = lower(*p++);
     u->host[n] = '\0';
@@ -108,7 +114,7 @@ static int url_parse(const char *in, web_url *u) {
         char c = u->host[i];
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) return 0;
     }
-    uint32_t port = 80;
+    uint32_t port = u->secure ? 443u : 80u;
     if (*p == ':') {
         ++p; port = 0;
         while (*p >= '0' && *p <= '9') { port = port * 10u + (uint32_t)(*p++ - '0'); if (port > 65535u) return 0; }
@@ -126,9 +132,9 @@ static int url_parse(const char *in, web_url *u) {
     return 1;
 }
 static void url_format(const web_url *u, char *out, size_t cap) {
-    copy_text(out, cap, "http://");
+    copy_text(out, cap, u->secure ? "https://" : "http://");
     str_append(out, cap, u->host);
-    if (u->port != 80u) { char n[8]; format_u64(n, sizeof(n), u->port); str_append(out, cap, ":"); str_append(out, cap, n); }
+    if (u->port != (u->secure ? 443u : 80u)) { char n[8]; format_u64(n, sizeof(n), u->port); str_append(out, cap, ":"); str_append(out, cap, n); }
     str_append(out, cap, u->path);
 }
 /* Removes "." and ".." segments in place (query string untouched). */
@@ -161,7 +167,7 @@ static void url_resolve(const char *href, char *out, size_t cap) {
     if (prefix_ci(href, "http://") || prefix_ci(href, "https://") || prefix_ci(href, "about:") ||
         prefix_ci(href, "mailto:") || prefix_ci(href, "javascript:")) { copy_text(out, cap, href); return; }
     web_url u = page_url;
-    if (href[0] == '/' && href[1] == '/') { copy_text(out, cap, "http:"); str_append(out, cap, href); return; }
+    if (href[0] == '/' && href[1] == '/') { copy_text(out, cap, page_url.secure ? "https:" : "http:"); str_append(out, cap, href); return; }
     if (href[0] == '/') copy_text(u.path, sizeof(u.path), href);
     else if (href[0] == '?') {
         size_t n = 0; while (u.path[n] && u.path[n] != '?') ++n;
@@ -371,7 +377,7 @@ static size_t read_attr_value(const uint8_t *b, size_t n, size_t i, char *out, s
 }
 
 static void parse_html(const uint8_t *b, size_t n) {
-    static char href[WEB_HREF_MAX], alt[96];
+    static char href[WEB_HREF_MAX], alt[96], role[16];
     for (size_t i = 0; i < n;) {
         uint8_t c = b[i];
         if (c == '<') {
@@ -392,7 +398,7 @@ static void parse_html(const uint8_t *b, size_t n) {
                 ++j;
             }
             name[m] = '\0';
-            href[0] = alt[0] = '\0';
+            href[0] = alt[0] = role[0] = '\0';
             while (j < n && b[j] != '>') {
                 if (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r' || b[j] == '/') { ++j; continue; }
                 char attr[12]; size_t a = 0;
@@ -406,12 +412,15 @@ static void parse_html(const uint8_t *b, size_t n) {
                     ++j;
                     while (j < n && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r')) ++j;
                     if (tag_is(attr, "href")) j = read_attr_value(b, n, j, href, sizeof(href));
+                    else if (tag_is(attr, "role")) j = read_attr_value(b, n, j, role, sizeof(role));
                     else if (tag_is(attr, "alt")) j = read_attr_value(b, n, j, alt, sizeof(alt));
                     else { char ignored[4]; j = read_attr_value(b, n, j, ignored, sizeof(ignored)); }
                 }
             }
             i = j < n ? j + 1 : n;
             if (name[0] == '!' || name[0] == '?') continue;       /* doctype, processing instruction */
+            if (!closing && main_token < 0 && !skip_depth &&
+                (tag_is(name, "main") || tag_is(name, "article") || tag_is(role, "main"))) main_token = (int32_t)tok_count;
             handle_tag(name, closing, href, alt);
             continue;
         }
@@ -446,6 +455,7 @@ static void reset_document(void) {
     word_len = 0; list_depth = 0;
     page_title[0] = '\0';
     scroll_y = 0; layout_width = -1; doc_height = 0;
+    main_token = -1; scroll_to_main = 0;
     hover_link = -1;
 }
 
@@ -564,15 +574,18 @@ static void show_start_page(void) {
     copy_text(address, sizeof(address), ""); address_len = 0;
     show_html("<title>Start Page</title>"
               "<h1>Welcome to the Web on MintOS</h1>"
-              "<p>Type an address above, or a few words to search the classic web with Wiby.</p>"
-              "<p>MintOS loads pages over plain HTTP. Secure (HTTPS) sites need TLS encryption, which MintOS "
-              "does not have yet, so sites that still answer on http:// work best:</p>"
+              "<p>Type an address above, or a few words to search with DuckDuckGo.</p>"
+              "<p>MintOS loads pages over HTTP and secure HTTPS. Secure connections use MintOS\xE2\x80\x99s own TLS 1.3, "
+              "and every certificate is checked against the Mozilla list of trusted authorities. "
+              "Pages are shown as readable text: there are no scripts, styles or images yet.</p>"
+              "<h3>Try these</h3>"
               "<ul>"
-              "<li><a href=\"http://wiby.me/\">Wiby</a> \xE2\x80\x94 a search engine for the classic, lightweight web</li>"
-              "<li><a href=\"http://68k.news/\">68k.news</a> \xE2\x80\x94 today\xE2\x80\x99s headlines for vintage computers</li>"
+              "<li><a href=\"https://en.wikipedia.org/wiki/Special:Random\">A random Wikipedia article</a></li>"
+              "<li><a href=\"https://text.npr.org/\">NPR</a> \xE2\x80\x94 text-only news</li>"
+              "<li><a href=\"https://lite.cnn.com/\">CNN Lite</a> \xE2\x80\x94 headlines without the clutter</li>"
+              "<li><a href=\"https://news.ycombinator.com/\">Hacker News</a></li>"
+              "<li><a href=\"http://68k.news/\">68k.news</a> \xE2\x80\x94 headlines for vintage computers</li>"
               "<li><a href=\"http://info.cern.ch/hypertext/WWW/TheProject.html\">The first website</a> \xE2\x80\x94 CERN, 1991</li>"
-              "<li><a href=\"http://textfiles.com/\">textfiles.com</a> \xE2\x80\x94 an archive from the BBS era</li>"
-              "<li><a href=\"http://example.com/\">example.com</a> \xE2\x80\x94 a tiny test page</li>"
               "</ul>"
               "<h3>Keyboard</h3>"
               "<p>\xE2\x8C\x98L address field \xC2\xB7 \xE2\x8C\x98R reload \xC2\xB7 \xE2\x8C\x98[ back \xC2\xB7 \xE2\x8C\x98] forward \xC2\xB7 "
@@ -601,6 +614,7 @@ static void show_error(const char *heading, const char *detail, const char *sugg
 
 /* ------------------------------------------------------------------ loading */
 static void fetch_stop(void) {
+    if (fetch.handle >= 0 && fetch.url.secure && (fetch.state == WS_RECEIVE || fetch.state == WS_TLS)) mint_tls_close(&web_tls);
     if (fetch.handle >= 0) (void)mint_tcp_close(fetch.handle);
     fetch.handle = -1;
     fetch.state = WS_IDLE;
@@ -618,7 +632,7 @@ static void history_push(const char *url) {
 static void start_fetch(const web_url *u) {
     fetch_stop();
     fetch.url = *u; fetch.state = WS_RESOLVE; fetch.started = fetch.last = web_ms();
-    page_is_internal = 0;
+    page_is_internal = 0; page_secure = 0;
     set_status("Looking up ", u->host);
 }
 
@@ -643,7 +657,7 @@ static void navigate(const char *input, int add_history, int is_redirect) {
     char url[WEB_URL_MAX];
     if (!has_scheme && (has_space || !has_dot)) {
         static const char hx[] = "0123456789ABCDEF";
-        copy_text(url, sizeof(url), "http://wiby.me/?q=");
+        copy_text(url, sizeof(url), "https://lite.duckduckgo.com/lite/?q=");
         size_t m = text_length(url);
         for (size_t i = 0; i < n && m + 4u < sizeof(url); ++i) {
             char c = text[i];
@@ -655,19 +669,6 @@ static void navigate(const char *input, int add_history, int is_redirect) {
     } else copy_text(url, sizeof(url), text);
     web_url u;
     int ok = url_parse(url, &u);
-    if (ok < 0) {
-        fetch_stop();
-        page_is_internal = 1;
-        copy_text(address, sizeof(address), url); address_len = text_length(address);
-        if (add_history) history_push(url);
-        char alt[WEB_URL_MAX] = "http://";
-        str_append(alt, sizeof(alt), url + 8);
-        show_error("This site needs a secure connection",
-                   "It uses HTTPS. MintOS cannot make encrypted (TLS) connections yet, so the page cannot be loaded.",
-                   alt, "Try the unencrypted http:// address (many sites send you back to HTTPS)");
-        set_status("HTTPS is not supported yet", 0);
-        return;
-    }
     if (!ok) { set_status("That address is not valid", 0); return; }
     url_format(&u, address, sizeof(address)); address_len = text_length(address);
     if (add_history) history_push(address);
@@ -713,7 +714,9 @@ static size_t dechunk(uint8_t *b, size_t n) {
 }
 
 static void finish_response(void) {
+    int secure = fetch.url.secure;
     fetch_stop();
+    page_url = fetch.url;          /* base for relative redirects and links */
     size_t head_end = 0;
     for (size_t i = 0; i + 3 < raw_len; ++i) {
         if (raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n') { head_end = i + 4; break; }
@@ -745,7 +748,7 @@ static void finish_response(void) {
         body_len = dechunk(body, body_len);
     (void)header_value(headers, head_end, "content-type", ct, sizeof(ct));
     reset_document();
-    if (!ct[0] || prefix_ci(ct, "text/html") || prefix_ci(ct, "application/xhtml")) parse_html(body, body_len);
+    if (!ct[0] || prefix_ci(ct, "text/html") || prefix_ci(ct, "application/xhtml")) { parse_html(body, body_len); scroll_to_main = 1; }
     else if (prefix_ci(ct, "text/")) parse_plain(body, body_len);
     else {
         static char msg[160];
@@ -755,6 +758,7 @@ static void finish_response(void) {
         show_error("This file cannot be displayed", msg, 0, 0);
     }
     if (!page_title[0]) copy_text(page_title, sizeof(page_title), fetch.url.host);
+    page_secure = secure;
     char size[24], codes[8];
     format_bytes(size, sizeof(size), body_len);
     format_u64(codes, sizeof(codes), code);
@@ -769,6 +773,57 @@ static void fail(const char *heading, const char *detail) {
     fetch_stop();
     show_error(heading, detail, 0, 0);
     set_status(heading, 0);
+}
+
+/* TLS runs over the kernel TCP socket; the callbacks never block. */
+static int64_t tls_tcp_send(void *ctx, const void *data, size_t len) {
+    int64_t r = mint_tcp_send(*(int64_t *)ctx, data, len > 4096u ? 4096u : len);
+    return r < 0 ? -1 : r;
+}
+static int64_t tls_tcp_recv(void *ctx, void *out, size_t cap) {
+    int64_t r = mint_tcp_recv(*(int64_t *)ctx, out, cap > 4096u ? 4096u : cap);
+    if (r == -MINT_EAGAIN) return 0;
+    return r > 0 ? r : -1;
+}
+static int64_t web_now(void) {
+    mint_timespec64 t = {0, 0};
+    return mint_clock_gettime(MINT_CLOCK_REALTIME, &t) == 0 ? t.tv_sec : 0;
+}
+static int send_request(void) {
+    static char request[600];
+    copy_text(request, sizeof(request), "GET ");
+    str_append(request, sizeof(request), fetch.url.path);
+    str_append(request, sizeof(request), " HTTP/1.0\r\nHost: ");
+    str_append(request, sizeof(request), fetch.url.host);
+    if (fetch.url.port != (fetch.url.secure ? 443u : 80u)) { char p[8]; format_u64(p, sizeof(p), fetch.url.port); str_append(request, sizeof(request), ":"); str_append(request, sizeof(request), p); }
+    str_append(request, sizeof(request), "\r\nUser-Agent: Mozilla/5.0 (compatible; MintOS26 Web/1.1)\r\n"
+                                         "Accept: text/html, text/plain;q=0.9, */*;q=0.5\r\nAccept-Encoding: identity\r\n"
+                                         "Connection: close\r\n\r\n");
+    int64_t want = (int64_t)text_length(request);
+    int64_t sent = fetch.url.secure ? mint_tls_write(&web_tls, request, (size_t)want) : mint_tcp_send(fetch.handle, request, (size_t)want);
+    return sent == want;
+}
+static void tls_failed(void) {
+    static char detail[300];
+    if (web_tls.error == MINT_TLS_ERR_CERT) {
+        copy_text(detail, sizeof(detail), "The certificate presented by ");
+        str_append(detail, sizeof(detail), fetch.url.host);
+        str_append(detail, sizeof(detail), " could not be verified: ");
+        str_append(detail, sizeof(detail), mint_tls_error_text(&web_tls));
+        str_append(detail, sizeof(detail), ". Someone could be impersonating the site, so MintOS did not load it and sent no request.");
+        fetch_stop();
+        show_error("This connection is not private", detail, 0, 0);
+        set_status("Certificate not trusted", 0);
+    } else {
+        copy_text(detail, sizeof(detail), "MintOS could not set up an encrypted connection to ");
+        str_append(detail, sizeof(detail), fetch.url.host);
+        str_append(detail, sizeof(detail), ": ");
+        str_append(detail, sizeof(detail), mint_tls_error_text(&web_tls));
+        str_append(detail, sizeof(detail), ".");
+        fetch_stop();
+        show_error("Secure connection failed", detail, 0, 0);
+        set_status("Secure connection failed", 0);
+    }
 }
 
 /* Advances the load; returns 1 when the window needs repainting. */
@@ -792,18 +847,14 @@ int web_background(void) {
     if (fetch.state == WS_CONNECT) {
         int64_t st = mint_tcp_state(fetch.handle);
         if (st == MINT_TCP_STATE_ESTABLISHED) {
-            static char request[600];
-            copy_text(request, sizeof(request), "GET ");
-            str_append(request, sizeof(request), fetch.url.path);
-            str_append(request, sizeof(request), " HTTP/1.0\r\nHost: ");
-            str_append(request, sizeof(request), fetch.url.host);
-            if (fetch.url.port != 80u) { char p[8]; format_u64(p, sizeof(p), fetch.url.port); str_append(request, sizeof(request), ":"); str_append(request, sizeof(request), p); }
-            str_append(request, sizeof(request), "\r\nUser-Agent: Mozilla/5.0 (compatible; MintOS26 Web/1.0)\r\n"
-                                                 "Accept: text/html, text/plain;q=0.9, */*;q=0.5\r\nAccept-Encoding: identity\r\n"
-                                                 "Connection: close\r\n\r\n");
-            if (mint_tcp_send(fetch.handle, request, text_length(request)) < (int64_t)text_length(request)) {
-                fail("Can\xE2\x80\x99t open the page", "The request could not be sent."); return 1;
+            if (fetch.url.secure) {
+                MINT_TLS_IO io = {&fetch.handle, tls_tcp_send, tls_tcp_recv};
+                mint_tls_init(&web_tls, &io, fetch.url.host, web_now());
+                fetch.state = WS_TLS; fetch.last = now;
+                set_status("Securing the connection to ", fetch.url.host);
+                return 1;
             }
+            if (!send_request()) { fail("Can\xE2\x80\x99t open the page", "The request could not be sent."); return 1; }
             raw_len = 0; fetch.state = WS_RECEIVE; fetch.last = now;
             set_status("Waiting for ", fetch.url.host);
             return 1;
@@ -816,11 +867,28 @@ int web_background(void) {
         if (now - fetch.last > 15000u) { fail("Can\xE2\x80\x99t connect to the server", "The connection timed out."); return 1; }
         return dirty;
     }
+    if (fetch.state == WS_TLS) {
+        int rc = mint_tls_step(&web_tls);
+        if (rc == MINT_TLS_AGAIN) {
+            if (now - fetch.last > 20000u) { fail("Secure connection failed", "The secure handshake timed out."); return 1; }
+            return dirty;
+        }
+        if (rc != MINT_TLS_DONE) { tls_failed(); return 1; }
+        if (!send_request()) { fail("Can\xE2\x80\x99t open the page", "The request could not be sent."); return 1; }
+        raw_len = 0; fetch.state = WS_RECEIVE; fetch.last = now;
+        set_status("Waiting for ", fetch.url.host);
+        return 1;
+    }
     /* receive */
     for (uint32_t burst = 0; burst < 32u; ++burst) {
         if (raw_len >= WEB_RAW_MAX) { finish_response(); return 1; }
         size_t room = WEB_RAW_MAX - raw_len;
-        int64_t n = mint_tcp_recv(fetch.handle, raw + raw_len, room > 4096u ? 4096u : room);
+        int64_t n;
+        if (fetch.url.secure) {
+            n = mint_tls_read(&web_tls, raw + raw_len, room > 16384u ? 16384u : room);
+            if (n == MINT_TLS_WOULD_BLOCK) n = -MINT_EAGAIN;
+            else if (n < 0 && !raw_len) { tls_failed(); return 1; }
+        } else n = mint_tcp_recv(fetch.handle, raw + raw_len, room > 4096u ? 4096u : room);
         if (n > 0) { raw_len += (uint32_t)n; fetch.last = now; continue; }
         if (n == -MINT_EAGAIN) {
             if (now - fetch.last > 20000u) { if (raw_len) finish_response(); else fail("The page took too long", "The server stopped answering."); return 1; }
@@ -863,10 +931,28 @@ void web_paint(const mde_layout *l) {
     if (address_focused) ui_text_field(ar, address, "Search or enter website address", 1);
     else {
         gfx_round_rect(S, ar.x0, ar.y0, W(ar), H(ar), 7, OPAQUE(T.dark ? 0x3A3A3Cu : 0xE9E9EBu));
+        /* Like Safari: show the host (with a padlock for verified HTTPS), not the full URL. */
+        char shown_buf[WEB_URL_MAX];
         const char *shown = address[0] ? address : "Search or enter website address";
-        int32_t tw = gfx_text_width(FONT_BODY, shown);
+        if (address[0] && !page_is_internal && fetch.state == WS_IDLE) {
+            const char *h = address;
+            if (prefix_ci(h, "https://")) h += 8; else if (prefix_ci(h, "http://")) h += 7;
+            size_t n = 0;
+            while (h[n] && h[n] != '/' && n + 1u < sizeof(shown_buf)) { shown_buf[n] = h[n]; ++n; }
+            shown_buf[n] = '\0';
+            shown = shown_buf;
+        }
+        int lock = page_secure && !page_is_internal && fetch.state == WS_IDLE;
+        int32_t tw = gfx_text_width(FONT_BODY, shown) + (lock ? 14 : 0);
         if (tw > W(ar) - 40) tw = W(ar) - 40;
-        gfx_text_fit(S, FONT_BODY, ar.x0 + W(ar) / 2 - tw / 2, ar.y0 + 19, shown, W(ar) - 40, OPAQUE(address[0] ? T.text : T.text3));
+        int32_t tx = ar.x0 + W(ar) / 2 - tw / 2;
+        if (lock) {
+            uint32_t lc = OPAQUE(T.text2);
+            gfx_round_rect_stroke(S, tx + 1, ar.y0 + 7, 7, 8, 3, lc);       /* shackle */
+            gfx_round_rect(S, tx, ar.y0 + 11, 9, 7, 2, lc);                  /* body */
+            tx += 14;
+        }
+        gfx_text_fit(S, FONT_BODY, tx, ar.y0 + 19, shown, W(ar) - 40, OPAQUE(address[0] ? T.text : T.text3));
     }
     if (fetch.state != WS_IDLE) {
         /* thin progress bar under the address field */
@@ -879,7 +965,19 @@ void web_paint(const mde_layout *l) {
     uint32_t bg = T.dark ? 0x1E1E1Eu : 0xFFFFFFu, fg = T.dark ? 0xE8E8EAu : 0x1D1D1Fu;
     uint32_t link_col = T.dark ? 0x5AB0FFu : 0x0A62D0u, rule = T.dark ? 0x3A3A3Cu : 0xD8D8DCu;
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(bg));
-    if (layout_width != W(c)) layout(W(c));
+    if (layout_width != W(c)) {
+        layout(W(c));
+        if (scroll_to_main && main_token > 0) {
+            for (uint32_t i = 0; i < run_count; ++i) {
+                if (runs[i].tok >= (uint32_t)main_token) {
+                    int32_t y = runs[i].y - gfx_font_ascent(runs[i].font) - 16;
+                    if (y > H(c) / 3) scroll_y = y;
+                    break;
+                }
+            }
+            scroll_to_main = 0;
+        }
+    }
     int32_t max_scroll = doc_height - H(c);
     if (max_scroll < 0) max_scroll = 0;
     if (scroll_y > max_scroll) scroll_y = max_scroll;

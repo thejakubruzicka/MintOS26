@@ -1,42 +1,39 @@
-# MintOS26 26.5.011.0 / MintDE 2.1.0 worklog
+# MintOS26 26.5.012.0 / MintDE 2.2.0 worklog
 
-Previous worklog: `docs/WORKLOG-26.5.010.0.md`.
+Previous worklog: `docs/WORKLOG-26.5.011.0.md`.
 
 ## Goal
 
-Device support and the Internet: native USB input (needed on the USB-only Dell OptiPlex 7040), a working network driver, a TCP/IP stack, and user-facing tools that make the network useful from MintDE.
+Make the Web app reach the modern, HTTPS-only web, with real certificate verification rather than "encrypted but unauthenticated".
 
 ## Design decisions
 
-- **Polling, not interrupts.** xHCI and E1000 both run with interrupts masked. A `usb` and a `net` kernel task poll once per timer tick (100 Hz) on the cooperative scheduler. Syscalls and the tasks touch shared state without yielding, so no locks are needed. Latency is at most one tick, which is plenty for HID and for the TCP rates seen (66–144 KB/s over WAN in QEMU).
-- **USB input reuses the PS/2 path.** HID usages are converted to set-1 make codes and injected through the same key decoder, so modifiers, Command shortcuts, repeat handling and the event queue behave identically. Pointer devices share the acceleration curve; absolute tablets bypass it. Injection masks interrupts because the PS/2 IRQ handler writes the same queue.
-- **Report descriptors are parsed, not assumed.** Boot protocol is used only for keyboards. Mice and tablets keep report protocol, so wheels and absolute coordinates work. The parser is a bounded walk that records the first X/Y/wheel/button fields, with a boot-layout fallback.
-- **Device registers above 64 GiB.** QEMU and many firmwares put 64-bit BARs far above RAM (QEMU's xHCI sits at 768 GiB), outside the identity map. `mint_mmio_map` maps them uncached into the vmalloc window. That window's page directory is shared by every address space, so the mapping is visible to ring-3-triggered syscalls too. These mappings have no allocation record, so they can never be freed into the RAM allocator.
-- **The stack lives in the kernel and is non-blocking.** Every syscall returns at once (`-EAGAIN` means ask again). MintDE turns that into background jobs (Terminal) and a per-frame loader (Web), so the desktop never freezes on the network.
-- **Everything is statically sized:** the ARP cache, DNS cache, ping slots and 8 TCP sockets with fixed buffers. Every parser bounds its reads by the packet length, and the DNS name walk has a loop guard. The pure parsers are host-tested with ASan/UBSan.
-- **TCP keeps only what QEMU's slirp and real servers need:** active open, the MSS option, in-order delivery (anything out of order is dropped and re-acknowledged), go-back-N retransmission with exponential back-off, zero-window probes and a full close sequence. There is no listen, window scaling or SACK.
-- **The PCH LAN (I219) is opt-in and conservative.** A full reset of the I217/I218/I219 needs the ME/PHY handshake that other OSes implement in thousands of lines. MintOS stops the RX/TX units instead, keeps the firmware's PHY setup, takes the software semaphore before touching the PHY, and applies the Sunrise Point TX-hang workaround. Because the driver is untested on hardware it never connects automatically.
-- **The browser is honest about HTTPS.** Without TLS, an `https://` address gets an explanation page rather than a plaintext request. Address-bar words search wiby.me, which serves plain HTTP.
+- **TLS lives in user space.** The kernel already provides TCP. The TLS client and its crypto are a library linked into MintDE, so a parser bug cannot corrupt the kernel. The same C files are compiled on the build host and tested there against OpenSSL and real servers before running in MintOS.
+- **TLS 1.3 only, X25519 only.** This keeps the state machine small, and most of the web supports it. TLS 1.2 and P-256 key exchange are left for later; affected servers get a specific error message instead of a generic failure.
+- **Verify, never bypass.**
+  - Chains are validated to Mozilla's root list, the same list Firefox and curl use. It was downloaded from curl.se with the user's approval.
+  - The generator checks every certificate's SHA-256 fingerprint and keeps only subject names and public keys (54 KB).
+  - Certificate errors stop the load, and the UI offers no "proceed anyway".
+- **Verification-only public-key code.** RSA and ECDSA only verify public data, so a simple, readable Montgomery big-number implementation is enough. Heavy temporaries are static to stay well within the user stack.
+- **Randomness.** RDSEED/RDRAND, where present (Skylake, QEMU `-cpu max`), feeds a SHA-512 DRBG, always mixed with TSC jitter. A kernel entropy pool is a later step.
 
 ## Problems found during the work
 
-- **`undefined symbol: memcpy`.** Struct copies in the stack made clang emit libc calls, so `kernel/lib/mem.c` (rep movsb/stosb) was added. MintDE links the same file, because the Web app's struct copies hit the same problem.
-- **xHCI "BAR0 is not a usable MMIO range".** The BAR sat at 0xC000000000, above the 64 GiB identity map. This was fixed with the MMIO window described above.
-- **Missing glyphs.** Pages showed `??` for non-breaking spaces and accented letters. Raw UTF-8 NBSP, soft hyphens and zero-width characters are now filtered in the HTML tokenizer. The eight text faces gained Latin-1 and Latin Extended-A, and a script check confirmed every pre-existing glyph is byte-identical.
-- **Stale toolbar.** The Web loading bar stayed visible after a page finished, because background repaints only damaged the content area. They now damage the whole window.
-- **Dropped keystrokes.** Typing "settings" quickly into Spotlight produced "sett". Each HID endpoint had one transfer in flight, re-armed only when the cooperative `usb` task ran. While MintDE repainted the blurred Spotlight panel (slow under TCG), the device's reports were overwritten. Each endpoint now keeps 8 transfers queued with separate buffers. A 72-character mixed-case sentence then arrived intact.
-- **PS/2 rows claimed ACTIVE without a PS/2 controller.** The shared readiness flags count USB devices too. The catalog now asks the PS/2 driver directly.
-- **Mojibake in the USB page.** A Python edit script used a non-raw string, so `\xC2\xB7` landed in the C source as the characters "Â·". The escapes were restored, and `test_usb_net_contracts.py` now rejects double-encoded UTF-8 anywhere in the sources.
-- **Two mistakes in my own tests:** an off-by-one threshold for a truncated HID descriptor (the X/Y item completes at byte 54), and patching the wrong DHCP byte. The code was correct in both cases.
+- **ECDSA failed while RSA passed.** `bn_add`/`bn_sub` wrote only the active limbs, so stack temporaries such as `p − 2` kept garbage in their upper limbs. Exponentiation scanned all 130 limbs, so inversion produced nonsense. A white-box test located it: the curve constants and Montgomery round trip were correct, but 2G was not on the curve and the inverse was wrong. Both functions now clear the unused limbs.
+- **Relative links were broken in 26.5.011.0.** `page_url` was never assigned, so relative links and relative redirects resolved against an empty host. It is now set when a response arrives, before redirect handling.
+- **badssl.com does not speak TLS 1.3,** so it cannot be used for certificate-error tests of this client. The local `openssl s_server` tests cover wrong host, untrusted root and every signature type instead.
+- **3 MB of zeros in the desktop ELF.** With `-mcmodel=large`, clang emits `.ldata`/`.lbss`. A small `.ldata` (two structs initialised to -1) made lld turn the whole merged `.data` output section into file bytes, including all zero-fill buffers. Zero-fill now has its own `NOLOAD` `.bss` output section: the desktop ELF went from 5.1 MB to 2.1 MB and the kernel from 17.8 MB to 14.8 MB.
+- **A flaky test of my own.** The non-CA test sometimes saw "not yet valid", because it captured `now` before minting certificates. The chain checks now read the clock each time.
+- **Small user stack.** MintDE had a 16 KiB stack; the default is now the loader's 64 KiB limit.
 
-## Validation (QEMU 11.1 q35/OVMF, macOS host)
+## Validation
 
-- **USB** with `qemu-xhci` + `usb-kbd` + `usb-tablet` and + `usb-mouse`, both with `-machine i8042=off`: keyboard (including ⌘Space and fast typing), absolute tablet and relative mouse motion and clicks drove the desktop.
-- **Network** with `-nic user,model=e1000`:
-  - DHCP lease 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
-  - Ping to the gateway, about 0.2–2 ms.
-  - `nslookup example.com`.
-  - HTTP: `curl -I` example.com; info.cern.ch page; 151 KB from textfiles.com in 2.2 s; 93 KB from 68k.news in 0.6 s. Zero retransmits and zero dropped frames.
-- **Web:** 68k.news live headlines, wiby.me search with Czech diacritics, link navigation and back.
-- **Host checks:** all host checks pass except `test_context_switch.py`, which is Linux-only. The new `test_usb_net.c` (45 checks) also passes under ASan/UBSan; `test_usb_net_contracts.py` has 23 checks.
-- **Not validated:** VirtualBox, and the physical OptiPlex 7040 (USB input and the experimental I219 driver).
+- **Host:**
+  - `test_crypto.py`: 19 checks (hashlib/hmac, RFC 8439, RFC 7748 including the 1,000-iteration test, FIPS-197, NIST GCM, OpenSSL X25519).
+  - `test_x509.py`: 23 checks, plus live chains from six sites.
+  - `test_tls.py`: 17 local `s_server` checks, plus live sites under every forced suite.
+  - `test_tls_contracts.py`: 16 checks.
+- **QEMU:**
+  - `curl -I https://example.com` and `curl -s https://www.google.com/` (88 KB in 560 ms).
+  - Web with Wikipedia over HTTPS (padlock, opens at the article title) and DuckDuckGo search results.
+- **Not validated:** VirtualBox and the physical OptiPlex 7040.

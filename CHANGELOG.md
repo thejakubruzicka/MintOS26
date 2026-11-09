@@ -1,5 +1,17 @@
 # MintOS26 changelog
 
+## 26.5.012.0 / MintDE 2.2.0 — TLS 1.3 and HTTPS
+
+- **Crypto library:** MintOS's own, in user space: SHA-2, HMAC/HKDF, ChaCha20-Poly1305, AES-GCM, X25519, and RSA (PKCS#1, PSS) and ECDSA P-256/P-384 verification.
+- **Certificates:** X.509 chain validation against Mozilla's root list (curl.se bundle, MPL 2.0, fingerprint-checked at generation).
+- **TLS 1.3 client:** X25519 key exchange and the three standard cipher suites, verified against real sites (Google, Wikipedia, GitHub, Cloudflare and others).
+- **MintDE 2.2.0:**
+  - Web opens HTTPS pages, with a padlock, certificate-error pages that have no bypass, DuckDuckGo search, and pages opening at their main content.
+  - `curl` speaks HTTPS.
+  - Relative links and redirects work again.
+- **Processes:** the default user stack is 64 KiB.
+- **Not supported yet:** TLS 1.2, P-256 key exchange, revocation checking and images.
+
 ## 26.5.011.0 / MintDE 2.1.0 — USB input, Intel Ethernet, IPv4/TCP and a web browser
 
 - **USB:** a polled xHCI driver (firmware handoff, rings, device enumeration on root ports, hot-plug) with HID keyboards, mice and tablets. USB devices drive the same input path as PS/2, including Command shortcuts and the new mouse wheel. Hubs and mass storage are not supported yet.

@@ -12,7 +12,7 @@ FLAGS = [
     "-target", "x86_64-unknown-none-elf", "-ffreestanding", "-fno-stack-protector",
     "-fno-pic", "-fno-pie", "-fno-builtin", "-mno-red-zone", "-mno-sse", "-mno-mmx",
     "-mgeneral-regs-only", "-mcmodel=large", "-Wall", "-Wextra", "-Werror", "-O2",
-    "-Ikernel/include", "-Ikernel/user/include", "-fstack-usage", "-c",
+    "-Ikernel/include", "-Ikernel/user/include", "-Ikernel/user/crypto", "-fstack-usage", "-c",
 ]
 
 

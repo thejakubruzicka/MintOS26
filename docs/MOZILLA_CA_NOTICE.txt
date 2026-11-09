@@ -1,0 +1,16 @@
+Mozilla CA certificate store
+============================
+
+assets/certs/cacert.pem is the Mozilla CA certificate list as extracted by the
+curl project (https://curl.se/docs/caextract.html) from Mozilla's certdata.txt
+(NSS). kernel/user/crypto/roots_data.c is generated from it by
+tools/make_roots.py and contains only each root's subject name and public key.
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+one at https://mozilla.org/MPL/2.0/.
+
+The bundle header records the Mozilla data date and the SHA-256 of the source
+certdata.txt. To refresh it, download a new cacert.pem from
+https://curl.se/ca/cacert.pem into assets/certs/ and run tools/make_roots.py,
+which verifies every certificate against its SHA-256 fingerprint.

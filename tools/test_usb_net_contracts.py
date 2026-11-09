@@ -77,8 +77,9 @@ checks = {
         all(k in apps for k in ['terminal_network_command', 'terminal_cancel_job', 'terminal_job_step', 'Ctrl+C']),
     'automatic connection skips experimental adapters':
         '!(net_info.adapter_flags & MINT_NET_ADAPTER_EXPERIMENTAL)' in apps,
-    'Web refuses https:// explicitly instead of sending plaintext to a TLS port':
-        'if (prefix_ci(p, "https://")) return -1;' in web and 'cannot make encrypted (TLS) connections yet' in web,
+    'Web speaks TLS for https:// and stops on certificate errors with no bypass':
+        'u->secure = 1' in web and 'mint_tls_step(&web_tls)' in web and 'This connection is not private' in web and
+        'proceed' not in web.lower().replace('proceeding', ''),
     'Web bounds the response, links, tokens and redirects':
         all(k in web for k in ['WEB_RAW_MAX', 'WEB_LINK_MAX', 'WEB_TOK_MAX', '++fetch.redirects > 5u']),
     'the shell repaints background-updated windows and routes the mouse wheel':

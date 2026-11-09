@@ -1,4 +1,4 @@
-/* MintDE 2.1.0 — native ring-3 desktop for MintOS26 26.5.011.0.
+/* MintDE 2.2.0 — native ring-3 desktop for MintOS26 26.5.012.0.
  *
  * A macOS-style shell rendered entirely in user space into the kernel-shared
  * canvas: window manager (z-order, focus, traffic lights, drag, resize, zoom,

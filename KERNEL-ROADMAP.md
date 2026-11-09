@@ -1,4 +1,4 @@
-# MintOS26 Kernel Roadmap — 26.5.011.0 / MintDE 2.1.0
+# MintOS26 Kernel Roadmap — 26.5.012.0 / MintDE 2.2.0
 
 ## Current status
 
@@ -9,6 +9,8 @@
 - **Drivers:** PCI resource inventory, xHCI USB (HID only, no hubs) and an Intel E1000-family polling driver carrying the IPv4 stack. The VirtualBox loopback diagnostic still needs live validation. VMware SVGA acceleration, USB mass storage, native NVMe, native audio, ACPI power transitions and hotplug remain incomplete.
 
 - **26.5.009.0 additions:** GOP modes up to 4096x2400 with padded strides (per-mode backbuffers from high memory), write-combined framebuffer via PAT, PS/2 9-bit delta fix and acceleration, ACPI S5 shutdown and FADT/0xCF9/8042 restart, Intel RAID-mode AHCI acceptance. Validated live on QEMU q35/OVMF; physical hardware and VirtualBox still pending.
+
+- **26.5.012.0 additions:** user-space TLS 1.3 client with X.509 validation against the Mozilla roots, and its crypto library (SHA-2, HKDF, ChaCha20-Poly1305, AES-GCM, X25519, RSA/ECDSA verification); RDSEED/RDRAND-based randomness; 64 KiB default user stacks.
 
 - **26.5.011.0 additions:**
   - Polled xHCI driver with HID keyboards, mice and tablets, and device-neutral input injection.
@@ -21,7 +23,7 @@
 
 ## Next milestones
 
-0. **TLS 1.3 client** (X25519, AES-GCM or ChaCha20-Poly1305, SHA-256, certificate parsing) so the Web app and `curl` can reach HTTPS sites; **USB hubs** and **USB mass storage (read-only)**; live validation of USB input and the experimental I219 on the OptiPlex 7040.
+0. **USB hubs** and **USB mass storage (read-only)**; **TLS 1.2 / P-256 key exchange** for the remaining HTTPS servers; a kernel entropy pool (`getrandom`); live validation of USB input, the experimental I219 and HTTPS on the OptiPlex 7040.
 
 1. **MintDE 1.0.3 stabilization:** validate cursor stability, menu dismissal, alpha blend appearance, resize hit targets, Launchpad and multiple-volume Files behavior in VirtualBox at several screen resolutions.
 2. **Prepare general file I/O:** define a narrow write API with explicit device selection, bounds and safe allocation/directory updates. Design flush ordering, error rollback and reboot-survival tests before enabling general writes. Keep Disk Utility isolated and destructive.

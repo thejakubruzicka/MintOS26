@@ -1,8 +1,12 @@
-# MintOS26 26.5.011.0 — MintDE 2.1.0
+# MintOS26 26.5.012.0 — MintDE 2.2.0
 
-**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.1.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
+**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.2.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
 
 The startup selector defaults to UEFI Desktop (Enter/1 or a three-second timeout). Press 2/M to request the experimental MintDE native handoff. MintDE calls `ExitBootServices`; this handoff is one-way until reset, so keep EFI enabled and retain UEFI Desktop as the recovery path.
+
+## 26.5.012.0 / MintDE 2.2.0 — secure web (HTTPS)
+
+MintOS has its own TLS 1.3 client and certificate validation against Mozilla's list of trusted authorities. The Web app opens HTTPS sites with a padlock in the address bar, and certificate problems stop the page with an explanation. Search uses DuckDuckGo. `curl https://…` works in Terminal. Servers that only speak TLS 1.2 are not supported yet.
 
 ## 26.5.011.0 / MintDE 2.1.0 — USB, networking and the web
 
@@ -70,7 +74,7 @@ Host tests do not emulate live AHCI/E1000 DMA or prove MintDE runtime behavior. 
 
 ## Next development work
 
-0. **Secure web (TLS) and USB hubs.** HTTPS is the main thing keeping the Web app from the modern web; USB hubs (and keyboards with built-in hubs) are the main gap in USB input on real PCs. Validate USB input and the experimental I219 driver on the OptiPlex 7040 with COM1 logs.
+0. **USB hubs and storage, TLS 1.2 and a reader view.** USB hubs (and keyboards with built-in hubs) are the main gap in USB input on real PCs; TLS 1.2 and P-256 key exchange would reach the remaining HTTPS servers; images and a reader view would make the Web app nicer. Validate USB input and the experimental I219 driver on the OptiPlex 7040 with COM1 logs.
 1. Validate MintDE 1.0.8 on the VM at multiple display sizes, especially cursor stability, menu dismissal, resize behavior and both formatted and blank disks attached simultaneously.
 2. Design bounded general file writes and persistence separately: allocation, directory updates, flush ordering, rollback and reboot verification must be addressed before enabling them.
 3. Improve terminal input/console I/O, process blocking/wakeup and resource cleanup.

@@ -5,8 +5,8 @@
 #include <mintos/runtime.h>
 #include "gfx.h"
 
-#define MINTDE_VERSION "2.1.0"
-#define MINTOS_VERSION "26.5.011.0"
+#define MINTDE_VERSION "2.2.0"
+#define MINTOS_VERSION "26.5.012.0"
 
 enum {
     APP_FILES = 0, APP_NOTES, APP_TERMINAL, APP_SETTINGS, APP_MONITOR, APP_STORAGE,

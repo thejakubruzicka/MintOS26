@@ -11,6 +11,10 @@ SECTIONS
   . = 0x1000200000;
   .text ALIGN(0x1000) : { *(.text.entry) *(.text .text.*) *(.ltext .ltext.*) *(.rodata .rodata.*) *(.lrodata .lrodata.*) } :text
   . = ALIGN(0x1000);
-  .data : { *(.data .data.*) *(.bss .bss.*) *(.lbss .lbss.*) *(COMMON) } :data
+  /* Initialized data first, then zero-fill in its own NOBITS output section:
+     lld turns a whole output section into file bytes if any input has them,
+     which stored ~3 MB of MintDE buffers as zeros in the ELF. */
+  .data : { *(.data .data.*) *(.ldata .ldata.*) } :data
+  .bss (NOLOAD) : { *(.bss .bss.*) *(.lbss .lbss.*) *(COMMON) } :data
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

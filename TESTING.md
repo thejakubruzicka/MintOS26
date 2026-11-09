@@ -1,4 +1,4 @@
-# MintOS26 26.5.011.0 / MintDE 2.1.0 — Test Guide
+# MintOS26 26.5.012.0 / MintDE 2.2.0 — Test Guide
 
 ## Host build and test
 
@@ -19,6 +19,18 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 ## QEMU/OVMF quick run (Linux or macOS)
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
+
+### HTTPS test (26.5.012.0)
+
+On the host, `tools/test_crypto.py`, `tools/test_x509.py` and `tools/test_tls.py` run as part of `make check`. They need an OpenSSL 3 command line, for example `brew install openssl`, and the tests skip politely without one. Add `--live` to `test_x509.py` and `test_tls.py` to also check real sites.
+
+In QEMU (network as below):
+
+1. **Terminal:** `curl -I https://example.com` prints the TLS 1.3 line ("certificate verified") and `HTTP/1.1 200 OK`. `curl -s https://www.google.com/` reports about 88 KB.
+2. **Web:** open `https://en.wikipedia.org/wiki/Prague_Castle`. The address bar shows a padlock and `en.wikipedia.org`, and the page opens at the article title.
+3. **Search:** type a few words; DuckDuckGo results load over HTTPS.
+4. **Certificate errors:** a certificate for another name, or one from an untrusted authority, shows "This connection is not private" with the reason. The local `openssl s_server` tests in `tools/test_tls.py` produce these cases on demand.
+5. **TLS 1.2-only server** (for example `https://tls-v1-2.badssl.com:1012/`): shows "Secure connection failed" and says the server may only support TLS 1.2.
 
 ### USB, network and Web test (26.5.011.0)
 

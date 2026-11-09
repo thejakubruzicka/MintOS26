@@ -3,6 +3,7 @@
  * driver catalog) is carried over from MintDE 1.0.8 unchanged; every view is
  * redrawn in a macOS-style layout on top of the gfx/widgets layer. */
 #include "mintde.h"
+#include "tls.h"
 
 #define TERM_LINES 240u
 #define TERM_COLS 96u
@@ -164,7 +165,7 @@ static void storage_serial_text(const char *text) {
 static void export_storage_report(void) {
     refresh_storage_data();
     storage_serial_text("\r\n=== MintDE Storage & Logs export (read-only) ===\r\n");
-    storage_serial_text(storage_snapshot.readonly_mount_active ? "FAT16: read-only mount validated; persistence writes remain disabled\r\n" : "FAT16 mount: not active; persistent writes remain disabled in 26.5.011.0\r\n");
+    storage_serial_text(storage_snapshot.readonly_mount_active ? "FAT16: read-only mount validated; persistence writes remain disabled\r\n" : "FAT16 mount: not active; persistent writes remain disabled in 26.5.012.0\r\n");
     char number[24];
     format_u64(number, sizeof(number), storage_snapshot.controller_count);
     storage_serial_text("Controllers: "); storage_serial_text(number); storage_serial_text("\r\n");
@@ -344,7 +345,7 @@ static void terminal_run_command(void) {
     if(terminal_network_command(cmd)) return;
     if(terminal_equals(cmd,"help")) {
         terminal_push("Commands: help, clear, ver, uptime, status, cpu, usb");
-        terminal_push("Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] <url>");
+        terminal_push("Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] [-s] http(s)://...");
         terminal_push("pci, resources, drivers, mounts, io, logs, net");
         terminal_push("drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat");
         terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
@@ -1180,12 +1181,12 @@ static int notes_key(const MINT_DESKTOP_KEY_EVENT *k) {
  * advances once per frame through app_background(), even while Terminal is
  * in the background. Ctrl+C cancels. */
 enum { JOB_NONE = 0, JOB_NET_UP, JOB_PING, JOB_LOOKUP, JOB_HTTP };
-enum { PH_RESOLVE = 0, PH_RUN, PH_CONNECT, PH_RECEIVE };
+enum { PH_RESOLVE = 0, PH_RUN, PH_CONNECT, PH_TLS, PH_RECEIVE };
 static struct term_job {
     uint32_t kind, phase;
     char host[80], path[160];
     uint16_t port;
-    uint8_t head_only, waiting, silent;
+    uint8_t head_only, waiting, silent, secure;
     uint32_t ip, count, sent, received;
     uint64_t started, sent_at, next_at, last_data;
     uint64_t rtt_sum, rtt_min, rtt_max;
@@ -1196,7 +1197,17 @@ static struct term_job {
     size_t line_len;
 } job = {.handle = -1};
 static MINT_NET_INFO net_info;
-static uint8_t net_rx_buffer[4096];
+static uint8_t net_rx_buffer[16384];
+static MINT_TLS term_tls;
+static int64_t term_tls_send(void *ctx, const void *data, size_t len) {
+    int64_t r = mint_tcp_send(*(int64_t *)ctx, data, len > 4096u ? 4096u : len);
+    return r < 0 ? -1 : r;
+}
+static int64_t term_tls_recv(void *ctx, void *out, size_t cap) {
+    int64_t r = mint_tcp_recv(*(int64_t *)ctx, out, cap > 4096u ? 4096u : cap);
+    if (r == -MINT_EAGAIN) return 0;
+    return r > 0 ? r : -1;
+}
 
 static uint64_t term_ms(void) {
     mint_timespec64 t = {0, 0};
@@ -1225,6 +1236,7 @@ static const char *net_error_text(int64_t rc) {
     }
 }
 static void job_finish(void) {
+    if (job.handle >= 0 && job.secure && (job.phase == PH_TLS || job.phase == PH_RECEIVE)) mint_tls_close(&term_tls);
     if (job.handle >= 0) (void)mint_tcp_close(job.handle);
     job.handle = -1;
     job.kind = JOB_NONE;
@@ -1329,16 +1341,17 @@ static void job_text(const uint8_t *b, size_t n) {
     }
 }
 
-/* Splits http://host[:port]/path. Returns 0 if malformed, -1 for https. */
+/* Splits http(s)://host[:port]/path. Returns 0 if malformed, 1 for http, 2 for https. */
 static int parse_url(const char *url, char *host, size_t host_cap, uint16_t *port, char *path, size_t path_cap) {
     const char *p = url;
-    if (terminal_starts_with(p, "https://")) return -1;
-    if (terminal_starts_with(p, "http://")) p += 7;
+    int secure = 0;
+    if (terminal_starts_with(p, "https://")) { p += 8; secure = 1; }
+    else if (terminal_starts_with(p, "http://")) p += 7;
     size_t n = 0;
     while (*p && *p != '/' && *p != ':' && n + 1u < host_cap) host[n++] = *p++;
     host[n] = '\0';
     if (!n) return 0;
-    uint32_t pv = 80;
+    uint32_t pv = secure ? 443u : 80u;
     if (*p == ':') {
         ++p; pv = 0;
         while (*p >= '0' && *p <= '9') { pv = pv * 10u + (uint32_t)(*p++ - '0'); if (pv > 65535u) return 0; }
@@ -1347,7 +1360,7 @@ static int parse_url(const char *url, char *host, size_t host_cap, uint16_t *por
     *port = (uint16_t)pv;
     if (*p && *p != '/') return 0;
     copy_text(path, path_cap, *p ? p : "/");
-    return 1;
+    return secure ? 2 : 1;
 }
 
 static void job_start(uint32_t kind, const char *host) {
@@ -1413,15 +1426,27 @@ static int terminal_network_command(const char *cmd) {
     }
     char host[80], path[160]; uint16_t port = 80;
     int ok = parse_url(arg, host, sizeof(host), &port, path, sizeof(path));
-    if (ok < 0) {
-        terminal_push("curl: HTTPS needs TLS, which MintOS does not have yet. Try an http:// address,");
-        terminal_push("      for example: curl http://example.com  or  curl http://frogfind.com");
-        return 1;
-    }
-    if (!ok) { terminal_push("usage: curl [-I] [-s] http://host[:port]/path   (-s: count bytes only)"); return 1; }
+    if (!ok) { terminal_push("usage: curl [-I] [-s] http(s)://host[:port]/path   (-s: count bytes only)"); return 1; }
     job_start(JOB_HTTP, host);
-    job.port = port; job.head_only = head_only; job.silent = silent;
+    job.port = port; job.head_only = head_only; job.silent = silent; job.secure = ok == 2;
     copy_text(job.path, sizeof(job.path), path);
+    return 1;
+}
+
+static int curl_send_request(uint64_t now) {
+    char request[400];
+    copy_text(request, sizeof(request), job.head_only ? "HEAD " : "GET ");
+    str_append(request, sizeof(request), job.path);
+    str_append(request, sizeof(request), " HTTP/1.0\r\nHost: ");
+    str_append(request, sizeof(request), job.host);
+    if (job.port != (job.secure ? 443u : 80u)) { str_append(request, sizeof(request), ":"); num_append(request, sizeof(request), job.port); }
+    str_append(request, sizeof(request), "\r\nUser-Agent: MintOS26-curl/1.1\r\nAccept: */*\r\nConnection: close\r\n\r\n");
+    int64_t want = (int64_t)text_length(request);
+    int64_t rc = job.secure ? mint_tls_write(&term_tls, request, (size_t)want) : mint_tcp_send(job.handle, request, (size_t)want);
+    if (rc < want) { terminal_push("curl: (55) failed to send the request"); job_finish(); return 1; }
+    terminal_push("* Request sent");
+    terminal_push("");
+    job.phase = PH_RECEIVE; job.last_data = now;
     return 1;
 }
 
@@ -1536,19 +1561,15 @@ static int terminal_job_step(void) {
     if (job.phase == PH_CONNECT) {
         int64_t st = mint_tcp_state(job.handle);
         if (st == MINT_TCP_STATE_ESTABLISHED) {
-            char request[400];
-            copy_text(request, sizeof(request), job.head_only ? "HEAD " : "GET ");
-            str_append(request, sizeof(request), job.path);
-            str_append(request, sizeof(request), " HTTP/1.0\r\nHost: ");
-            str_append(request, sizeof(request), job.host);
-            if (job.port != 80u) { str_append(request, sizeof(request), ":"); num_append(request, sizeof(request), job.port); }
-            str_append(request, sizeof(request), "\r\nUser-Agent: MintOS26-curl/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n");
-            int64_t rc = mint_tcp_send(job.handle, request, text_length(request));
-            if (rc < (int64_t)text_length(request)) { terminal_push("curl: (55) failed to send the request"); job_finish(); return 1; }
-            terminal_push("* Connected; request sent");
-            terminal_push("");
-            job.phase = PH_RECEIVE; job.last_data = now;
-            return 1;
+            if (job.secure) {
+                mint_timespec64 wall = {0, 0};
+                MINT_TLS_IO io = {&job.handle, term_tls_send, term_tls_recv};
+                mint_tls_init(&term_tls, &io, job.host, mint_clock_gettime(MINT_CLOCK_REALTIME, &wall) == 0 ? wall.tv_sec : 0);
+                job.phase = PH_TLS; job.sent_at = now;
+                terminal_push("* TLS 1.3 handshake\xE2\x80\xA6");
+                return 1;
+            }
+            return curl_send_request(now);
         }
         if (st != MINT_TCP_STATE_CONNECTING || now - job.sent_at > 15000u) {
             copy_text(row, sizeof(row), "curl: (7) Failed to connect to "); str_append(row, sizeof(row), job.host);
@@ -1560,8 +1581,35 @@ static int terminal_job_step(void) {
         }
         return 0;
     }
+    if (job.phase == PH_TLS) {
+        int rc = mint_tls_step(&term_tls);
+        if (rc == MINT_TLS_AGAIN) {
+            if (now - job.sent_at > 20000u) { terminal_push("curl: (35) TLS handshake timed out"); job_finish(); return 1; }
+            return 0;
+        }
+        if (rc != MINT_TLS_DONE) {
+            copy_text(row, sizeof(row), term_tls.error == MINT_TLS_ERR_CERT ? "curl: (60) SSL certificate problem: " : "curl: (35) TLS connect error: ");
+            str_append(row, sizeof(row), mint_tls_error_text(&term_tls));
+            push_wrapped(row); job_finish();
+            return 1;
+        }
+        copy_text(row, sizeof(row), "* TLS 1.3 with ");
+        str_append(row, sizeof(row), mint_tls_suite_name(term_tls.suite));
+        str_append(row, sizeof(row), "; certificate verified");
+        push_wrapped(row);
+        return curl_send_request(now);
+    }
     for (uint32_t burst = 0; burst < 16u && job.kind == JOB_HTTP; ++burst) {
-        int64_t n = mint_tcp_recv(job.handle, net_rx_buffer, sizeof(net_rx_buffer));
+        int64_t n;
+        if (job.secure) {
+            n = mint_tls_read(&term_tls, net_rx_buffer, sizeof(net_rx_buffer));
+            if (n == MINT_TLS_WOULD_BLOCK) n = -MINT_EAGAIN;
+            else if (n < 0) {
+                if (job.line_len) job_flush_line();
+                copy_text(row, sizeof(row), "curl: (56) TLS: "); str_append(row, sizeof(row), mint_tls_error_text(&term_tls));
+                push_wrapped(row); job_finish(); break;
+            }
+        } else n = mint_tcp_recv(job.handle, net_rx_buffer, 4096u);
         if (n > 0) {
             if (!job.silent) job_text(net_rx_buffer, (size_t)n);
             job.bytes += (uint64_t)n; job.last_data = now;
@@ -2299,7 +2347,7 @@ static void network_paint(const mde_layout *l) {
     if (net_info.adapter_flags & MINT_NET_ADAPTER_EXPERIMENTAL) {
         ui_label(c.x0 + 28, y, FONT_CAPTION, "This adapter's driver is experimental; it relies on the firmware's PHY setup.", T.text2); y += 18;
     }
-    ui_label(c.x0 + 28, c.y1 - 16, FONT_CAPTION, "IPv4 with DHCP, DNS, ICMP and TCP. HTTPS sites need TLS, which is not available yet.", T.text2);
+    ui_label(c.x0 + 28, c.y1 - 16, FONT_CAPTION, "IPv4 with DHCP, DNS, ICMP and TCP. Secure web pages use MintOS\xE2\x80\x99s TLS 1.3 with certificate checks.", T.text2);
 }
 static int network_toggle(void) {
     if (mint_net_get_status(&net_info) != 0) return 0;
@@ -2477,24 +2525,24 @@ static int disks_key(const MINT_DESKTOP_KEY_EVENT *k) {
 
 /* ------------------------------------------------------------ About windows */
 static const char *const os_versions[8] = {
+    "26.5.012.0  TLS 1.3, certificate checks, HTTPS in Web and curl",
     "26.5.011.0  USB input, Intel Ethernet, IPv4/TCP stack, Web browser",
     "26.5.010.0  MintDE 2: macOS-style desktop, shared canvas, RTC clock",
     "26.5.009.0  Real-hardware display, mouse, ACPI power, RAID-mode SATA",
     "26.5.008.0  VirtualBox E1000 RX loopback and descriptor diagnostics",
     "26.5.007.0  E1000 TX timeout isolation",
     "26.5.006.0  E1000 loopback diagnostics and terminal prompt",
-    "26.5.005.0  E1000 driver foundation",
-    "26.5.004.0  Driver foundation release"
+    "26.5.005.0  E1000 driver foundation"
 };
 static const char *const de_versions[8] = {
+    "MintDE 2.2.0  Secure web browsing, padlock, DuckDuckGo search",
     "MintDE 2.1.0  Web browser, Network app, Terminal network tools",
     "MintDE 2.0.0  Windows, Dock, Launchpad, Spotlight, Control Center",
     "MintDE 1.0.8  Shut Down / Restart and precise pointer",
     "MintDE 1.0.7  VirtualBox loopback and RX diagnostics",
     "MintDE 1.0.6  E1000 loopback failure diagnostics",
     "MintDE 1.0.5  E1000 loopback diagnostics and terminal prompt",
-    "MintDE 1.0.4  E1000 driver UI",
-    "MintDE 1.0.3  Dock, menus and window polish"
+    "MintDE 1.0.4  E1000 driver UI"
 };
 static void about_paint(uint32_t app, const mde_layout *l) {
     gfx_rect f = l->frame;

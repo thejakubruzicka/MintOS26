@@ -5,7 +5,9 @@
 #include "address_space.h"
 
 #define MINT_ELF64_MAX_SEGMENTS 16u
-#define MINT_USER_DEFAULT_STACK_BYTES (4u * 4096u)
+/* 26.5.012.0: 64 KiB (the loader maximum); TLS certificate checks and the
+ * Web layout need more than the previous 16 KiB. */
+#define MINT_USER_DEFAULT_STACK_BYTES (16u * 4096u)
 
 typedef struct mint_user_image {
     uint64_t entry;

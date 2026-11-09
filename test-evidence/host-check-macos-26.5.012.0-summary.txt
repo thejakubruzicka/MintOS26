@@ -1,0 +1,57 @@
+OK   (0 PASS) clang -std=c11 -O2 -Wall -Wextra -Werror tools/test_e1000_core.c -o build/test-e1000-core
+OK   (1 PASS) build/test-e1000-core
+OK   (0 PASS) clang -std=c11 -O2 -Wall -Wextra -Werror -DMINT_USB_HOST_TEST -DMINT_NET_USERSPACE tools/test_usb_net.c kernel
+OK   (45 PASS) build/test-usb-net
+OK   (25 PASS) python3 tools/test_usb_net_contracts.py
+OK   (19 PASS) python3 tools/test_crypto.py
+OK   (23 PASS) python3 tools/test_x509.py
+OK   (17 PASS) python3 tools/test_tls.py
+OK   (16 PASS) python3 tools/test_tls_contracts.py
+OK   (27 PASS) python3 tools/test_e1000_driver.py
+OK   (9 PASS) python3 tools/verify_uefi.py build/BOOTX64.EFI build/mintos26-efi-volume.img build/mintos26-26.5.012.0-uefi.im
+OK   (57 PASS) python3 tools/verify_native_desktop.py build/user-desktop.elf
+OK   (14 PASS) python3 tools/test_mint26_003_features.py
+OK   (46 PASS) python3 tools/verify_features.py
+OK   (1 PASS) python3 tools/test_pointer_math.py
+OK   (25 PASS) python3 tools/test_mint26_features.py
+OK   (8 PASS) python3 tools/test_boot_selector.py
+OK   (33 PASS) python3 tools/verify_kernel.py
+OK   (10 PASS) python3 tools/test_kernel_timer.py
+OK   (20 PASS) python3 tools/verify_scheduler.py
+OK   (14 PASS) python3 tools/test_syscall_dispatch.py
+OK   (96 PASS) python3 tools/test_user_syscalls.py
+OK   (32 PASS) python3 tools/verify_userspace.py
+OK   (3 PASS) python3 tools/verify_elf_loader.py build/user-init.elf
+FAIL rc=1 (0 PASS) python3 tools/test_context_switch.py
+      /Users/jakubruzicka/Documents/mintOS/MintOS26/kernel/arch/x86_64/arch.S:1:10: error: mach-o section specifier uses an unknown section type
+      /Users/jakubruzicka/Documents/mintOS/MintOS26/kernel/arch/x86_64/arch.S:5:1: error: unknown directive
+      /Users/jakubruzicka/Documents/mintOS/MintOS26/kernel/arch/x86_64/arch.S:21:1: error: unknown directive
+OK   (2 PASS) python3 tools/test_physmem.py
+OK   (2 PASS) python3 tools/test_paging.py
+OK   (1 PASS) python3 tools/test_heap.py
+OK   (1 PASS) python3 tools/test_vmalloc.py
+OK   (62 PASS) python3 tools/test_address_space.py
+OK   (11 PASS) python3 tools/verify_address_space.py
+OK   (32 PASS) python3 tools/test_desktop_boundary.py
+OK   (21 PASS) python3 tools/test_ramfs_settings.py
+OK   (7 PASS) python3 tools/test_ps2_input.py
+OK   (79 PASS) python3 tools/test_hardware_compat.py
+OK   (21 PASS) python3 tools/test_acpi.py
+OK   (37 PASS) python3 tools/test_mintde2.py
+OK   (14 PASS) python3 tools/test_pci.py
+OK   (10 PASS) python3 tools/test_driver_foundation.py
+OK   (3 PASS) python3 tools/test_terminal_stack_usage.py
+OK   (18 PASS) python3 tools/test_storage_diag.py build/mintos26-data-512m.img
+OK   (10 PASS) python3 tools/test_fat16_ro.py build/mintos26-data-512m.img
+OK   (0 PASS) clang -std=c11 -O2 -Wall -Wextra -Werror -Ikernel/include tools/test_fat16_format.c kernel/fs/fat16.c kernel/b
+OK   (42 PASS) build/test-fat16-format
+OK   (0 PASS) clang -std=c11 -O2 -Wall -Wextra -Werror -Ikernel/include tools/test_vfs_mounts.c kernel/fs/vfs.c -o build/tes
+OK   (7 PASS) build/test-vfs-mounts
+OK   (0 PASS) clang -D_WIN32 -std=c11 -O2 -Wall -Wextra -Werror -Ikernel/include tools/test_display_bitmap.c kernel/ui/displ
+OK   (8 PASS) build/test-display-bitmap
+OK   (46 PASS) python3 tools/verify_storage_diag.py build/mintos26-data-512m.img build/mintos26-data-512m-fixed.vdi build/min
+OK   (12 PASS) python3 tools/test_vbox_vdi.py assets/vbox-dynamic-512m-blank-template.vdi build/mintos26-data-512m.img build/
+OK   (7 PASS) python3 tools/test_vbox_blank_vdi.py assets/vbox-dynamic-512m-blank-template.vdi build/mintos26-data-512m-vbox
+OK   (13 PASS) python3 tools/verify_arch_hardening.py
+OK   (14 PASS) python3 tools/verify_vmalloc.py
+commands ok=52 failed=1; total PASS lines=1021

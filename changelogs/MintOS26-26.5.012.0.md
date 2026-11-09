@@ -1,0 +1,25 @@
+# MintOS26 26.5.012.0 — TLS 1.3 and HTTPS
+
+- **Cryptography library** (`kernel/user/crypto/`, ring 3, integer-only, no heap):
+  - SHA-256/384/512, HMAC, HKDF and the TLS 1.3 HKDF-Expand-Label.
+  - ChaCha20-Poly1305 and AES-128/256-GCM.
+  - X25519 with constant-time 51-bit limbs.
+  - Big-number Montgomery arithmetic for RSA PKCS#1 v1.5 and RSA-PSS verification (1024–4096-bit keys) and ECDSA verification on P-256 and P-384.
+- **Certificates:**
+  - An X.509 v3 parser and web-PKI chain validation: validity dates, basicConstraints, subjectAltName DNS and IP matching with single-label wildcards, and RSA/ECDSA signatures up to a trusted root.
+  - The trusted roots are Mozilla's CA list: `assets/certs/cacert.pem` from curl.se, Mozilla Public License 2.0 (see `docs/MOZILLA_CA_NOTICE.txt`). It is turned into `roots_data.c` by `tools/make_roots.py`, which checks every certificate's SHA-256 fingerprint.
+  - **Not checked:** revocation (CRL/OCSP), name constraints and key usage.
+- **TLS 1.3 client** (RFC 8446), non-blocking over the kernel TCP sockets:
+  - X25519 key exchange, the three standard cipher suites, ALPN `http/1.1` and SNI.
+  - CertificateVerify with ECDSA P-256/P-384 or RSA-PSS.
+  - Finished verification, KeyUpdate, ignored session tickets, and close_notify.
+  - **Not supported:** TLS 1.2, P-256 key exchange, session resumption and client certificates. A server without TLS 1.3 + X25519 gets a clear error message.
+- **Randomness:** RDSEED/RDRAND, when the CPU has them, mixed with timestamp-counter jitter through a SHA-512 hash DRBG that re-keys after every request.
+- **Processes:** the default user stack grows from 16 KiB to 64 KiB (the ELF loader's limit).
+- **Smaller images:** the user linker script now gives zero-filled data its own NOBITS section. MintDE's buffers had been stored in the ELF as file zeros. The desktop ELF shrinks from 5.1 MB to 2.1 MB and the kernel from 17.8 MB to 14.8 MB; 26.5.011.0 was already about 1 MB larger than necessary.
+- **Tests:**
+  - `tools/test_crypto.py` checks against hashlib/hmac, RFC 8439, RFC 7748, FIPS-197 and NIST GCM vectors, and OpenSSL X25519.
+  - `tools/test_x509.py` covers OpenSSL-generated RSA/PSS/ECDSA signatures, a three-level test PKI with its failure cases, and, with `--live`, real server chains.
+  - `tools/test_tls.py` runs a local `openssl s_server` with ECDSA P-256/P-384 and RSA certificates under every suite, wrong-host and untrusted-root refusal, a 312 KB transfer, and, with `--live`, Google, Wikipedia, GitHub, Cloudflare, Let's Encrypt, the BBC and example.com with each suite forced.
+  - `tools/test_tls_contracts.py` holds the source contracts.
+- **Validation:** in QEMU 11.1 q35/OVMF, Terminal `curl -s https://www.google.com/` fetched 88 KB in 560 ms including the handshake and chain verification. Web loaded Wikipedia and DuckDuckGo over HTTPS. VirtualBox and physical hardware have not been validated yet.
