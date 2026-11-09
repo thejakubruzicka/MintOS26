@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include "../include/driver_catalog.h"
 #include "../include/e1000.h"
+#include "../include/usb.h"
+#include "../include/net.h"
 #include "../include/pci.h"
 #include "../include/input.h"
 #include "../include/storage_diag.h"
@@ -66,38 +68,48 @@ void mint_driver_catalog_snapshot(MINT_DRIVER_CATALOG *out) {
     add(out, 2u, pci && pci->devices_stored ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
         "PCI inventory", pci && pci->devices_stored ? "Bounded PCI inventory scan." : "PCI inventory unavailable.");
     add(out, 3u, MINT_DRIVER_ACTIVE, "PIT timer", "IRQ0 ticks at approximately 100 Hz.");
-    add(out, 4u, mint_input_keyboard_ready() ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
-        "PS/2 keyboard", mint_input_keyboard_ready() ? "Set-1 keyboard events." : "No initialized PS/2 keyboard.");
-    add(out, 5u, mint_input_mouse_ready() ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
-        "PS/2 mouse", mint_input_mouse_ready() ? "PS/2 three-byte mouse packets." : "No initialized PS/2 mouse.");
+    add(out, 4u, mint_input_ps2_keyboard_online() ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
+        "PS/2 keyboard", mint_input_ps2_keyboard_online() ? "Set-1 keyboard events." : "No initialized PS/2 keyboard.");
+    add(out, 5u, mint_input_ps2_mouse_online() ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
+        "PS/2 mouse", mint_input_ps2_mouse_online() ? "PS/2 three-byte mouse packets." : "No initialized PS/2 mouse.");
     add(out, 6u, storage && storage->controller_count ? MINT_DRIVER_DIAGNOSTIC_ONLY : MINT_DRIVER_UNAVAILABLE,
         "AHCI / SATA", storage && storage->controller_count ? "Polled read-only sector I/O." : "No usable AHCI controller detected.");
     add(out, 7u, storage && storage->readonly_mount_active ? MINT_DRIVER_READ_ONLY : MINT_DRIVER_DIAGNOSTIC_ONLY,
         "FAT16 volume", storage && storage->readonly_mount_active ? "Read-only FAT16, writes off." : "No mount verified; writes disabled.");
     add(out, 8u, pci_has(0x15ADu, 0x0405u, 0, 0) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE,
         "VMware SVGA", pci_has(0x15ADu, 0x0405u, 0, 0) ? "Enumerated; no native SVGA driver." : "Adapter not detected.");
-    add(out, 9u, pci_has(0x8086u, 0x100Eu, 0, 0) || pci_has(0, 0, 0x02u, 0) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE,
-        "Ethernet controller", pci_has(0x8086u, 0x100Eu, 0, 0) || pci_has(0, 0, 0x02u, 0) ? "Detected; packet/network stack absent." : "No PCI network controller detected.");
-    add(out, 10u, pci_has(0, 0, 0x0Cu, 0x03u) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE,
-        "USB host controller", pci_has(0, 0, 0x0Cu, 0x03u) ? "Found; no native USB stack." : "No USB-class controller detected.");
+    MINT_E1000_INFO nic; (void)mint_e1000_get_info(&nic);
+    int intel_nic = nic.state != MINT_E1000_NOT_FOUND;
+    add(out, 9u, intel_nic ? (nic.state == MINT_E1000_ACTIVE ? MINT_DRIVER_ACTIVE : MINT_DRIVER_DEVICE_FOUND) :
+        (pci_has(0, 0, 0x02u, 0) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE),
+        "Ethernet controller", intel_nic ? "Intel E1000 family; see the Intel Ethernet row." :
+        (pci_has(0, 0, 0x02u, 0) ? "Detected, but no driver for this network controller." : "No PCI network controller detected."));
+    static MINT_USB_INFO usb; (void)mint_usb_get_info(&usb);
+    add(out, 10u, usb.state == MINT_USB_STATE_RUNNING ? MINT_DRIVER_ACTIVE :
+        (pci_has(0, 0, 0x0Cu, 0x03u) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE),
+        "USB host controller (xHCI)", usb.state == MINT_USB_STATE_RUNNING ? "Polled xHCI: HID keyboard, mouse and tablet; no hubs yet." :
+        usb.state == MINT_USB_STATE_FAILED ? "xHCI start failed; see Storage & Logs." :
+        (pci_has(0, 0, 0x0Cu, 0x03u) ? "Only EHCI/UHCI/OHCI found; those are not supported." : "No USB-class controller detected."));
     add(out, 11u, pci_has(0, 0, 0x01u, 0x08u) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_NOT_IMPLEMENTED,
         "NVMe storage", pci_has(0, 0, 0x01u, 0x08u) ? "Detected; NVMe I/O unsupported." : "No NVMe driver; no disk probes.");
-    add(out, 12u, MINT_DRIVER_NOT_IMPLEMENTED, "ACPI power / sleep", "Power/sleep not implemented.");
+    add(out, 12u, MINT_DRIVER_ACTIVE, "ACPI power", "S5 soft-off and restart; sleep states not implemented.");
     add(out, 13u, MINT_DRIVER_NOT_IMPLEMENTED, "Audio output", "No native audio playback.");
-    add(out, 14u, MINT_DRIVER_NOT_IMPLEMENTED, "Native network stack", "TCP/IP/DHCP/DNS absent.");
+    static MINT_NET_INFO net_state; (void)mint_net_get_info(&net_state);
+    add(out, 14u, net_state.state == MINT_NET_STATE_UP ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE, "IPv4 network stack",
+        net_state.state == MINT_NET_STATE_UP ? "Connected: ARP, ICMP, UDP, DHCP, DNS and TCP client." :
+        "Not connected; ARP, ICMP, UDP, DHCP, DNS and TCP client ready.");
     add(out, 15u, MINT_DRIVER_NOT_IMPLEMENTED, "USB mass storage", "USB mass storage unavailable; UEFI only.");
     add(out, 16u, pci && pci->devices_stored ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE,
         "PCI BAR / IRQ inventory", pci && pci->devices_stored ?
         "Read-only BAR and interrupt metadata; BAR sizing writes are never issued." : "PCI inventory unavailable.");
     add(out, 17u, MINT_DRIVER_DIAGNOSTIC_ONLY, "16550 COM1 UART",
         "Bounded polled transmit for COM1 logging; receive/input driver not implemented.");
-    MINT_E1000_INFO net; (void)mint_e1000_get_info(&net);
-    add(out, 18u, net.state == MINT_E1000_ACTIVE ? MINT_DRIVER_ACTIVE :
-        (pci_has(0x8086u, 0x100Eu, 0, 0) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE),
-        "VirtualBox E1000", net.state == MINT_E1000_ACTIVE ?
-        "Intel 82540EM active; DMA RX/TX rings initialized; polling, no IP stack." :
-        (net.state == MINT_E1000_FAILED ? "Intel 82540EM initialization failed; see COM1 logs." :
-         (pci_has(0x8086u, 0x100Eu, 0, 0) ? "Intel 82540EM detected; idle until Terminal `net start`; bus mastering remains disabled." : "E1000-compatible adapter not detected.")));
+    add(out, 18u, nic.state == MINT_E1000_ACTIVE ? MINT_DRIVER_ACTIVE :
+        (intel_nic && nic.state != MINT_E1000_FAILED ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE),
+        "Intel Ethernet (E1000)", nic.state == MINT_E1000_ACTIVE ?
+        "Active: DMA RX/TX rings, polling; carries the IPv4 stack." :
+        (nic.state == MINT_E1000_FAILED ? "Initialization failed; see COM1 logs." :
+         (intel_nic ? "Detected; idle until Connect; bus mastering remains disabled." : "No E1000-family adapter detected.")));
     add(out, 19u, pci_has(0x15ADu, 0x0405u, 0, 0) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_UNAVAILABLE,
         "VirtualBox display adapter", pci_has(0x15ADu, 0x0405u, 0, 0) ?
         "VMware SVGA ID detected; software framebuffer in use, no acceleration." : "VMware SVGA-compatible device not detected.");

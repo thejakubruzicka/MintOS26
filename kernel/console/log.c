@@ -27,6 +27,8 @@ static const char *component_name(uint32_t c) {
     case MINT_LOG_COMPONENT_FAT16: return "FAT16";
     case MINT_LOG_COMPONENT_VFS: return "VFS";
     case MINT_LOG_COMPONENT_E1000: return "E1000";
+    case MINT_LOG_COMPONENT_USB: return "USB";
+    case MINT_LOG_COMPONENT_NET: return "NET";
     default: return "KERNEL";
     }
 }

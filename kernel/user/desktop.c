@@ -1,4 +1,4 @@
-/* MintDE 2.0.0 — native ring-3 desktop for MintOS26 26.5.010.0.
+/* MintDE 2.1.0 — native ring-3 desktop for MintOS26 26.5.011.0.
  *
  * A macOS-style shell rendered entirely in user space into the kernel-shared
  * canvas: window manager (z-order, focus, traffic lights, drag, resize, zoom,
@@ -281,7 +281,7 @@ static void paint_window(uint32_t app, gfx_rect clip) {
 }
 
 /* ------------------------------------------------------------ Dock */
-static const uint32_t dock_apps[] = {APP_LAUNCHPAD, APP_FILES, APP_NOTES, APP_TERMINAL, APP_CALCULATOR,
+static const uint32_t dock_apps[] = {APP_LAUNCHPAD, APP_FILES, APP_WEB, APP_NOTES, APP_TERMINAL, APP_CALCULATOR,
                                      APP_SETTINGS, APP_MONITOR, APP_STORAGE, APP_DISKS, APP_DRIVERS, APP_NETWORK};
 #define DOCK_APP_COUNT ((int32_t)(sizeof(dock_apps) / sizeof(dock_apps[0])))
 #define DOCK_TRASH DOCK_APP_COUNT
@@ -1017,7 +1017,7 @@ static void key_pressed(const MINT_DESKTOP_KEY_EVENT *k) {
         case 'm': case 'M': case 'h': case 'H': if (focused_app >= 0) minimize_app(app); return;
         case ',': shell_open_app(APP_SETTINGS); return;
         case 'n': case 'N': shell_open_app(APP_FILES); return;
-        case 'l': case 'L': shell_open_app(APP_LAUNCHPAD); return;
+        case 'l': case 'L': if (focused_app == APP_WEB) break; shell_open_app(APP_LAUNCHPAD); return;
         default: break;
         }
     }
@@ -1050,6 +1050,14 @@ static void handle_event(const MINT_DESKTOP_EVENT *e) {
         update_cursor();
     } else if (e->type == MINT_DESKTOP_EVENT_KEY) {
         if (e->data.key.pressed) key_pressed(&e->data.key); else key_released(&e->data.key);
+    } else if (e->type == MINT_DESKTOP_EVENT_SCROLL) {
+        /* Mouse wheel: scroll the window under the pointer (macOS behaviour). */
+        if (launchpad_open || active_menu >= 0 || spotlight_open || control_center_open) return;
+        int32_t app = window_at(pointer_x, pointer_y);
+        if (app >= 0) {
+            mde_layout l = window_layout((uint32_t)app);
+            if (app_scroll((uint32_t)app, &l, pointer_x, pointer_y, e->data.pointer.dy)) shell_damage(l.content);
+        }
     }
 }
 
@@ -1063,6 +1071,9 @@ static void tick(void) {
         int night = is_night();
         if (desktop_settings.theme == MINT_THEME_WARM && night != night_mode) (void)shell_apply_settings();
     }
+    uint32_t background = app_background();
+    for (uint32_t app = 0; background && app < APP_COUNT; ++app)
+        if ((background & (1u << app)) && windows[app].open && !windows[app].minimized) shell_damage_window(app);
     if (focused_app >= 0 && app_tick((uint32_t)focused_app)) {
         mde_layout l = window_layout((uint32_t)focused_app);
         shell_damage(l.content);

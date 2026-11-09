@@ -228,3 +228,22 @@ int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) 
     return mint_syscall5(MINT_SYS_FAT16_READ, (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)buffer,
                          (uint64_t)capacity, MINT_FAT16_READ_PREFIX, 0);
 }
+int64_t mint_usb_get_status(MINT_USB_INFO *out) {
+    return mint_syscall3(MINT_SYS_USB_INFO, (uint64_t)(uintptr_t)out, 0, 0);
+}
+int64_t mint_net_get_status(MINT_NET_INFO *out) { return mint_syscall3(MINT_SYS_NET_INFO, (uint64_t)(uintptr_t)out, 0, 0); }
+int64_t mint_net_set_up(uint32_t mode) { return mint_syscall3(MINT_SYS_NET_UP, mode, 0, 0); }
+int64_t mint_net_resolve_host(const char *name, uint32_t *ip_out) {
+    return mint_syscall3(MINT_SYS_NET_RESOLVE, (uint64_t)(uintptr_t)name, (uint64_t)(uintptr_t)ip_out, 0);
+}
+int64_t mint_net_ping_send(uint32_t ip, uint32_t seq) { return mint_syscall3(MINT_SYS_NET_PING, MINT_NET_PING_SEND, ip, seq); }
+int64_t mint_net_ping_poll(uint32_t seq) { return mint_syscall3(MINT_SYS_NET_PING, MINT_NET_PING_POLL, 0, seq); }
+int64_t mint_tcp_connect(uint32_t ip, uint16_t port) { return mint_syscall5(MINT_SYS_TCP, MINT_TCP_OP_CONNECT, ip, port, 0, 0); }
+int64_t mint_tcp_send(int64_t handle, const void *data, size_t length) {
+    return mint_syscall5(MINT_SYS_TCP, MINT_TCP_OP_SEND, (uint64_t)handle, (uint64_t)(uintptr_t)data, length, 0);
+}
+int64_t mint_tcp_recv(int64_t handle, void *out, size_t capacity) {
+    return mint_syscall5(MINT_SYS_TCP, MINT_TCP_OP_RECV, (uint64_t)handle, (uint64_t)(uintptr_t)out, capacity, 0);
+}
+int64_t mint_tcp_state(int64_t handle) { return mint_syscall3(MINT_SYS_TCP, MINT_TCP_OP_STATE, (uint64_t)handle, 0); }
+int64_t mint_tcp_close(int64_t handle) { return mint_syscall3(MINT_SYS_TCP, MINT_TCP_OP_CLOSE, (uint64_t)handle, 0); }

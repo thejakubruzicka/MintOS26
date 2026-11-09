@@ -312,3 +312,35 @@ uint32_t mint_vmalloc_total_frees(void) { return g_vmalloc_ready ? g_vmalloc.tot
 uint32_t mint_vmalloc_failed_allocations(void) { return g_vmalloc_ready ? g_vmalloc.failed_allocations : 0; }
 uint32_t mint_vmalloc_rollback_count(void) { return g_vmalloc_ready ? g_vmalloc.rollback_count : 0; }
 uint32_t mint_vmalloc_failed_frees(void) { return g_vmalloc_ready ? g_vmalloc.failed_frees : 0; }
+
+/* Device registers: uncached access for an MMIO range. Inside the identity
+ * window the existing mapping is switched to UC; above it, pages are mapped
+ * into the shared vmalloc window (visible from every address space because
+ * process roots share the kernel's low page directories). These mappings are
+ * permanent and carry no allocation record, so mint_vmalloc_free refuses them
+ * and no device page is ever handed to the RAM allocator. */
+void *mint_mmio_map(uint64_t physical, uint64_t bytes) {
+    if (!bytes || physical > UINT64_MAX - bytes) return 0;
+    if (physical + bytes <= mint_paging_identity_limit() && physical + bytes <= MINT_VMALLOC_BASE)
+        return mint_paging_mark_uncached_range(physical, bytes) ? (void *)(uintptr_t)physical : 0;
+    if (!g_vmalloc_ready) return 0;
+    uint64_t off = physical & (PAGE_SIZE - 1u), base = physical - off;
+    uint64_t span = (off + bytes + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+    if (span / PAGE_SIZE > 1024u) return 0;
+    uint32_t pages = (uint32_t)(span / PAGE_SIZE), first = 0;
+    if (!mint_vmalloc_state_find_run(&g_vmalloc, MINT_VMALLOC_PAGE_COUNT, pages, &first)) return 0;
+    if (!state_mark(&g_vmalloc, first, pages, 1)) return 0;
+    for (uint32_t i = 0; i < pages; ++i) {
+        uint64_t va = MINT_VMALLOC_BASE + (uint64_t)(first + i) * PAGE_SIZE;
+        if (!mint_paging_map_mmio_page(va, base + (uint64_t)i * PAGE_SIZE)) {
+            for (uint32_t j = 0; j < i; ++j) {
+                uint64_t ignored = 0;
+                (void)mint_paging_unmap_page(MINT_VMALLOC_BASE + (uint64_t)(first + j) * PAGE_SIZE, &ignored, 0);
+            }
+            (void)state_mark(&g_vmalloc, first, pages, 0);
+            return 0;
+        }
+    }
+    g_vmalloc.used_pages += pages;
+    return (void *)(uintptr_t)(MINT_VMALLOC_BASE + (uint64_t)first * PAGE_SIZE + off);
+}

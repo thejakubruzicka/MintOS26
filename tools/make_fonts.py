@@ -31,21 +31,27 @@ FACES = [
 ]
 EXTRA = "…•·⌘⇧⌥⌃⏎✓›‹←→↑↓—–−°©®™€£×÷±≠≤≥⌫⎋“”‘’"
 CHARS = [chr(c) for c in range(32, 127)] + list(EXTRA)
+# Latin-1 Supplement and Latin Extended-A (accented letters for European
+# languages, e.g. Czech) for the text faces up to 20 px, so web pages, file
+# names and notes render correctly. The large display faces stay ASCII+symbols.
+LATIN = [chr(c) for c in range(0xA0, 0x180) if chr(c) not in EXTRA]
+LATIN_MAX_PX = 20
 GAMMA = 0.82  # mild stem darkening for 1x displays
 
 
 def render_face(path: Path, size: int):
+    chars = CHARS + (LATIN if size <= LATIN_MAX_PX else [])
     font = ImageFont.truetype(str(path), size)
     ascent, descent = font.getmetrics()
     glyphs, bits = [], bytearray()
     lut = bytes(min(255, int(round(255 * ((v / 255) ** GAMMA)))) for v in range(256))
-    for ch in CHARS:
+    for ch in chars:
         adv = int(round(font.getlength(ch) * 64))
         box = font.getbbox(ch, anchor="ls")
         x0, y0, x1, y1 = box
         w, h = max(0, x1 - x0), max(0, y1 - y0)
         off = len(bits)
-        if w and h and ch != " ":
+        if w and h and ch not in (" ", "\u00a0", "\u00ad"):
             img = Image.new("L", (w, h), 0)
             ImageDraw.Draw(img).text((-x0, -y0), ch, font=font, fill=255, anchor="ls")
             bits += img.tobytes().translate(lut)

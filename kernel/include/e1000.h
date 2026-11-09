@@ -2,8 +2,9 @@
 #define MINTOS26_E1000_H
 #include <stdint.h>
 
-#define MINT_E1000_INFO_VERSION 4u
-#define MINT_E1000_RING_COUNT 8u
+#define MINT_E1000_INFO_VERSION 5u
+#define MINT_E1000_TX_RING_COUNT 16u
+#define MINT_E1000_RX_RING_COUNT 32u
 #define MINT_E1000_MAX_FRAME 1518u
 
 enum mint_e1000_loopback_stage {
@@ -56,6 +57,11 @@ typedef struct mint_e1000_info {
     uint16_t diag_tx_length;
     uint8_t diag_tx_command;
     uint32_t reserved2;
+    /* Version 5: adapter identity and link state. */
+    uint16_t device_id;
+    uint8_t experimental;            /* PCH-integrated I217/I218/I219 */
+    uint8_t link_up;
+    char name[40];
 } MINT_E1000_INFO;
 
 /* Read-only PCI match at boot; never enables MMIO or DMA. */
@@ -65,4 +71,13 @@ int mint_e1000_init(void);
 int mint_e1000_get_info(MINT_E1000_INFO *out);
 /* Runs a VirtualBox 82540EM internal TCVR-loopback diagnostic; sends no external packets. */
 int mint_e1000_loopback_test(void);
+/* Packet interface for the IPv4 stack. send queues one Ethernet frame (no
+   FCS) and returns 1, or 0 if no descriptor freed up within the bounded
+   wait; poll returns 1 with a frame, 0 when the ring is empty, -1 for a
+   dropped/invalid frame. */
+int mint_e1000_active(void);
+int mint_e1000_link_up(void);
+int mint_e1000_mac(uint8_t out[6]);
+int mint_e1000_send(const void *frame, uint32_t length);
+int mint_e1000_poll(void *out, uint32_t capacity, uint32_t *length);
 #endif

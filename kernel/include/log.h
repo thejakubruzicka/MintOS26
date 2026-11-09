@@ -20,7 +20,9 @@ enum mint_log_component {
     MINT_LOG_COMPONENT_PARTITION = 5,
     MINT_LOG_COMPONENT_FAT16 = 6,
     MINT_LOG_COMPONENT_VFS = 7,
-    MINT_LOG_COMPONENT_E1000 = 8
+    MINT_LOG_COMPONENT_E1000 = 8,
+    MINT_LOG_COMPONENT_USB = 9,
+    MINT_LOG_COMPONENT_NET = 10
 };
 
 typedef struct mint_log_record {

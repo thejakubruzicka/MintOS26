@@ -56,6 +56,13 @@
 #define MINT_SYS_DISPLAY_PRESENT               0x4D28u
 #define MINT_SYS_DISPLAY_CURSOR                0x4D29u
 #define MINT_SYS_DISPLAY_WALLPAPER_RENDER      0x4D2Au
+/* 26.5.011.0: USB (xHCI/HID) status and networking (TCP/IP). */
+#define MINT_SYS_USB_INFO                      0x4D2Bu
+#define MINT_SYS_NET_INFO                      0x4D30u
+#define MINT_SYS_NET_UP                        0x4D31u
+#define MINT_SYS_NET_RESOLVE                   0x4D32u
+#define MINT_SYS_NET_PING                      0x4D33u
+#define MINT_SYS_TCP                           0x4D34u
 
 #define MINT_CLOCK_REALTIME  0
 #define MINT_CLOCK_MONOTONIC 1
@@ -74,6 +81,15 @@
 #define MINT_EROFS      30
 #define MINT_ENOSPC     28
 #define MINT_ENOSYS     38
+#define MINT_EBUSY      16
+#define MINT_EPIPE      32
+#define MINT_ENETDOWN  100
+#define MINT_ENETUNREACH 101
+#define MINT_ECONNRESET 104
+#define MINT_ENOTCONN  107
+#define MINT_ETIMEDOUT 110
+#define MINT_ECONNREFUSED 111
+#define MINT_EHOSTUNREACH 113
 
 typedef struct mint_timespec64 {
     int64_t tv_sec;

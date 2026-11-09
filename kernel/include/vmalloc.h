@@ -56,6 +56,8 @@ int mint_vmalloc_init(void);
 void *mint_vmalloc_alloc(size_t bytes, uint32_t flags);
 int mint_vmalloc_free(void *address);
 int mint_vmalloc_selftest(void);
+/* Uncached mapping for device registers anywhere in the physical space. */
+void *mint_mmio_map(uint64_t physical, uint64_t bytes);
 uint32_t mint_vmalloc_live_allocations(void);
 uint32_t mint_vmalloc_used_pages(void);
 uint32_t mint_vmalloc_peak_pages(void);

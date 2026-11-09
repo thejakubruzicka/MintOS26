@@ -20,7 +20,8 @@ typedef enum mint_desktop_event_type {
     MINT_DESKTOP_EVENT_DAMAGE = 5,
     MINT_DESKTOP_EVENT_TIMER = 6,
     MINT_DESKTOP_EVENT_APP_REQUEST = 7,
-    MINT_DESKTOP_EVENT_QUIT = 8
+    MINT_DESKTOP_EVENT_QUIT = 8,
+    MINT_DESKTOP_EVENT_SCROLL = 9   /* data.pointer.dy: wheel detents, positive = towards the user */
 } MINT_DESKTOP_EVENT_TYPE;
 
 /* Key-event modifier bits. GUI is the Windows/Super key, used as Command. */

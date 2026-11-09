@@ -1,0 +1,22 @@
+# MintDE 2.1.0 — Internet, USB and a web browser
+
+- **Web**, a new browser in the Dock and Launchpad with an original icon:
+  - **Address bar:** type an address, or a few words to search the classic web with Wiby. ⌘L focuses the address bar.
+  - **Navigation:** back and forward (⌘[ ⌘]), reload (⌘R), and links with a hover preview of the address.
+  - **Scrolling:** mouse wheel, arrow keys, Space, Page Up/Down, Home and End.
+  - **Loading:** follows redirects, decodes chunked transfers, and shows a loading bar and a status pill.
+  - **Rendering:** headings, paragraphs, bold, lists, quotes, preformatted text, rules, entities and UTF-8 text, laid out with Inter.
+  - **Start page:** links to sites that still answer over plain HTTP.
+  - **HTTPS:** secure sites show an explanation, because MintOS has no TLS yet. Scripts, CSS, images and forms are not supported.
+- **Network app** redesigned in the style of macOS Network settings:
+  - Shows the connection status with an IP badge, and offers Connect, Disconnect and Try Again.
+  - Lists the TCP/IP settings (IP address, subnet mask, router and DNS server), the adapter, MAC address and link, and the received and sent traffic.
+  - Refreshes live while open.
+- **Automatic connection:** MintDE connects automatically when it starts if the adapter is a virtual-machine model. Experimental adapters, such as the Intel I219 in many desktop PCs, connect only on request. Settings → Network has the "Connect automatically" switch and a Connect/Disconnect button.
+- **Terminal:**
+  - **Network commands:** `net up`, `net down`, `ifconfig`, `ping <host> [count]`, `nslookup <host>` and `curl [-I] [-s] <http-url>`. They run in the background; Ctrl+C stops them.
+  - **USB:** `usb` lists the controller and devices.
+  - **History:** 240 lines with mouse-wheel scrolling, and UTF-8 output.
+- **USB support in the UI:** Hardware & Drivers has a new **USB** page listing devices with their port, kind, speed and vendor/product IDs. Settings → Input shows whether the keyboard and pointer are USB or PS/2.
+- **Mouse wheel** scrolls the window under the pointer (Terminal, Web and Files).
+- **Accented letters** (Latin-1 and Latin Extended-A) now display in the interface text.

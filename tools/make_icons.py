@@ -152,6 +152,27 @@ def g_network(d, layer, cx, cy):
         d.line((cx - half + 20, cy + y, cx + half - 20, cy + y), fill=(255, 255, 255, 255), width=26)
 
 
+def g_web(d, layer, cx, cy):
+    """Web: a planet with meridians, ringed by a mint orbit carrying a leaf."""
+    r = 270
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(40, 132, 246, 255))
+    d.ellipse((cx - r + 40, cy - r + 30, cx + r - 120, cy + r - 160), fill=(78, 160, 255, 255))
+    w = 20
+    d.ellipse((cx - 110, cy - r, cx + 110, cy + r), outline=(255, 255, 255, 215), width=w)
+    d.line((cx, cy - r, cx, cy + r), fill=(255, 255, 255, 215), width=w)
+    for y in (-135, 0, 135):
+        half = int(math.sqrt(max(0, r * r - y * y)))
+        d.line((cx - half + 12, cy + y, cx + half - 12, cy + y), fill=(255, 255, 255, 215), width=w)
+    ring = Image.new("RGBA", (N, N), (0, 0, 0, 0))
+    rd = ImageDraw.Draw(ring)
+    rd.ellipse((cx - 390, cy - 110, cx + 390, cy + 110), outline=(70, 226, 168, 255), width=34)
+    ring = ring.rotate(24, center=(cx, cy), resample=Image.BICUBIC)
+    layer.alpha_composite(ring)
+    d2 = ImageDraw.Draw(layer)
+    lx, ly = cx + 300, cy - 190
+    d2.polygon(leaf_polygon(lx, ly, 120), fill=(70, 226, 168, 255))
+
+
 def g_disks(d, layer, cx, cy):
     rr(d, (cx - 300, cy - 200, cx + 300, cy + 200), 60, (226, 230, 236, 255))
     rr(d, (cx - 300, cy + 60, cx + 300, cy + 200), 60, (190, 196, 206, 255))
@@ -251,6 +272,7 @@ ICONS = {
     "mintde":        ((150, 140, 255), (88, 64, 220), g_about_de),
     "launchpad":     ((60, 62, 70), (24, 24, 28), g_launchpad),
     "calculator":    ((70, 72, 78), (30, 30, 34), g_calculator),
+    "web":           ((255, 255, 255), (226, 232, 240), g_web),
 }
 
 

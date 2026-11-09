@@ -68,8 +68,9 @@ if elf.exists():
     # MintDE 2 embeds Inter glyph tables (~270 KiB) and 14 icons at 64 and 128 px
     # (~1.1 MiB). Keep a reviewed ceiling well inside the 8 MiB (2048-page)
     # per-process frame limit so the resource bundle cannot grow unnoticed.
-    ok = 128 <= desktop_size <= 3 * 1024 * 1024
-    print(('PASS' if ok else 'FAIL') + f': embedded native desktop ELF is within bounded 3 MiB image size ({desktop_size} bytes)')
+    # 26.5.011.0: 4 MiB (Latin glyphs in eight Inter faces and the Web app).
+    ok = 128 <= desktop_size <= 4 * 1024 * 1024
+    print(('PASS' if ok else 'FAIL') + f': embedded native desktop ELF is within bounded 4 MiB image size ({desktop_size} bytes)')
     if not ok: raise SystemExit(1)
     headers = subprocess.run(['readelf','-l',str(elf)],capture_output=True,text=True,check=True).stdout
     if 'R E' not in headers or 'RW ' not in headers or 'RWE' in headers:

@@ -1,4 +1,4 @@
-# MintOS26 26.5.010.0 / MintDE 2.0.0 — Test Guide
+# MintOS26 26.5.011.0 / MintDE 2.1.0 — Test Guide
 
 ## Host build and test
 
@@ -19,6 +19,24 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 ## QEMU/OVMF quick run (Linux or macOS)
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
+
+### USB, network and Web test (26.5.011.0)
+
+Boot with USB devices on an xHCI controller (the e1000 NIC is already part of `run_qemu.sh`):
+
+```sh
+tools/run_qemu.sh -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0
+```
+
+Add `-machine i8042=off` to remove the PS/2 controller, as on USB-only PCs. Use `usb-mouse` instead of `usb-tablet` to test relative motion.
+
+1. **USB:** COM1 shows `[usb] xHCI running` and `HID keyboard ready` / `HID tablet ready`. Typing, ⌘Space, the pointer, clicks and the wheel all work; Hardware & Drivers › USB lists the devices.
+2. **Network:** COM1 shows `[net] DHCP lease 10.0.2.15 …` a moment after the desktop appears. The Network app reports Connected, with IP 10.0.2.15, router 10.0.2.2 and DNS 10.0.2.3.
+3. **Terminal:** `ifconfig`; `ping 10.0.2.2 3` gets three replies; `nslookup example.com` returns an address; `curl -I http://example.com` prints `HTTP/1.1 200 OK`; `curl -s http://textfiles.com/etext/FICTION/alice.txt` reports about 151 KB; `ifconfig` then shows 0 retransmits. Ctrl+C stops a running command. (QEMU user networking cannot ping hosts outside the VM.)
+4. **Web:** open Web from the Dock and follow the 68k.news link (live headlines). Type `prague castle` in the address field to search wiby.me, then check that accented letters display. ⌘[ goes back. An `https://` address shows the "needs a secure connection" page.
+5. **Disconnect:** click Disconnect in Network; `curl` now reports that the network is down. Connect again.
+
+`tools/test_usb_net.c` (HID descriptors, key map, intervals, checksums, IPv4 text, DHCP, DNS, TCP options) also runs cleanly under `-fsanitize=address,undefined`. `tools/test_usb_net_contracts.py` checks the drivers' DMA, wait and parsing rules.
 
 ### MintDE 2 desktop test (26.5.010.0)
 

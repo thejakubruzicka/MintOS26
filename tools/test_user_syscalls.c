@@ -78,6 +78,19 @@ int64_t mint_rtc_boot_epoch(void) { return mock_rtc_epoch; }
 int mint_power_get_info(MINT_POWER_INFO *out) { if (out) { MINT_POWER_INFO z = {0}; *out = z; out->version = MINT_POWER_INFO_VERSION; } return 1; }
 int mint_power_shutdown(void) { return -MINT_ENOSYS; }
 int mint_power_restart(void) { return -MINT_ENOSYS; }
+/* 26.5.011.0 USB and network services referenced by syscall.c. */
+#include "../kernel/include/usb.h"
+#include "../kernel/include/net.h"
+int mint_usb_get_info(MINT_USB_INFO *out) { if (!out) return 0; memset(out, 0, sizeof(*out)); out->version = MINT_USB_INFO_VERSION; return 1; }
+int mint_net_get_info(MINT_NET_INFO *out) { if (!out) return 0; memset(out, 0, sizeof(*out)); out->version = MINT_NET_INFO_VERSION; return 1; }
+int64_t mint_net_up(uint32_t mode) { return mode <= MINT_NET_MODE_DHCP ? 0 : -MINT_EINVAL; }
+int64_t mint_net_resolve(const char *name, uint32_t *ip_out) { (void)name; (void)ip_out; return -MINT_ENETDOWN; }
+int64_t mint_net_ping(uint32_t op, uint32_t ip, uint32_t seq) { (void)op; (void)ip; (void)seq; return -MINT_ENETDOWN; }
+int64_t mint_net_tcp_connect(uint32_t ip, uint16_t port) { (void)ip; (void)port; return -MINT_ENETDOWN; }
+int64_t mint_net_tcp_send(int64_t h, const uint8_t *d, uint32_t n) { (void)h; (void)d; (void)n; return -MINT_EBADF; }
+int64_t mint_net_tcp_recv(int64_t h, uint8_t *o, uint32_t n) { (void)h; (void)o; (void)n; return -MINT_EBADF; }
+int64_t mint_net_tcp_state(int64_t h) { (void)h; return -MINT_EBADF; }
+int64_t mint_net_tcp_close(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
 
 int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out) { if(!out)return 0; memset(out,0,sizeof(*out)); return 1; }
@@ -133,6 +146,8 @@ void mint_serial_dec64(uint64_t v){(void)v;}
 uint64_t mint_timer_ticks(void){return fake_ticks;}
 int mint_input_keyboard_ready(void){return 1;}
 int mint_input_mouse_ready(void){return 1;}
+int mint_input_ps2_keyboard_online(void){return 1;}
+int mint_input_ps2_mouse_online(void){return 1;}
 void mint_input_get_counters(uint64_t *keyboard,uint64_t *motion,uint64_t *buttons){
     if (keyboard) *keyboard=11;
     if (motion) *motion=22;
@@ -410,15 +425,16 @@ int main(void){
           "driver catalog version and bounded record count are valid");
     int found_e1000=0, found_usb=0, found_svga=0;
     for (uint32_t ci=0; ci<catalog_copy.count && ci<MINT_DRIVER_CATALOG_MAX_RECORDS; ++ci) {
+        /* The mocked E1000 reports ACTIVE; the mocked xHCI driver has not started. */
         if (strcmp(catalog_copy.records[ci].name,"Ethernet controller")==0 &&
-            catalog_copy.records[ci].state==MINT_DRIVER_DEVICE_FOUND) found_e1000=1;
-        if (strcmp(catalog_copy.records[ci].name,"USB host controller")==0 &&
+            catalog_copy.records[ci].state==MINT_DRIVER_ACTIVE) found_e1000=1;
+        if (strcmp(catalog_copy.records[ci].name,"USB host controller (xHCI)")==0 &&
             catalog_copy.records[ci].state==MINT_DRIVER_DEVICE_FOUND) found_usb=1;
         if (strcmp(catalog_copy.records[ci].name,"VMware SVGA")==0 &&
             catalog_copy.records[ci].state==MINT_DRIVER_DEVICE_FOUND) found_svga=1;
     }
     CHECK(found_e1000 && found_usb && found_svga,
-          "driver catalog reports discovered hardware without claiming native driver support");
+          "driver catalog reflects each driver's state for discovered hardware");
     CHECK(mint_syscall_dispatch_user(MINT_SYS_E1000_START,0,0,0,0,0,0)==0,
           "E1000 startup is a distinct explicit user request");
     CHECK(mint_syscall_dispatch_user(MINT_SYS_E1000_INFO,USER_CODE_VA,0,0,0,0,0)==-MINT_EFAULT,

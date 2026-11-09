@@ -118,12 +118,18 @@ static uint32_t keycodepoint(uint8_t sc, int shift, int caps) {
     return (uint8_t)c;
 }
 
+static void keyboard_key(uint8_t make, uint8_t ext, uint8_t pressed);
 void mint_input_process_keyboard_byte(uint8_t byte) {
     if (byte == 0xE0u) { extended_prefix = 1u; return; }
     uint8_t make = (uint8_t)(byte & 0x7Fu);
     uint8_t pressed = (uint8_t)((byte & 0x80u) == 0);
     uint8_t ext = extended_prefix;
     extended_prefix = 0;
+    keyboard_key(make, ext, pressed);
+}
+
+/* Shared by PS/2 and USB HID: one set-1 key (make code + E0 flag). */
+static void keyboard_key(uint8_t make, uint8_t ext, uint8_t pressed) {
     if (!ext && (make == 0x2Au || make == 0x36u)) {
         if (pressed) modifiers |= KMOD_SHIFT; else modifiers &= (uint8_t)~KMOD_SHIFT;
         return;
@@ -191,6 +197,7 @@ void mint_ps2_mouse_accelerate(int32_t dx, int32_t dy, int32_t *px, int32_t *py)
     if (py) *py = qy;
 }
 
+static void pointer_relative(int32_t dx, int32_t dy, uint32_t buttons);
 void mint_input_process_mouse_byte(uint8_t byte) {
     if (mouse_packet_index == 0u && (byte & 0x08u) == 0) return; /* packet sync */
     mouse_packet[mouse_packet_index++] = byte;
@@ -203,17 +210,28 @@ void mint_input_process_mouse_byte(uint8_t byte) {
      * bits (6/7) are ignored like Linux psmouse; the 9-bit value saturates. */
     int32_t dx = mint_ps2_mouse_delta(mouse_packet[1], (mouse_packet[0] & 0x10u) != 0);
     int32_t dy = -mint_ps2_mouse_delta(mouse_packet[2], (mouse_packet[0] & 0x20u) != 0);
+    pointer_relative(dx, dy, (uint32_t)(mouse_packet[0] & 0x07u));
+}
+
+static void post_pointer(int32_t old_x, int32_t old_y, int32_t px, int32_t py, uint32_t buttons);
+/* Accelerated relative motion in device counts (screen-down positive). */
+static void pointer_relative(int32_t dx, int32_t dy, uint32_t buttons) {
     MINT_DISPLAY_INFO display = {0};
     if (!mint_display_current_info(&display) || !display.width || !display.height) return;
     int32_t old_x = mouse_x, old_y = mouse_y;
     int32_t px = 0, py = 0;
     mint_ps2_mouse_accelerate(dx, dy, &px, &py);
     mouse_x += px; mouse_y += py;
+    post_pointer(old_x, old_y, px, py, buttons);
+}
+
+static void post_pointer(int32_t old_x, int32_t old_y, int32_t px, int32_t py, uint32_t buttons) {
+    MINT_DISPLAY_INFO display = {0};
+    if (!mint_display_current_info(&display) || !display.width || !display.height) return;
     if (mouse_x < 0) mouse_x = 0;
     if (mouse_y < 0) mouse_y = 0;
     if ((uint32_t)mouse_x >= display.width) mouse_x = (int32_t)display.width - 1;
     if ((uint32_t)mouse_y >= display.height) mouse_y = (int32_t)display.height - 1;
-    uint32_t buttons = (uint32_t)(mouse_packet[0] & 0x07u);
     uint32_t changed = buttons ^ mouse_buttons;
     if (old_x != mouse_x || old_y != mouse_y) {
         MINT_DESKTOP_EVENT event = {0};
@@ -254,8 +272,11 @@ void mint_input_mouse_irq(void) {
         if (mouse_online) mint_input_process_mouse_byte(byte);
     }
 }
-int mint_input_keyboard_ready(void) { return keyboard_online; }
-int mint_input_mouse_ready(void) { return mouse_online; }
+static int usb_keyboard_present, usb_pointer_present;
+int mint_input_keyboard_ready(void) { return keyboard_online || usb_keyboard_present; }
+int mint_input_mouse_ready(void) { return mouse_online || usb_pointer_present; }
+int mint_input_ps2_keyboard_online(void) { return keyboard_online; }
+int mint_input_ps2_mouse_online(void) { return mouse_online; }
 void mint_input_get_counters(uint64_t *keyboard, uint64_t *pointer_motion,
                              uint64_t *pointer_buttons) {
     if (keyboard) *keyboard = keyboard_event_count;
@@ -320,3 +341,48 @@ int mint_input_init(void) {
                                   : "[input] PS/2 mouse unavailable; set VirtualBox Pointing Device to PS/2 Mouse\n");
     return keyboard_online || mouse_online;
 }
+
+/* ---- Device-neutral injection used by the USB HID driver. These run from a
+ * kernel task, so they mask interrupts to stay atomic against the PS/2 IRQ
+ * handlers that share the decoder state and the event queue producer. */
+static uint64_t irq_save(void) { uint64_t f; __asm__ volatile("pushfq; popq %0; cli" : "=r"(f) :: "memory"); return f; }
+static void irq_restore(uint64_t f) { if (f & (1ULL << 9)) __asm__ volatile("sti" ::: "memory"); }
+
+void mint_input_inject_key(uint8_t make, int extended, int pressed) {
+    uint64_t f = irq_save();
+    keyboard_key((uint8_t)(make & 0x7Fu), (uint8_t)(extended != 0), (uint8_t)(pressed != 0));
+    irq_restore(f);
+}
+void mint_input_inject_relative(int32_t dx, int32_t dy, uint32_t buttons) {
+    uint64_t f = irq_save();
+    pointer_relative(dx, dy, buttons & 0x07u);
+    irq_restore(f);
+}
+void mint_input_inject_absolute(uint32_t x, uint32_t x_max, uint32_t y, uint32_t y_max, uint32_t buttons) {
+    MINT_DISPLAY_INFO display = {0};
+    if (!x_max || !y_max || !mint_display_current_info(&display) || !display.width || !display.height) return;
+    uint64_t f = irq_save();
+    int32_t old_x = mouse_x, old_y = mouse_y;
+    if (x > x_max) x = x_max;
+    if (y > y_max) y = y_max;
+    mouse_x = (int32_t)((uint64_t)x * (display.width - 1u) / x_max);
+    mouse_y = (int32_t)((uint64_t)y * (display.height - 1u) / y_max);
+    post_pointer(old_x, old_y, mouse_x - old_x, mouse_y - old_y, buttons & 0x07u);
+    irq_restore(f);
+}
+void mint_input_inject_wheel(int32_t delta) {
+    if (!delta) return;
+    MINT_DESKTOP_EVENT event = {0};
+    event.type = MINT_DESKTOP_EVENT_SCROLL;
+    event.timestamp_ms = mint_timer_ticks() * 10u;
+    event.data.pointer.x = mouse_x; event.data.pointer.y = mouse_y;
+    event.data.pointer.dy = delta;
+    uint64_t f = irq_save();
+    (void)mint_desktop_event_post(&event);
+    irq_restore(f);
+}
+void mint_input_set_usb_devices(int keyboard, int pointer) {
+    usb_keyboard_present = keyboard != 0; usb_pointer_present = pointer != 0;
+}
+int mint_input_usb_keyboard(void) { return usb_keyboard_present; }
+int mint_input_usb_pointer(void) { return usb_pointer_present; }

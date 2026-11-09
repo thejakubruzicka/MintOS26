@@ -470,6 +470,20 @@ int mint_paging_set_framebuffer_write_combining(uint64_t physical_base, uint64_t
     return 1;
 }
 
+/* Map one uncached device-register page at a vmalloc-window VA. Unlike RAM
+ * mappings, the physical address may lie above the 64 GiB identity window
+ * (firmware often places 64-bit BARs at hundreds of GiB). */
+int mint_paging_map_mmio_page(uint64_t va, uint64_t pa) {
+    if (!paging_active || (va & (MINT_PAGING_PAGE_SIZE - 1u)) || (pa & (MINT_PAGING_PAGE_SIZE - 1u)) ||
+        !mint_paging_is_vmalloc_address(va) || pa >= (1ULL << 52)) return 0;
+    uint64_t table_base = (uint64_t)(uintptr_t)&g_tables;
+    uint64_t *pte = lookup_pte(&g_tables, table_base, va, &dynamic_pt_used, 1);
+    if (!pte || (*pte & PTE_P)) return 0;
+    *pte = (pa & PTE_ADDR_MASK) | PTE_P | PTE_RW | PTE_PCD | PTE_PWT | (nx_active ? PTE_NX : 0);
+    invalidate_window_aliases(va);
+    return 1;
+}
+
 int mint_paging_export_address_space_template(uint64_t low_pdpt_entries[64],
                                               uint64_t *shared_direct_pml4_entry,
                                               uint64_t *kernel_root_physical) {

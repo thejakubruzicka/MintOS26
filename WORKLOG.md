@@ -1,39 +1,42 @@
-# MintOS26 26.5.010.0 / MintDE 2.0.0 worklog
+# MintOS26 26.5.011.0 / MintDE 2.1.0 worklog
 
-Previous worklog: `docs/WORKLOG-26.5.009.0.md`.
+Previous worklog: `docs/WORKLOG-26.5.010.0.md`.
 
 ## Goal
 
-Make MintDE look and behave as close to macOS as possible, using only original artwork and openly licensed resources.
+Device support and the Internet: native USB input (needed on the USB-only Dell OptiPlex 7040), a working network driver, a TCP/IP stack, and user-facing tools that make the network useful from MintDE.
 
 ## Design decisions
 
-- **Rendering moved to ring 3.** The old desktop issued one syscall per rectangle or text run and supported a single window. MintDE 2 draws into a kernel-owned canvas mapped into its address space (`MINT_SYS_DISPLAY_MAP_CANVAS`) and presents only damaged rectangles. The pointer is a kernel overlay composited at present and move time, so moving the mouse costs no repaint.
-- **Borrowed mappings, not owned frames.** The per-process page limit was 256 pages (1 MiB). Screen buffers (8–38 MB each) are therefore mapped as a SHARED region that teardown never frees. The owned-page limit was raised to 2048 (8 MiB) for code, fonts and icons only.
-- **Glass without feedback.** Frosted panels (menu bar, Dock, menus, Spotlight, Control Center, alerts) blur the freshly composed scene. The render pass first grows the damage area to include each panel's 2×radius sampling margin, so old glass never blurs into itself. The blur writes back only inside the rounded shape and the clip.
-- **Rounded windows with square app content.** The four corner squares behind a window are saved before it is drawn and blended back afterwards using rounded-rectangle coverage.
-- **Fonts and assets.** Inter 4.1 (SIL OFL) is pre-rendered at 11–44 px into 8-bit coverage tables (`tools/make_fonts.py`), with gamma 0.82 for 1× displays. Wallpapers, icons and pointers are drawn procedurally by committed scripts. The previous photographic wallpaper, which resembled Apple's High Sierra image, was removed.
-- **Logic kept, presentation rewritten.** Storage diagnostics, the Terminal command set, Files navigation, Notes and the Disk Utility safety checks were extracted unchanged from MintDE 1.0.8 into `mintde/apps.c`. Every view was redrawn.
+- **Polling, not interrupts.** xHCI and E1000 both run with interrupts masked. A `usb` and a `net` kernel task poll once per timer tick (100 Hz) on the cooperative scheduler. Syscalls and the tasks touch shared state without yielding, so no locks are needed. Latency is at most one tick, which is plenty for HID and for the TCP rates seen (66–144 KB/s over WAN in QEMU).
+- **USB input reuses the PS/2 path.** HID usages are converted to set-1 make codes and injected through the same key decoder, so modifiers, Command shortcuts, repeat handling and the event queue behave identically. Pointer devices share the acceleration curve; absolute tablets bypass it. Injection masks interrupts because the PS/2 IRQ handler writes the same queue.
+- **Report descriptors are parsed, not assumed.** Boot protocol is used only for keyboards. Mice and tablets keep report protocol, so wheels and absolute coordinates work. The parser is a bounded walk that records the first X/Y/wheel/button fields, with a boot-layout fallback.
+- **Device registers above 64 GiB.** QEMU and many firmwares put 64-bit BARs far above RAM (QEMU's xHCI sits at 768 GiB), outside the identity map. `mint_mmio_map` maps them uncached into the vmalloc window. That window's page directory is shared by every address space, so the mapping is visible to ring-3-triggered syscalls too. These mappings have no allocation record, so they can never be freed into the RAM allocator.
+- **The stack lives in the kernel and is non-blocking.** Every syscall returns at once (`-EAGAIN` means ask again). MintDE turns that into background jobs (Terminal) and a per-frame loader (Web), so the desktop never freezes on the network.
+- **Everything is statically sized:** the ARP cache, DNS cache, ping slots and 8 TCP sockets with fixed buffers. Every parser bounds its reads by the packet length, and the DNS name walk has a loop guard. The pure parsers are host-tested with ASan/UBSan.
+- **TCP keeps only what QEMU's slirp and real servers need:** active open, the MSS option, in-order delivery (anything out of order is dropped and re-acknowledged), go-back-N retransmission with exponential back-off, zero-window probes and a full close sequence. There is no listen, window scaling or SACK.
+- **The PCH LAN (I219) is opt-in and conservative.** A full reset of the I217/I218/I219 needs the ME/PHY handshake that other OSes implement in thousands of lines. MintOS stops the RX/TX units instead, keeps the firmware's PHY setup, takes the software semaphore before touching the PHY, and applies the Sunrise Point TX-hang workaround. Because the driver is untested on hardware it never connects automatically.
+- **The browser is honest about HTTPS.** Without TLS, an `https://` address gets an explanation page rather than a plaintext request. Address-bar words search wiby.me, which serves plain HTTP.
 
 ## Problems found during the work
 
-- **UEFI loader rejected the kernel.** It read at most 8 MiB of `KERNEL.ELF`, and the kernel with two embedded 1080p wallpapers is 14.3 MB, so the read was truncated. The cap was raised to 24 MiB; the 32 MiB load-span limit is unchanged.
-- **Stale object file.** After the page limit changed, `process.obj` was not rebuilt because the Makefile lacked header dependencies. The two struct layouts disagreed and wiped `MINT_PROCESS.pid`, so ring-3 smoke tests failed. Dependencies were added.
-- **Latent Linux-host test break since 26.5.009.0.** The syscall test harnesses did not stub the ACPI power functions; macOS's dynamic lookup hid this. Stubs were added for all new kernel services, and a strict link now leaves only the intentionally weak wallpaper symbols unresolved.
+- **`undefined symbol: memcpy`.** Struct copies in the stack made clang emit libc calls, so `kernel/lib/mem.c` (rep movsb/stosb) was added. MintDE links the same file, because the Web app's struct copies hit the same problem.
+- **xHCI "BAR0 is not a usable MMIO range".** The BAR sat at 0xC000000000, above the 64 GiB identity map. This was fixed with the MMIO window described above.
+- **Missing glyphs.** Pages showed `??` for non-breaking spaces and accented letters. Raw UTF-8 NBSP, soft hyphens and zero-width characters are now filtered in the HTML tokenizer. The eight text faces gained Latin-1 and Latin Extended-A, and a script check confirmed every pre-existing glyph is byte-identical.
+- **Stale toolbar.** The Web loading bar stayed visible after a page finished, because background repaints only damaged the content area. They now damage the whole window.
+- **Dropped keystrokes.** Typing "settings" quickly into Spotlight produced "sett". Each HID endpoint had one transfer in flight, re-armed only when the cooperative `usb` task ran. While MintDE repainted the blurred Spotlight panel (slow under TCG), the device's reports were overwritten. Each endpoint now keeps 8 transfers queued with separate buffers. A 72-character mixed-case sentence then arrived intact.
+- **PS/2 rows claimed ACTIVE without a PS/2 controller.** The shared readiness flags count USB devices too. The catalog now asks the PS/2 driver directly.
+- **Mojibake in the USB page.** A Python edit script used a non-raw string, so `\xC2\xB7` landed in the C source as the characters "Â·". The escapes were restored, and `test_usb_net_contracts.py` now rejects double-encoded UTF-8 anywhere in the sources.
+- **Two mistakes in my own tests:** an off-by-one threshold for a truncated HID descriptor (the X/Y item completes at byte 54), and patching the wrong DHCP byte. The code was correct in both cases.
 
-## Verification
+## Validation (QEMU 11.1 q35/OVMF, macOS host)
 
-- **Host (macOS, `tools/macos-host`):** all `make check` commands pass except `test_context_switch.py` (ELF assembly, Linux host only). New: `tools/test_mintde2.py` (37 checks), address-space shared-mapping cases, and REALTIME clock checks.
-- **QEMU 11.1 q35/OVMF (TCG):** native MintDE 2 boots, `[display] shared canvas mapped`, and the RTC clock shows in the menu bar. Exercised:
-  - The Dock, its tooltips and the Files window: volumes, folder navigation and file preview.
-  - Terminal (`power`, `drives`), and Settings: Appearance → Dark switches the theme and wallpaper.
-  - The leaf menu with hover and System Settings…, Spotlight ("ter" → Terminal), Launchpad and Control Center.
-  - The About window, Calculator (12×3 = 36), Notes typing and ⌘W, Disk Utility, and Storage & Logs.
-  - Window drag, minimize with ⌘M, and ⌘Tab.
-- **Not validated:** VirtualBox; the physical OptiPlex 7040 / GTX 1050 Ti; modes above 1080p in a live guest; real-hardware performance (QEMU here is software-emulated).
-
-## Next
-
-- Phase 2: polled xHCI + USB HID (keyboard, mouse, tablet) so native MintDE works with USB-only input.
-- PS/2 IntelliMouse wheel → scrolling in lists (`app_scroll` is already wired).
-- Desktop icons for mounted volumes; window animations (minimize "genie" is out of scope without timers).
+- **USB** with `qemu-xhci` + `usb-kbd` + `usb-tablet` and + `usb-mouse`, both with `-machine i8042=off`: keyboard (including ⌘Space and fast typing), absolute tablet and relative mouse motion and clicks drove the desktop.
+- **Network** with `-nic user,model=e1000`:
+  - DHCP lease 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
+  - Ping to the gateway, about 0.2–2 ms.
+  - `nslookup example.com`.
+  - HTTP: `curl -I` example.com; info.cern.ch page; 151 KB from textfiles.com in 2.2 s; 93 KB from 68k.news in 0.6 s. Zero retransmits and zero dropped frames.
+- **Web:** 68k.news live headlines, wiby.me search with Czech diacritics, link navigation and back.
+- **Host checks:** all host checks pass except `test_context_switch.py`, which is Linux-only. The new `test_usb_net.c` (45 checks) also passes under ASan/UBSan; `test_usb_net_contracts.py` has 23 checks.
+- **Not validated:** VirtualBox, and the physical OptiPlex 7040 (USB input and the experimental I219 driver).

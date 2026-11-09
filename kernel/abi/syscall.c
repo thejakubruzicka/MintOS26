@@ -18,8 +18,10 @@
 #include "../include/vfs.h"
 #include "../include/pci.h"
 #include "../include/e1000.h"
+#include "../include/net.h"
 #include "../include/power.h"
 #include "../include/rtc.h"
+#include "../include/usb.h"
 #include "../include/process.h"
 
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
@@ -239,6 +241,59 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
     if (number == MINT_SYS_DISPLAY_WALLPAPER_RENDER) {
         if (arg0 > MINT_WALLPAPER_DARK) return -MINT_EINVAL;
         return mint_display_render_wallpaper((uint32_t)arg0) ? 0 : -MINT_ENODEV;
+    }
+    if (number == MINT_SYS_USB_INFO) {
+        static MINT_USB_INFO usb_local;
+        if (!mint_address_space_validate_user_range(space, arg0, sizeof(usb_local), 1)) return -MINT_EFAULT;
+        if (!mint_usb_get_info(&usb_local)) return -MINT_ENODEV;
+        return mint_address_space_copy_to_user(space, arg0, &usb_local, sizeof(usb_local)) ? 0 : -MINT_EFAULT;
+    }
+    if (number == MINT_SYS_NET_INFO) {
+        static MINT_NET_INFO net_local;
+        if (!mint_address_space_validate_user_range(space, arg0, sizeof(net_local), 1)) return -MINT_EFAULT;
+        if (!mint_net_get_info(&net_local)) return -MINT_ENODEV;
+        return mint_address_space_copy_to_user(space, arg0, &net_local, sizeof(net_local)) ? 0 : -MINT_EFAULT;
+    }
+    if (number == MINT_SYS_NET_UP) return mint_net_up((uint32_t)arg0);
+    if (number == MINT_SYS_NET_RESOLVE) {
+        char name[96];
+        uint32_t ip = 0;
+        int rc = copy_user_cstring(space, arg0, name, sizeof(name));
+        if (rc < 0) return rc;
+        if (!mint_address_space_validate_user_range(space, arg1, sizeof(ip), 1)) return -MINT_EFAULT;
+        int64_t result = mint_net_resolve(name, &ip);
+        if (result == 0 && !mint_address_space_copy_to_user(space, arg1, &ip, sizeof(ip))) return -MINT_EFAULT;
+        return result;
+    }
+    if (number == MINT_SYS_NET_PING) {
+        if (arg1 > 0xFFFFFFFFu || arg2 > 0xFFFFu) return -MINT_EINVAL;
+        return mint_net_ping((uint32_t)arg0, (uint32_t)arg1, (uint32_t)arg2);
+    }
+    if (number == MINT_SYS_TCP) {
+        /* Bounded bounce buffer; syscalls never interleave on the cooperative scheduler. */
+        static uint8_t tcp_bounce[4096];
+        switch (arg0) {
+        case MINT_TCP_OP_CONNECT:
+            if (arg1 > 0xFFFFFFFFu || !arg2 || arg2 > 0xFFFFu) return -MINT_EINVAL;
+            return mint_net_tcp_connect((uint32_t)arg1, (uint16_t)arg2);
+        case MINT_TCP_OP_SEND: {
+            uint64_t length = arg3 > sizeof(tcp_bounce) ? sizeof(tcp_bounce) : arg3;
+            if (length && (!mint_address_space_validate_user_range(space, arg2, (size_t)length, 0) ||
+                           !mint_address_space_copy_from_user(space, tcp_bounce, arg2, (size_t)length))) return -MINT_EFAULT;
+            return mint_net_tcp_send((int64_t)arg1, tcp_bounce, (uint32_t)length);
+        }
+        case MINT_TCP_OP_RECV: {
+            uint64_t capacity = arg3 > sizeof(tcp_bounce) ? sizeof(tcp_bounce) : arg3;
+            if (!capacity) return -MINT_EINVAL;
+            if (!mint_address_space_validate_user_range(space, arg2, (size_t)capacity, 1)) return -MINT_EFAULT;
+            int64_t got = mint_net_tcp_recv((int64_t)arg1, tcp_bounce, (uint32_t)capacity);
+            if (got > 0 && !mint_address_space_copy_to_user(space, arg2, tcp_bounce, (size_t)got)) return -MINT_EFAULT;
+            return got;
+        }
+        case MINT_TCP_OP_STATE: return mint_net_tcp_state((int64_t)arg1);
+        case MINT_TCP_OP_CLOSE: return mint_net_tcp_close((int64_t)arg1);
+        default: return -MINT_EINVAL;
+        }
     }
     if (number == MINT_SYS_POWER_INFO) {
         MINT_POWER_INFO local;

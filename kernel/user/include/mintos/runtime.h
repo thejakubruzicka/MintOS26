@@ -16,6 +16,10 @@
 #include <e1000.h>
 #define MINT_POWER_USERSPACE 1
 #include <power.h>
+#define MINT_USB_USERSPACE 1
+#include <usb.h>
+#define MINT_NET_USERSPACE 1
+#include <net.h>
 
 /* Tiny freestanding userspace ABI. It is deliberately not a libc or Linux ABI. */
 int64_t mint_write(uint64_t fd, const void *buffer, size_t length);
@@ -58,6 +62,18 @@ int64_t mint_display_map_canvas(MINT_DISPLAY_CANVAS *out);
 int64_t mint_display_present(int32_t x, int32_t y, int32_t width, int32_t height);
 int64_t mint_display_cursor(int32_t x, int32_t y, uint32_t shape);
 int64_t mint_ui_render_wallpaper(uint32_t variant);
+int64_t mint_usb_get_status(MINT_USB_INFO *out);
+/* Networking (see net.h): non-blocking; -MINT_EAGAIN means "ask again later". */
+int64_t mint_net_get_status(MINT_NET_INFO *out);
+int64_t mint_net_set_up(uint32_t mode);
+int64_t mint_net_resolve_host(const char *name, uint32_t *ip_out);
+int64_t mint_net_ping_send(uint32_t ip, uint32_t seq);
+int64_t mint_net_ping_poll(uint32_t seq);
+int64_t mint_tcp_connect(uint32_t ip, uint16_t port);
+int64_t mint_tcp_send(int64_t handle, const void *data, size_t length);
+int64_t mint_tcp_recv(int64_t handle, void *out, size_t capacity);
+int64_t mint_tcp_state(int64_t handle);
+int64_t mint_tcp_close(int64_t handle);
 int64_t mint_log_read(MINT_LOG_RECORD *out, uint32_t capacity, uint32_t minimum_severity, uint32_t component_filter);
 int64_t mint_ui_frame_begin(void);
 int64_t mint_ui_frame_end(void);

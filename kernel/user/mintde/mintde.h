@@ -5,13 +5,13 @@
 #include <mintos/runtime.h>
 #include "gfx.h"
 
-#define MINTDE_VERSION "2.0.0"
-#define MINTOS_VERSION "26.5.010.0"
+#define MINTDE_VERSION "2.1.0"
+#define MINTOS_VERSION "26.5.011.0"
 
 enum {
     APP_FILES = 0, APP_NOTES, APP_TERMINAL, APP_SETTINGS, APP_MONITOR, APP_STORAGE,
     APP_DRIVERS, APP_NETWORK, APP_DISKS, APP_ABOUT_OS, APP_ABOUT_MINTDE, APP_LAUNCHPAD,
-    APP_CALCULATOR, APP_COUNT
+    APP_CALCULATOR, APP_WEB, APP_COUNT
 };
 
 /* Window chrome styles. */
@@ -68,9 +68,21 @@ int app_click(uint32_t app, const mde_layout *l, int32_t x, int32_t y, uint32_t 
 int app_key(uint32_t app, const mde_layout *l, const MINT_DESKTOP_KEY_EVENT *k);
 int app_scroll(uint32_t app, const mde_layout *l, int32_t x, int32_t y, int32_t delta);
 int app_tick(uint32_t app);
+/* Called every frame for every app; returns a bitmask (1 << app) of windows to repaint. */
+uint32_t app_background(void);
 uint32_t app_cursor(uint32_t app, const mde_layout *l, int32_t x, int32_t y);
 const char *app_window_title(uint32_t app);
 void settings_select_pane(uint32_t pane);
+
+/* ---- Web browser (web.c) */
+void web_paint(const mde_layout *l);
+int web_click(const mde_layout *l, int32_t x, int32_t y);
+int web_key(const mde_layout *l, const MINT_DESKTOP_KEY_EVENT *k);
+int web_scroll(const mde_layout *l, int32_t delta);
+int web_background(void);
+uint32_t web_cursor(const mde_layout *l, int32_t x, int32_t y);
+const char *web_title(void);
+void web_opened(void);
 
 /* ---- controls (widgets.c) */
 size_t text_length(const char *s);
@@ -108,6 +120,6 @@ enum { SYM_CHEVRON_LEFT = 1, SYM_CHEVRON_RIGHT, SYM_SEARCH, SYM_FOLDER, SYM_DISK
 #define ICON_DECL(n) extern const uint8_t mint_icon_##n##_128[]; extern const uint8_t mint_icon_##n##_64[];
 ICON_DECL(files) ICON_DECL(notes) ICON_DECL(terminal) ICON_DECL(settings) ICON_DECL(system_monitor)
 ICON_DECL(console) ICON_DECL(system_info) ICON_DECL(network) ICON_DECL(disk_utility)
-ICON_DECL(about_mintos) ICON_DECL(mintde) ICON_DECL(launchpad) ICON_DECL(calculator) ICON_DECL(trash)
+ICON_DECL(about_mintos) ICON_DECL(mintde) ICON_DECL(launchpad) ICON_DECL(calculator) ICON_DECL(trash) ICON_DECL(web)
 extern const uint8_t mint_icon_mint_leaf_a8[];
 #endif

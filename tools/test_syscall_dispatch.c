@@ -26,6 +26,19 @@ int64_t mint_rtc_boot_epoch(void) { return mock_rtc_epoch; }
 int mint_power_get_info(MINT_POWER_INFO *out) { if (out) { MINT_POWER_INFO z = {0}; *out = z; out->version = MINT_POWER_INFO_VERSION; } return 1; }
 int mint_power_shutdown(void) { return -MINT_ENOSYS; }
 int mint_power_restart(void) { return -MINT_ENOSYS; }
+/* 26.5.011.0 USB and network services referenced by syscall.c. */
+#include "../kernel/include/usb.h"
+#include "../kernel/include/net.h"
+int mint_usb_get_info(MINT_USB_INFO *out) { if (!out) return 0; memset(out, 0, sizeof(*out)); out->version = MINT_USB_INFO_VERSION; return 1; }
+int mint_net_get_info(MINT_NET_INFO *out) { if (!out) return 0; memset(out, 0, sizeof(*out)); out->version = MINT_NET_INFO_VERSION; return 1; }
+int64_t mint_net_up(uint32_t mode) { return mode <= MINT_NET_MODE_DHCP ? 0 : -MINT_EINVAL; }
+int64_t mint_net_resolve(const char *name, uint32_t *ip_out) { (void)name; (void)ip_out; return -MINT_ENETDOWN; }
+int64_t mint_net_ping(uint32_t op, uint32_t ip, uint32_t seq) { (void)op; (void)ip; (void)seq; return -MINT_ENETDOWN; }
+int64_t mint_net_tcp_connect(uint32_t ip, uint16_t port) { (void)ip; (void)port; return -MINT_ENETDOWN; }
+int64_t mint_net_tcp_send(int64_t h, const uint8_t *d, uint32_t n) { (void)h; (void)d; (void)n; return -MINT_EBADF; }
+int64_t mint_net_tcp_recv(int64_t h, uint8_t *o, uint32_t n) { (void)h; (void)o; (void)n; return -MINT_EBADF; }
+int64_t mint_net_tcp_state(int64_t h) { (void)h; return -MINT_EBADF; }
+int64_t mint_net_tcp_close(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
 int mint_address_space_map_shared(MINT_ADDRESS_SPACE *s, uint64_t va, uint64_t pa, uint64_t pages, uint32_t f) {
     (void)s; (void)va; (void)pa; (void)pages; (void)f; return 0;
@@ -101,6 +114,8 @@ void mint_serial_dec64(uint64_t value) { (void)value; }
 uint64_t mint_timer_ticks(void) { return fake_ticks; }
 int mint_input_keyboard_ready(void) { return 1; }
 int mint_input_mouse_ready(void) { return 0; }
+int mint_input_ps2_keyboard_online(void) { return 1; }
+int mint_input_ps2_mouse_online(void) { return 0; }
 void mint_input_get_counters(uint64_t *keyboard, uint64_t *motion, uint64_t *buttons) {
     if (keyboard) *keyboard = 0;
     if (motion) *motion = 0;

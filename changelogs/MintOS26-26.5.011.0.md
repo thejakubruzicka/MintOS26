@@ -1,0 +1,53 @@
+# MintOS26 26.5.011.0 — USB input, Intel Ethernet and an IPv4/TCP stack
+
+- **USB host controller (xHCI).** New polled xHCI driver (`kernel/usb/xhci.c`), started by the new `usb` kernel task.
+  - **Controller bring-up:**
+    - Takes ownership from the firmware (USBLEGSUP handoff, SMIs disabled).
+    - Resets the controller and sets up DMA memory below 4 GiB for the command ring, event ring, ERST, DCBAA and scratchpad buffers.
+    - Enables PCI bus mastering only after those structures are programmed. Every wait is bounded.
+  - **Device setup on root ports:**
+    - USB 2 port reset, or warm reset for USB 3.
+    - Enable Slot, Address Device, Evaluate Context (full/low-speed packet size), descriptor reads and Configure Endpoint.
+    - Hot-plug and unplug are handled by rescanning the ports.
+  - **HID devices:**
+    - Keyboards use the boot protocol: 6-key rollover with modifier tracking, converted to the existing set-1 key path, so shortcuts behave exactly like PS/2.
+    - Mice and tablets: the HID report descriptor is parsed for buttons, X/Y, the absolute or relative flag, the logical range and the wheel. QEMU's `usb-tablet` gives exact absolute positioning.
+    - Each HID endpoint keeps 8 transfers queued with separate buffers, so the controller keeps polling at the device's rate while the cooperative `usb` task waits. With one transfer, fast typing lost keys whenever MintDE was busy repainting. Completed TRB and buffer addresses are validated before use.
+  - **Not supported yet:** USB hubs, mass storage, isochronous transfers, EHCI/UHCI/OHCI controllers.
+- **Input core:** device-neutral injection functions (`mint_input_inject_key/relative/absolute/wheel`) with interrupts masked while queueing. PS/2 and USB share the pointer acceleration and event queue. The mouse wheel produces the new `MINT_DESKTOP_EVENT_SCROLL`.
+- **High MMIO mappings:** `mint_mmio_map` maps device registers uncached anywhere in the physical address space. Firmware commonly places 64-bit BARs above the 64 GiB identity map (QEMU puts the xHCI at 768 GiB). These pages go into the shared vmalloc window and are never handed to the RAM allocator.
+- **Intel Ethernet (E1000 family):**
+  - **Models:**
+    - Supported: 82540EM, 82545EM, 82543GC and 82574L.
+    - Experimental: the PCH-integrated I217, I218 and I219 (for example the Dell OptiPlex 7040's I219-LM). These start without a global reset, take the PHY semaphore, power up a powered-down PHY and apply the Sunrise Point TX-hang workaround.
+  - **Rings:** 32 receive and 16 transmit descriptors (were 8 and 8). Transmit is non-blocking and reclaims descriptors as they complete.
+  - **Link:** the link is brought up with SLU/ASDE.
+  - **Packet interface:** a send/poll interface for the stack. The VirtualBox loopback diagnostic is kept.
+- **IPv4 network stack** (`kernel/net/net.c`, pure helpers in `kernel/net/netcore.c`), run by the new `net` kernel task at 100 Hz polling:
+  - **ARP:** a 16-entry cache, with one parked frame per miss.
+  - **IPv4:** checksum validation. Fragments are dropped, and outgoing TCP sets Don't Fragment.
+  - **ICMP:** echo replies and ping, plus destination-unreachable handling for TCP.
+  - **UDP** and a **DHCP client:** discover, request, lease renewal at T1, NAK restart and link-loss handling.
+  - **DNS resolver:** A records, an 8-entry cache, retries and timeouts.
+  - **TCP client:**
+    - Handshake with the MSS option, in-order receive with re-acknowledgement of anything out of order, and flow control with window updates.
+    - Go-back-N retransmission with exponential back-off, zero-window probing, and graceful close through FIN_WAIT, TIME_WAIT and LAST_ACK.
+    - Up to 8 sockets with 32 KiB receive and 16 KiB send buffers.
+- **New syscalls:**
+  - `MINT_SYS_USB_INFO` (0x4D2B)
+  - `MINT_SYS_NET_INFO` (0x4D30)
+  - `MINT_SYS_NET_UP` (0x4D31)
+  - `MINT_SYS_NET_RESOLVE` (0x4D32)
+  - `MINT_SYS_NET_PING` (0x4D33)
+  - `MINT_SYS_TCP` (0x4D34): connect, send, recv, state and close. All are non-blocking.
+  - New errno values: EBUSY, EPIPE, ENETDOWN, ENETUNREACH, ECONNRESET, ENOTCONN, ETIMEDOUT, ECONNREFUSED and EHOSTUNREACH.
+- **Scheduler:** `MINT_TASK_MAX` rises from 8 to 12, because boot now creates 8 tasks.
+- **Freestanding runtime:** `kernel/lib/mem.c` provides `memcpy`, `memset`, `memmove` and `memcmp` for compiler-generated copies in the kernel and in MintDE.
+- **Driver catalog:** reports the xHCI controller, the Intel Ethernet adapter by model, the IPv4 stack and ACPI power accurately. The PS/2 rows reflect only the PS/2 controller (`mint_input_ps2_keyboard_online`), not USB devices.
+- **Fonts:** the eight text faces (11 to 20 px) now include Latin-1 Supplement and Latin Extended-A, so accented European letters such as Czech ě, š, č, ř and ž display. Existing glyphs are unchanged byte for byte.
+- **Validation:**
+  - **Host tests:** QEMU 11.1 q35/OVMF on macOS, using `qemu-xhci` with `usb-kbd`, `usb-tablet` and `usb-mouse` (also with the PS/2 controller removed via `-machine i8042=off`), and `-nic user,model=e1000`.
+  - **Network results:**
+    - The DHCP lease was 10.0.2.15/24.
+    - Ping to the gateway and DNS lookups worked, and HTTP fetched example.com, info.cern.ch, textfiles.com (151 KB) and 68k.news (93 KB) with no retransmissions or dropped frames.
+  - **Not yet validated:** VirtualBox and physical hardware, including the I219-LM.

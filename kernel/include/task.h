@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "user_transition.h"
 
-#define MINT_TASK_MAX 8u
+#define MINT_TASK_MAX 12u
 #define MINT_TASK_STACK_SIZE (16u * 1024u)
 
 typedef void (*mint_task_entry_t)(void *argument);

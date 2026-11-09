@@ -4,8 +4,9 @@
  * redrawn in a macOS-style layout on top of the gfx/widgets layer. */
 #include "mintde.h"
 
-#define TERM_LINES 24u
+#define TERM_LINES 240u
 #define TERM_COLS 96u
+#define TERM_WRAP 92u
 
 static MINT_FS_DIRENT fs_entries[MINT_RAMFS_MAX_FILES];
 static uint32_t fs_entry_count;
@@ -47,9 +48,18 @@ static size_t terminal_input_length;
 static char terminal_output[TERM_LINES][TERM_COLS];
 static uint8_t terminal_output_kind[TERM_LINES]; /* 1 = entered command, 0 = output */
 static uint32_t terminal_output_count;
+static uint32_t terminal_output_first;   /* ring index of the oldest line */
+static int32_t terminal_scroll;          /* lines scrolled back from the newest */
+static uint32_t terminal_serial;         /* bumps on every new line */
 static uint32_t terminal_volume_ordinal;
 static char terminal_current_path[96];
 
+static void hex4(char *out, uint16_t v) {
+    static const char hx[] = "0123456789abcdef";
+    for (int i = 0; i < 4; ++i) out[i] = hx[(v >> (12 - 4 * i)) & 15u];
+    out[4] = '\0';
+}
+static void bytes_clear(void *p, size_t n) { uint8_t *b = (uint8_t *)p; while (n--) *b++ = 0; }
 /* Legacy-name helpers used by the carried-over logic. */
 #define terminal_equals_ci terminal_equals
 
@@ -60,6 +70,13 @@ static void refresh_fat_files(void);
 static void refresh_files(void);
 static void terminal_run_command(void);
 static void terminal_push(const char *text);
+static int terminal_network_command(const char *cmd);
+static const char *network_state_text(const MINT_NET_INFO *n, uint32_t *dot, int *connected);
+static int network_toggle(void);
+static uint32_t network_autoconnect;
+static void terminal_cancel_job(void);
+static int terminal_job_active(void);
+static const char *terminal_job_hint(void);
 
 /* ====================================================================== */
 /*  Carried-over MintDE 1.0.8 logic                                       */
@@ -80,6 +97,8 @@ static const char *storage_component_name(uint32_t component) {
         case MINT_LOG_COMPONENT_FAT16: return "FAT16";
         case MINT_LOG_COMPONENT_VFS: return "VFS";
         case MINT_LOG_COMPONENT_E1000: return "E1000";
+        case MINT_LOG_COMPONENT_USB: return "USB";
+        case MINT_LOG_COMPONENT_NET: return "NET";
         default: return "KERNEL";
     }
 }
@@ -145,7 +164,7 @@ static void storage_serial_text(const char *text) {
 static void export_storage_report(void) {
     refresh_storage_data();
     storage_serial_text("\r\n=== MintDE Storage & Logs export (read-only) ===\r\n");
-    storage_serial_text(storage_snapshot.readonly_mount_active ? "FAT16: read-only mount validated; persistence writes remain disabled\r\n" : "FAT16 mount: not active; persistent writes remain disabled in 26.5.010.0\r\n");
+    storage_serial_text(storage_snapshot.readonly_mount_active ? "FAT16: read-only mount validated; persistence writes remain disabled\r\n" : "FAT16 mount: not active; persistent writes remain disabled in 26.5.011.0\r\n");
     char number[24];
     format_u64(number, sizeof(number), storage_snapshot.controller_count);
     storage_serial_text("Controllers: "); storage_serial_text(number); storage_serial_text("\r\n");
@@ -234,31 +253,20 @@ static int path_append(char *out, size_t capacity, const char *base, const char 
     return i==text_length(leaf) && n>original;
 }
 
-static void terminal_push(const char *text) {
-    if (terminal_output_count >= TERM_LINES) {
-        for (uint32_t i=1u;i<TERM_LINES;i++) {
-            (void)copy_text(terminal_output[i-1u],sizeof(terminal_output[i-1u]),terminal_output[i]);
-            terminal_output_kind[i-1u]=terminal_output_kind[i];
-        }
-        terminal_output_count=TERM_LINES-1u;
-    }
-    (void)copy_text(terminal_output[terminal_output_count],sizeof(terminal_output[terminal_output_count]),text?text:"");
-    terminal_output_kind[terminal_output_count]=0u;
-    ++terminal_output_count;
+#define TERM_AT(i) terminal_output[(terminal_output_first + (uint32_t)(i)) % TERM_LINES]
+#define TERM_KIND(i) terminal_output_kind[(terminal_output_first + (uint32_t)(i)) % TERM_LINES]
+static void terminal_add(const char *text, uint8_t kind) {
+    uint32_t slot;
+    if (terminal_output_count < TERM_LINES) slot = (terminal_output_first + terminal_output_count++) % TERM_LINES;
+    else { slot = terminal_output_first; terminal_output_first = (terminal_output_first + 1u) % TERM_LINES; }
+    (void)copy_text(terminal_output[slot], sizeof(terminal_output[slot]), text ? text : "");
+    terminal_output_kind[slot] = kind;
+    terminal_scroll = 0;
+    ++terminal_serial;
 }
-
-static void terminal_push_command(const char *text) {
-    if (terminal_output_count >= TERM_LINES) {
-        for (uint32_t i=1u;i<TERM_LINES;i++) {
-            (void)copy_text(terminal_output[i-1u],sizeof(terminal_output[i-1u]),terminal_output[i]);
-            terminal_output_kind[i-1u]=terminal_output_kind[i];
-        }
-        terminal_output_count=TERM_LINES-1u;
-    }
-    (void)copy_text(terminal_output[terminal_output_count],sizeof(terminal_output[terminal_output_count]),text?text:"");
-    terminal_output_kind[terminal_output_count]=1u;
-    ++terminal_output_count;
-}
+static void terminal_clear(void) { terminal_output_count = 0u; terminal_output_first = 0u; terminal_scroll = 0; }
+static void terminal_push(const char *text) { terminal_add(text, 0u); }
+static void terminal_push_command(const char *text) { terminal_add(text, 1u); }
 
 static void terminal_append(char *dst,size_t capacity,const char *src) {
     if (!dst || !capacity || !src) return;
@@ -332,9 +340,11 @@ static void terminal_run_command(void) {
     (void)mint_write(1,prompt_text,sizeof(prompt_text)-1u);
     (void)mint_write(1,cmd,text_length(cmd)); (void)mint_write(1,"\r\n",2u);
     terminal_push_command(cmd);
-    if(terminal_equals(cmd,"clear")) { terminal_output_count=0u; return; }
+    if(terminal_equals(cmd,"clear")) { terminal_clear(); return; }
+    if(terminal_network_command(cmd)) return;
     if(terminal_equals(cmd,"help")) {
-        terminal_push("Commands: help, clear, ver, uptime, status, cpu");
+        terminal_push("Commands: help, clear, ver, uptime, status, cpu, usb");
+        terminal_push("Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] <url>");
         terminal_push("pci, resources, drivers, mounts, io, logs, net");
         terminal_push("drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat");
         terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
@@ -368,21 +378,42 @@ static void terminal_run_command(void) {
         terminal_push((pi.flags&MINT_POWER_HAVE_8042)?"FADT reports an 8042 (PS/2) controller":"FADT does not report an 8042; USB input may need firmware emulation");
         return;
     }
+    if(terminal_equals(cmd,"usb")) {
+        static MINT_USB_INFO usb;
+        if(mint_usb_get_status(&usb)!=0){terminal_push("USB status service unavailable");return;}
+        char row[TERM_COLS],num[24],hex[24];
+        copy_text(row,sizeof(row),"xHCI: ");str_append(row,sizeof(row),usb.status[0]?usb.status:"no controller");terminal_push(row);
+        static const char *const kinds[6]={"unknown","keyboard","mouse","tablet","hub","other"};
+        for(uint32_t i=0;i<usb.device_count&&i<MINT_USB_MAX_DEVICES;i++){
+            MINT_USB_DEVICE_INFO *dv=&usb.devices[i];
+            copy_text(row,sizeof(row),"  port ");format_u64(num,sizeof(num),dv->port);str_append(row,sizeof(row),num);
+            str_append(row,sizeof(row)," slot ");format_u64(num,sizeof(num),dv->slot);str_append(row,sizeof(row),num);
+            str_append(row,sizeof(row),"  ");hex4(hex,dv->vendor_id);str_append(row,sizeof(row),hex);
+            str_append(row,sizeof(row),":");hex4(hex,dv->product_id);str_append(row,sizeof(row),hex);
+            str_append(row,sizeof(row),"  ");str_append(row,sizeof(row),kinds[dv->kind<6u?dv->kind:0u]);
+            str_append(row,sizeof(row),"  ");str_append(row,sizeof(row),dv->product);terminal_push(row);
+        }
+        copy_text(row,sizeof(row),"HID reports: ");format_u64(num,sizeof(num),usb.reports);str_append(row,sizeof(row),num);
+        str_append(row,sizeof(row),"  transfer errors: ");format_u64(num,sizeof(num),usb.transfer_errors);str_append(row,sizeof(row),num);terminal_push(row);
+        return;
+    }
     if(terminal_equals(cmd,"ver")) { terminal_push("MintOS26 " MINTOS_VERSION " / MintDE " MINTDE_VERSION); return; }
     if(terminal_equals(cmd,"net start")) {
         int64_t rc = mint_e1000_start();
         (void)mint_e1000_get_status(&terminal_e1000_info);
-        if(rc == 0) terminal_push("E1000 started; bounded DMA rings active; interrupts masked");
-        else if(rc == -MINT_ENODEV) terminal_push("E1000 not detected; no DMA was enabled");
+        if(rc == 0) terminal_push("E1000 started; bounded DMA rings active; interrupts masked (use `net up` for IPv4)");
+        else if(rc == -MINT_ENODEV) terminal_push("No E1000-family adapter detected; no DMA was enabled");
         else terminal_push("E1000 initialization failed; see COM1 logs; device remains unavailable");
         return;
     }
     if(terminal_equals(cmd,"net") || terminal_equals(cmd,"net status")) {
         if(mint_e1000_get_status(&terminal_e1000_info)<0){terminal_push("E1000 status service unavailable");return;}
-        if(terminal_e1000_info.state==MINT_E1000_ACTIVE) terminal_push("VirtualBox E1000: ACTIVE; polling RX/TX rings; no TCP/IP stack");
-        else if(terminal_e1000_info.state==MINT_E1000_FOUND) terminal_push("VirtualBox E1000: detected but not initialized");
-        else if(terminal_e1000_info.state==MINT_E1000_FAILED) terminal_push("VirtualBox E1000: initialization failed; see COM1 logs");
-        else terminal_push("VirtualBox E1000: not detected");
+        char title[TERM_COLS]; copy_text(title,sizeof(title),terminal_e1000_info.name[0]?terminal_e1000_info.name:"Intel E1000");
+        if(terminal_e1000_info.state==MINT_E1000_ACTIVE) str_append(title,sizeof(title),": ACTIVE; polling RX/TX rings; IPv4 stack attached");
+        else if(terminal_e1000_info.state==MINT_E1000_FOUND) str_append(title,sizeof(title),": detected but not initialized");
+        else if(terminal_e1000_info.state==MINT_E1000_FAILED) str_append(title,sizeof(title),": initialization failed; see COM1 logs");
+        else copy_text(title,sizeof(title),"Intel E1000 family: not detected");
+        terminal_push(title);
         char row[96]="",num[24],hex[24];
         terminal_append(row,sizeof(row),"PCI ");format_u64(num,sizeof(num),terminal_e1000_info.bus);terminal_append(row,sizeof(row),num);
         terminal_append(row,sizeof(row),":");format_u64(num,sizeof(num),terminal_e1000_info.device);terminal_append(row,sizeof(row),num);
@@ -426,7 +457,7 @@ static void terminal_run_command(void) {
         row[0]='\0';terminal_append(row,sizeof(row),"MDIC/PHYCTRL/PHYSTS: ");format_hex64(hex,sizeof(hex),terminal_e1000_info.diag_mdic);terminal_append(row,sizeof(row),hex);
         terminal_append(row,sizeof(row),"/");format_hex64(hex,sizeof(hex),terminal_e1000_info.diag_phy_control);terminal_append(row,sizeof(row),hex);
         terminal_append(row,sizeof(row),"/");format_hex64(hex,sizeof(hex),terminal_e1000_info.diag_phy_status);terminal_append(row,sizeof(row),hex);terminal_push(row);
-        terminal_push("No TCP/IP, DHCP, DNS, or external packet send service yet");return;
+        terminal_push("IPv4 configuration and traffic counters: run ifconfig");return;
     }
     if(terminal_equals(cmd,"net test")) {
         (void)mint_e1000_get_status(&terminal_e1000_info);
@@ -757,7 +788,7 @@ static void refresh_driver_catalog(void) {
 static uint64_t ui_ticks;              /* advanced by app_tick (cursor blink) */
 static uint32_t settings_category = 1u; /* Appearance */
 static uint32_t show_changelog;         /* About: 0 = details, 1 = release notes */
-static uint32_t driver_view;            /* 0 drivers, 1 PCI, 2 power */
+static uint32_t driver_view;            /* 0 drivers, 1 PCI, 2 USB, 3 power */
 static uint32_t monitor_tab;
 static int32_t files_scroll;
 static char files_search[32];
@@ -792,7 +823,7 @@ static int ci_contains(const char *hay, const char *needle) {
 /* ------------------------------------------------------------ metadata */
 static const char *const app_names[APP_COUNT] = {
     "Files", "Notes", "Terminal", "Settings", "System Monitor", "Storage & Logs",
-    "Hardware & Drivers", "Network", "Disk Utility", "About MintOS", "About MintDE", "Launchpad", "Calculator"
+    "Hardware & Drivers", "Network", "Disk Utility", "About MintOS", "About MintDE", "Launchpad", "Calculator", "Web"
 };
 const char *app_name(uint32_t app) { return app < APP_COUNT ? app_names[app] : ""; }
 
@@ -811,6 +842,7 @@ const uint8_t *app_icon(uint32_t app, int large) {
     case APP_ABOUT_MINTDE: return large ? mint_icon_mintde_128 : mint_icon_mintde_64;
     case APP_LAUNCHPAD: return large ? mint_icon_launchpad_128 : mint_icon_launchpad_64;
     case APP_CALCULATOR: return large ? mint_icon_calculator_128 : mint_icon_calculator_64;
+    case APP_WEB: return large ? mint_icon_web_128 : mint_icon_web_64;
     default: return large ? mint_icon_trash_128 : mint_icon_trash_64;
     }
 }
@@ -835,13 +867,14 @@ int32_t app_sidebar_width(uint32_t app) {
 void app_default_size(uint32_t app, int32_t *w, int32_t *h) {
     static const int16_t sz[APP_COUNT][2] = {
         {920, 560}, {780, 540}, {880, 520}, {860, 620}, {880, 560}, {940, 600},
-        {900, 580}, {620, 470}, {900, 580}, {560, 380}, {560, 380}, {0, 0}, {240, 372}
+        {900, 580}, {680, 600}, {900, 580}, {560, 380}, {560, 380}, {0, 0}, {240, 372}, {1000, 700}
     };
     *w = app < APP_COUNT ? sz[app][0] : 600;
     *h = app < APP_COUNT ? sz[app][1] : 400;
 }
 const char *app_window_title(uint32_t app) {
     if (app == APP_TERMINAL) return "root \xE2\x80\x94 mintos \xE2\x80\x94 bounded shell";
+    if (app == APP_WEB) return web_title();
     return app_name(app);
 }
 
@@ -1142,6 +1175,420 @@ static int notes_key(const MINT_DESKTOP_KEY_EVENT *k) {
     return 1;
 }
 
+/* ------------------------------------------------------------ Terminal network jobs
+ * Network commands never block the desktop: each starts a job that the shell
+ * advances once per frame through app_background(), even while Terminal is
+ * in the background. Ctrl+C cancels. */
+enum { JOB_NONE = 0, JOB_NET_UP, JOB_PING, JOB_LOOKUP, JOB_HTTP };
+enum { PH_RESOLVE = 0, PH_RUN, PH_CONNECT, PH_RECEIVE };
+static struct term_job {
+    uint32_t kind, phase;
+    char host[80], path[160];
+    uint16_t port;
+    uint8_t head_only, waiting, silent;
+    uint32_t ip, count, sent, received;
+    uint64_t started, sent_at, next_at, last_data;
+    uint64_t rtt_sum, rtt_min, rtt_max;
+    int64_t handle;
+    uint64_t bytes;
+    uint32_t lines;
+    char line[TERM_COLS];
+    size_t line_len;
+} job = {.handle = -1};
+static MINT_NET_INFO net_info;
+static uint8_t net_rx_buffer[4096];
+
+static uint64_t term_ms(void) {
+    mint_timespec64 t = {0, 0};
+    (void)mint_clock_gettime(MINT_CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
+}
+static int terminal_job_active(void) { return job.kind != JOB_NONE; }
+static const char *terminal_job_hint(void) {
+    return job.kind == JOB_NET_UP ? "Waiting for the network\xE2\x80\xA6 (Ctrl+C to stop)" :
+           job.kind == JOB_PING ? "Pinging\xE2\x80\xA6 (Ctrl+C to stop)" :
+           job.kind == JOB_LOOKUP ? "Looking up\xE2\x80\xA6 (Ctrl+C to stop)" : "Transferring\xE2\x80\xA6 (Ctrl+C to stop)";
+}
+static const char *net_error_text(int64_t rc) {
+    switch (-rc) {
+    case MINT_ENETDOWN: return "network is down (run: net up)";
+    case MINT_ENOENT: return "host not found";
+    case MINT_ETIMEDOUT: return "timed out";
+    case MINT_ECONNREFUSED: return "connection refused";
+    case MINT_ECONNRESET: return "connection reset by peer";
+    case MINT_EHOSTUNREACH: return "host unreachable";
+    case MINT_EINVAL: return "invalid name or address";
+    case MINT_EBUSY: return "too many open connections";
+    case MINT_ENODEV: return "no supported network adapter";
+    case MINT_EIO: return "network adapter failed to start";
+    default: return "network error";
+    }
+}
+static void job_finish(void) {
+    if (job.handle >= 0) (void)mint_tcp_close(job.handle);
+    job.handle = -1;
+    job.kind = JOB_NONE;
+}
+static void terminal_cancel_job(void) {
+    if (job.kind == JOB_NONE) return;
+    terminal_push("^C");
+    job_finish();
+}
+static void push_wrapped(const char *text) {
+    size_t n = text_length(text);
+    if (!n) { terminal_push(""); return; }
+    for (size_t at = 0; at < n;) {
+        char part[TERM_COLS];
+        size_t len = n - at < TERM_WRAP ? n - at : TERM_WRAP;
+        while (len > 1u && at + len < n && ((uint8_t)text[at + len] & 0xC0u) == 0x80u) --len;   /* keep UTF-8 whole */
+        for (size_t i = 0; i < len; ++i) part[i] = text[at + i];
+        part[len] = '\0';
+        terminal_push(part);
+        at += len;
+    }
+}
+static void ip_append(char *out, size_t cap, uint32_t ip) {
+    char t[16]; (void)mint_ipv4_format(t, sizeof(t), ip); str_append(out, cap, t);
+}
+static void num_append(char *out, size_t cap, uint64_t v) { char t[24]; format_u64(t, sizeof(t), v); str_append(out, cap, t); }
+static void ms_append(char *out, size_t cap, uint64_t us) {
+    num_append(out, cap, us / 1000u);
+    char frac[5] = {'.', (char)('0' + (us / 100u) % 10u), (char)('0' + (us / 10u) % 10u), (char)('0' + us % 10u), 0};
+    str_append(out, cap, frac);
+}
+static uint32_t prefix_length(uint32_t mask) { uint32_t n = 0; while (mask & 0x80000000u) { ++n; mask <<= 1; } return n; }
+
+static void print_ifconfig(void) {
+    if (mint_net_get_status(&net_info) != 0) { terminal_push("Network status service unavailable"); return; }
+    char row[TERM_COLS];
+    static const char *const states[] = {"down", "no link", "requesting address (DHCP)", "connected", "failed"};
+    copy_text(row, sizeof(row), "en0: "); str_append(row, sizeof(row), net_info.adapter);
+    str_append(row, sizeof(row), " \xE2\x80\x94 ");
+    str_append(row, sizeof(row), net_info.state <= MINT_NET_STATE_FAILED ? states[net_info.state] : "unknown");
+    terminal_push(row);
+    if (!net_info.driver_active) {
+        terminal_push(net_info.nic_device_id ? "    adapter idle; run `net up` to connect" : "    no Intel E1000-family adapter was found");
+        return;
+    }
+    static const char hx[] = "0123456789abcdef";
+    copy_text(row, sizeof(row), "    ether ");
+    for (int i = 0; i < 6; ++i) {
+        char b[4] = {hx[net_info.mac[i] >> 4], hx[net_info.mac[i] & 15u], i < 5 ? ':' : 0, 0};
+        str_append(row, sizeof(row), b);
+    }
+    str_append(row, sizeof(row), net_info.link_up ? "   link up" : "   no link");
+    terminal_push(row);
+    if (net_info.state == MINT_NET_STATE_UP) {
+        copy_text(row, sizeof(row), "    inet "); ip_append(row, sizeof(row), net_info.ip);
+        str_append(row, sizeof(row), " netmask "); ip_append(row, sizeof(row), net_info.netmask);
+        str_append(row, sizeof(row), " broadcast "); ip_append(row, sizeof(row), net_info.ip | ~net_info.netmask);
+        terminal_push(row);
+        copy_text(row, sizeof(row), "    gateway "); ip_append(row, sizeof(row), net_info.gateway);
+        str_append(row, sizeof(row), "   dns "); ip_append(row, sizeof(row), net_info.dns);
+        str_append(row, sizeof(row), "   dhcp "); ip_append(row, sizeof(row), net_info.dhcp_server);
+        terminal_push(row);
+        copy_text(row, sizeof(row), "    lease "); num_append(row, sizeof(row), net_info.lease_seconds);
+        str_append(row, sizeof(row), " s, obtained "); num_append(row, sizeof(row), net_info.lease_elapsed_seconds);
+        str_append(row, sizeof(row), " s ago");
+        terminal_push(row);
+    } else {
+        copy_text(row, sizeof(row), "    "); str_append(row, sizeof(row), net_info.status); terminal_push(row);
+    }
+    char size[24];
+    copy_text(row, sizeof(row), "    RX "); num_append(row, sizeof(row), net_info.rx_frames);
+    format_bytes(size, sizeof(size), net_info.rx_bytes);
+    str_append(row, sizeof(row), " frames ("); str_append(row, sizeof(row), size);
+    str_append(row, sizeof(row), ")   TX "); num_append(row, sizeof(row), net_info.tx_frames);
+    format_bytes(size, sizeof(size), net_info.tx_bytes);
+    str_append(row, sizeof(row), " frames ("); str_append(row, sizeof(row), size);
+    str_append(row, sizeof(row), ")   dropped "); num_append(row, sizeof(row), net_info.rx_dropped);
+    terminal_push(row);
+    copy_text(row, sizeof(row), "    TCP "); num_append(row, sizeof(row), net_info.tcp_open_sockets);
+    str_append(row, sizeof(row), " open, segments in/out "); num_append(row, sizeof(row), net_info.tcp_segments_in);
+    str_append(row, sizeof(row), "/"); num_append(row, sizeof(row), net_info.tcp_segments_out);
+    str_append(row, sizeof(row), ", retransmits "); num_append(row, sizeof(row), net_info.tcp_retransmits);
+    str_append(row, sizeof(row), ", DNS queries "); num_append(row, sizeof(row), net_info.dns_queries);
+    terminal_push(row);
+}
+
+static void job_flush_line(void) {
+    job.line[job.line_len] = '\0';
+    push_wrapped(job.line);
+    job.line_len = 0; ++job.lines;
+}
+static void job_text(const uint8_t *b, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t c = b[i];
+        if (c == '\r') continue;
+        if (c == '\n') { job_flush_line(); continue; }
+        if (c == '\t') c = ' ';
+        if (c < 32u || c == 127u) c = '?';                /* UTF-8 passes through for the Latin glyphs */
+        if (job.line_len + 1u >= sizeof(job.line) && c < 0x80u) job_flush_line();
+        if (job.line_len + 1u >= sizeof(job.line)) continue;
+        job.line[job.line_len++] = (char)c;
+    }
+}
+
+/* Splits http://host[:port]/path. Returns 0 if malformed, -1 for https. */
+static int parse_url(const char *url, char *host, size_t host_cap, uint16_t *port, char *path, size_t path_cap) {
+    const char *p = url;
+    if (terminal_starts_with(p, "https://")) return -1;
+    if (terminal_starts_with(p, "http://")) p += 7;
+    size_t n = 0;
+    while (*p && *p != '/' && *p != ':' && n + 1u < host_cap) host[n++] = *p++;
+    host[n] = '\0';
+    if (!n) return 0;
+    uint32_t pv = 80;
+    if (*p == ':') {
+        ++p; pv = 0;
+        while (*p >= '0' && *p <= '9') { pv = pv * 10u + (uint32_t)(*p++ - '0'); if (pv > 65535u) return 0; }
+        if (!pv) return 0;
+    }
+    *port = (uint16_t)pv;
+    if (*p && *p != '/') return 0;
+    copy_text(path, path_cap, *p ? p : "/");
+    return 1;
+}
+
+static void job_start(uint32_t kind, const char *host) {
+    job.kind = kind; job.phase = PH_RESOLVE;
+    copy_text(job.host, sizeof(job.host), host);
+    job.started = term_ms(); job.sent = job.received = 0; job.waiting = 0;
+    job.rtt_sum = 0; job.rtt_min = ~0ull; job.rtt_max = 0;
+    job.handle = -1; job.bytes = 0; job.lines = 0; job.line_len = 0;
+}
+
+static int terminal_network_command(const char *cmd) {
+    char row[TERM_COLS];
+    int is_net = terminal_equals(cmd, "net up") || terminal_equals(cmd, "net connect") || terminal_equals(cmd, "dhcp") ||
+                 terminal_equals(cmd, "net down") || terminal_equals(cmd, "net disconnect") ||
+                 terminal_equals(cmd, "ifconfig") || terminal_equals(cmd, "ipconfig") || terminal_equals(cmd, "ip") ||
+                 terminal_starts_with(cmd, "ping ") || terminal_starts_with(cmd, "nslookup ") || terminal_starts_with(cmd, "host ") ||
+                 terminal_starts_with(cmd, "curl ") || terminal_starts_with(cmd, "http ");
+    if (!is_net) return 0;
+    if (job.kind != JOB_NONE) { terminal_push("A network command is still running; press Ctrl+C to stop it"); return 1; }
+    if (terminal_equals(cmd, "ifconfig") || terminal_equals(cmd, "ipconfig") || terminal_equals(cmd, "ip")) { print_ifconfig(); return 1; }
+    if (terminal_equals(cmd, "net down") || terminal_equals(cmd, "net disconnect")) {
+        (void)mint_net_set_up(MINT_NET_MODE_DOWN);
+        terminal_push("Network disconnected; open connections were reset");
+        return 1;
+    }
+    if (terminal_equals(cmd, "net up") || terminal_equals(cmd, "net connect") || terminal_equals(cmd, "dhcp")) {
+        int64_t rc = mint_net_set_up(MINT_NET_MODE_DHCP);
+        if (rc != 0) { copy_text(row, sizeof(row), "net: "); str_append(row, sizeof(row), net_error_text(rc)); terminal_push(row); return 1; }
+        (void)mint_net_get_status(&net_info);
+        copy_text(row, sizeof(row), "Starting "); str_append(row, sizeof(row), net_info.adapter);
+        str_append(row, sizeof(row), "; requesting an address with DHCP\xE2\x80\xA6");
+        terminal_push(row);
+        job_start(JOB_NET_UP, "");
+        return 1;
+    }
+    const char *arg = cmd;
+    while (*arg && *arg != ' ') ++arg;
+    while (*arg == ' ') ++arg;
+    if (terminal_starts_with(cmd, "ping ")) {
+        char host[80]; size_t n = 0;
+        while (arg[n] && arg[n] != ' ' && n + 1u < sizeof(host)) { host[n] = arg[n]; ++n; }
+        host[n] = '\0';
+        uint32_t count = 4;
+        const char *c = arg + n;
+        while (*c == ' ') ++c;
+        if (*c == '-' && (c[1] == 'c' || c[1] == 'n')) { c += 2; while (*c == ' ') ++c; }
+        if (*c >= '0' && *c <= '9') { count = 0; while (*c >= '0' && *c <= '9') count = count * 10u + (uint32_t)(*c++ - '0'); }
+        if (!host[0] || !count || count > 100u) { terminal_push("usage: ping <host> [count 1-100]"); return 1; }
+        job_start(JOB_PING, host); job.count = count;
+        return 1;
+    }
+    if (terminal_starts_with(cmd, "nslookup ") || terminal_starts_with(cmd, "host ")) {
+        if (!*arg) { terminal_push("usage: nslookup <host>"); return 1; }
+        job_start(JOB_LOOKUP, arg);
+        return 1;
+    }
+    /* curl / http */
+    uint8_t head_only = 0, silent = 0;
+    while (arg[0] == '-' && arg[1] && arg[2] == ' ') {
+        if (arg[1] == 'I' || arg[1] == 'i') head_only = 1;
+        else if (arg[1] == 's' || arg[1] == 'o') silent = 1;
+        arg += 3; while (*arg == ' ') ++arg;
+    }
+    char host[80], path[160]; uint16_t port = 80;
+    int ok = parse_url(arg, host, sizeof(host), &port, path, sizeof(path));
+    if (ok < 0) {
+        terminal_push("curl: HTTPS needs TLS, which MintOS does not have yet. Try an http:// address,");
+        terminal_push("      for example: curl http://example.com  or  curl http://frogfind.com");
+        return 1;
+    }
+    if (!ok) { terminal_push("usage: curl [-I] [-s] http://host[:port]/path   (-s: count bytes only)"); return 1; }
+    job_start(JOB_HTTP, host);
+    job.port = port; job.head_only = head_only; job.silent = silent;
+    copy_text(job.path, sizeof(job.path), path);
+    return 1;
+}
+
+/* Advances the running job; returns 1 when the Terminal needs a repaint. */
+static int terminal_job_step(void) {
+    uint32_t serial = terminal_serial;
+    uint64_t now = term_ms();
+    char row[TERM_COLS];
+    if (job.kind == JOB_NET_UP) {
+        if (mint_net_get_status(&net_info) != 0) { terminal_push("Network status service unavailable"); job_finish(); }
+        else if (net_info.state == MINT_NET_STATE_UP) {
+            copy_text(row, sizeof(row), "Connected: "); ip_append(row, sizeof(row), net_info.ip);
+            str_append(row, sizeof(row), "/"); num_append(row, sizeof(row), prefix_length(net_info.netmask));
+            str_append(row, sizeof(row), ", gateway "); ip_append(row, sizeof(row), net_info.gateway);
+            str_append(row, sizeof(row), ", DNS "); ip_append(row, sizeof(row), net_info.dns);
+            terminal_push(row); job_finish();
+        } else if (net_info.state == MINT_NET_STATE_FAILED || net_info.state == MINT_NET_STATE_DOWN) {
+            copy_text(row, sizeof(row), "net: "); str_append(row, sizeof(row), net_info.status); terminal_push(row); job_finish();
+        } else if (now - job.started > 25000u) {
+            copy_text(row, sizeof(row), "Still waiting ("); str_append(row, sizeof(row), net_info.status);
+            str_append(row, sizeof(row), "); check `ifconfig` later"); terminal_push(row); job_finish();
+        }
+        return serial != terminal_serial;
+    }
+    if (job.phase == PH_RESOLVE) {
+        int64_t rc = mint_net_resolve_host(job.host, &job.ip);
+        if (rc == -MINT_EAGAIN) {
+            if (now - job.started > 10000u) rc = -MINT_ETIMEDOUT; else return 0;
+        }
+        const char *tool = job.kind == JOB_PING ? "ping" : job.kind == JOB_LOOKUP ? "nslookup" : "curl";
+        if (rc < 0) {
+            copy_text(row, sizeof(row), tool); str_append(row, sizeof(row), ": ");
+            str_append(row, sizeof(row), job.host); str_append(row, sizeof(row), ": ");
+            str_append(row, sizeof(row), job.kind == JOB_HTTP && rc == -MINT_ENOENT ? "could not resolve host" : net_error_text(rc));
+            terminal_push(row); job_finish();
+            return 1;
+        }
+        if (job.kind == JOB_LOOKUP) {
+            (void)mint_net_get_status(&net_info);
+            copy_text(row, sizeof(row), "Server:   "); ip_append(row, sizeof(row), net_info.dns); terminal_push(row);
+            copy_text(row, sizeof(row), "Name:     "); str_append(row, sizeof(row), job.host); terminal_push(row);
+            copy_text(row, sizeof(row), "Address:  "); ip_append(row, sizeof(row), job.ip); terminal_push(row);
+            job_finish();
+            return 1;
+        }
+        if (job.kind == JOB_PING) {
+            copy_text(row, sizeof(row), "PING "); str_append(row, sizeof(row), job.host);
+            str_append(row, sizeof(row), " ("); ip_append(row, sizeof(row), job.ip); str_append(row, sizeof(row), "): 56 data bytes");
+            terminal_push(row);
+            job.phase = PH_RUN; job.next_at = now;
+            return 1;
+        }
+        int64_t h = mint_tcp_connect(job.ip, job.port);
+        if (h < 0) {
+            copy_text(row, sizeof(row), "curl: (7) "); str_append(row, sizeof(row), net_error_text(h)); terminal_push(row);
+            job_finish(); return 1;
+        }
+        job.handle = h; job.phase = PH_CONNECT; job.sent_at = now;
+        copy_text(row, sizeof(row), "* Connecting to "); str_append(row, sizeof(row), job.host);
+        str_append(row, sizeof(row), " ("); ip_append(row, sizeof(row), job.ip); str_append(row, sizeof(row), ") port ");
+        num_append(row, sizeof(row), job.port);
+        terminal_push(row);
+        return 1;
+    }
+    if (job.kind == JOB_PING) {
+        if (job.waiting) {
+            int64_t r = mint_net_ping_poll(job.sent - 1u);
+            if (r >= 0) {
+                uint64_t us = (uint64_t)r & 0xFFFFFFFFu, ttl = (uint64_t)r >> 32;
+                copy_text(row, sizeof(row), "64 bytes from "); ip_append(row, sizeof(row), job.ip);
+                str_append(row, sizeof(row), ": icmp_seq="); num_append(row, sizeof(row), job.sent - 1u);
+                str_append(row, sizeof(row), " ttl="); num_append(row, sizeof(row), ttl);
+                str_append(row, sizeof(row), " time="); ms_append(row, sizeof(row), us); str_append(row, sizeof(row), " ms");
+                terminal_push(row);
+                ++job.received; job.rtt_sum += us;
+                if (us < job.rtt_min) job.rtt_min = us;
+                if (us > job.rtt_max) job.rtt_max = us;
+                job.waiting = 0;
+            } else if (now - job.sent_at >= 2000u) {
+                copy_text(row, sizeof(row), "Request timeout for icmp_seq "); num_append(row, sizeof(row), job.sent - 1u);
+                terminal_push(row); job.waiting = 0;
+            }
+        }
+        if (!job.waiting) {
+            if (job.sent >= job.count) {
+                copy_text(row, sizeof(row), "--- "); str_append(row, sizeof(row), job.host); str_append(row, sizeof(row), " ping statistics ---");
+                terminal_push(row);
+                copy_text(row, sizeof(row), ""); num_append(row, sizeof(row), job.sent);
+                str_append(row, sizeof(row), " packets transmitted, "); num_append(row, sizeof(row), job.received);
+                str_append(row, sizeof(row), " packets received, ");
+                num_append(row, sizeof(row), (uint64_t)(job.sent - job.received) * 100u / job.sent);
+                str_append(row, sizeof(row), "% packet loss");
+                terminal_push(row);
+                if (job.received) {
+                    copy_text(row, sizeof(row), "round-trip min/avg/max = "); ms_append(row, sizeof(row), job.rtt_min);
+                    str_append(row, sizeof(row), "/"); ms_append(row, sizeof(row), job.rtt_sum / job.received);
+                    str_append(row, sizeof(row), "/"); ms_append(row, sizeof(row), job.rtt_max); str_append(row, sizeof(row), " ms");
+                    terminal_push(row);
+                }
+                job_finish();
+            } else if (now >= job.next_at) {
+                int64_t rc = mint_net_ping_send(job.ip, job.sent);
+                if (rc < 0) {
+                    copy_text(row, sizeof(row), "ping: sendto: "); str_append(row, sizeof(row), net_error_text(rc));
+                    terminal_push(row); job_finish();
+                } else { ++job.sent; job.waiting = 1; job.sent_at = now; job.next_at = now + 1000u; }
+            }
+        }
+        return serial != terminal_serial;
+    }
+    /* HTTP */
+    if (job.phase == PH_CONNECT) {
+        int64_t st = mint_tcp_state(job.handle);
+        if (st == MINT_TCP_STATE_ESTABLISHED) {
+            char request[400];
+            copy_text(request, sizeof(request), job.head_only ? "HEAD " : "GET ");
+            str_append(request, sizeof(request), job.path);
+            str_append(request, sizeof(request), " HTTP/1.0\r\nHost: ");
+            str_append(request, sizeof(request), job.host);
+            if (job.port != 80u) { str_append(request, sizeof(request), ":"); num_append(request, sizeof(request), job.port); }
+            str_append(request, sizeof(request), "\r\nUser-Agent: MintOS26-curl/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n");
+            int64_t rc = mint_tcp_send(job.handle, request, text_length(request));
+            if (rc < (int64_t)text_length(request)) { terminal_push("curl: (55) failed to send the request"); job_finish(); return 1; }
+            terminal_push("* Connected; request sent");
+            terminal_push("");
+            job.phase = PH_RECEIVE; job.last_data = now;
+            return 1;
+        }
+        if (st != MINT_TCP_STATE_CONNECTING || now - job.sent_at > 15000u) {
+            copy_text(row, sizeof(row), "curl: (7) Failed to connect to "); str_append(row, sizeof(row), job.host);
+            str_append(row, sizeof(row), " port "); num_append(row, sizeof(row), job.port); str_append(row, sizeof(row), ": ");
+            str_append(row, sizeof(row), st == MINT_TCP_STATE_REFUSED ? "connection refused" :
+                                         st == MINT_TCP_STATE_UNREACHABLE ? "host unreachable" : "timed out");
+            terminal_push(row); job_finish();
+            return 1;
+        }
+        return 0;
+    }
+    for (uint32_t burst = 0; burst < 16u && job.kind == JOB_HTTP; ++burst) {
+        int64_t n = mint_tcp_recv(job.handle, net_rx_buffer, sizeof(net_rx_buffer));
+        if (n > 0) {
+            if (!job.silent) job_text(net_rx_buffer, (size_t)n);
+            job.bytes += (uint64_t)n; job.last_data = now;
+            if (job.lines > 1000u) { terminal_push("[output truncated after 1000 lines]"); job_finish(); }
+            continue;
+        }
+        if (n == -MINT_EAGAIN) {
+            if (now - job.last_data > 20000u) { terminal_push("curl: (28) operation timed out"); job_finish(); }
+            break;
+        }
+        if (job.line_len) job_flush_line();
+        if (n == 0) {
+            uint64_t ms = now - job.started;
+            if (!ms) ms = 1;
+            copy_text(row, sizeof(row), "[");
+            num_append(row, sizeof(row), job.bytes); str_append(row, sizeof(row), " bytes in ");
+            num_append(row, sizeof(row), ms); str_append(row, sizeof(row), " ms, ");
+            num_append(row, sizeof(row), job.bytes * 1000u / ms / 1024u); str_append(row, sizeof(row), " KB/s; connection closed]");
+            terminal_push(row);
+        } else {
+            copy_text(row, sizeof(row), "curl: (56) "); str_append(row, sizeof(row), net_error_text(n)); terminal_push(row);
+        }
+        job_finish();
+    }
+    return serial != terminal_serial;
+}
+
 /* ------------------------------------------------------------ Terminal */
 #define TERM_CELL 8
 static void terminal_paint(const mde_layout *l) {
@@ -1151,14 +1598,31 @@ static void terminal_paint(const mde_layout *l) {
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(bg));
     int32_t line_h = 17, x = c.x0 + 10;
     int32_t max_lines = (H(c) - 16) / line_h - 1;
-    uint32_t first = terminal_output_count > (uint32_t)max_lines ? terminal_output_count - (uint32_t)max_lines : 0u;
+    if (max_lines < 1) max_lines = 1;
+    int32_t max_scroll = (int32_t)terminal_output_count - max_lines;
+    if (max_scroll < 0) max_scroll = 0;
+    if (terminal_scroll > max_scroll) terminal_scroll = max_scroll;
+    if (terminal_scroll < 0) terminal_scroll = 0;
+    uint32_t end = terminal_output_count - (uint32_t)terminal_scroll;
+    uint32_t first = end > (uint32_t)max_lines ? end - (uint32_t)max_lines : 0u;
     int32_t y = c.y0 + 8 + gfx_font_ascent(FONT_SMALL);
-    for (uint32_t i = first; i < terminal_output_count; ++i) {
-        if (terminal_output_kind[i]) {
+    for (uint32_t i = first; i < end; ++i) {
+        if (TERM_KIND(i)) {
             int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, "root#mintos > ", TERM_CELL, OPAQUE(prompt));
-            gfx_text_cells(S, FONT_SMALL, x + px, y, terminal_output[i], TERM_CELL, OPAQUE(fg));
-        } else gfx_text_cells(S, FONT_SMALL, x, y, terminal_output[i], TERM_CELL, OPAQUE(fg));
+            gfx_text_cells(S, FONT_SMALL, x + px, y, TERM_AT(i), TERM_CELL, OPAQUE(fg));
+        } else gfx_text_cells(S, FONT_SMALL, x, y, TERM_AT(i), TERM_CELL, OPAQUE(fg));
         y += line_h;
+    }
+    if (terminal_scroll) {
+        char note[48] = "\xE2\x86\x91 ";
+        char num[16]; format_u64(num, sizeof(num), (uint64_t)terminal_scroll);
+        str_append(note, sizeof(note), num); str_append(note, sizeof(note), " more lines below");
+        ui_label_right(c.x1 - 12, c.y1 - 10, FONT_CAPTION, note, T.text2);
+        return;
+    }
+    if (terminal_job_active()) {
+        ui_label(x, y, FONT_SMALL, terminal_job_hint(), T.text3);
+        return;
     }
     int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, "root#mintos > ", TERM_CELL, OPAQUE(prompt));
     int32_t ix = gfx_text_cells(S, FONT_SMALL, x + px, y, terminal_input, TERM_CELL, OPAQUE(fg));
@@ -1179,7 +1643,8 @@ static int terminal_key(const MINT_DESKTOP_KEY_EVENT *k) {
         terminal_input_length = copy_text(terminal_input, sizeof(terminal_input), terminal_last_command);
         return 1;
     }
-    if (ch == 12u || ((k->modifiers & MINT_KEYMOD_CTRL) && (ch == 'l' || ch == 'L'))) { terminal_output_count = 0; return 1; }
+    if (ch == 12u || ((k->modifiers & MINT_KEYMOD_CTRL) && (ch == 'l' || ch == 'L'))) { terminal_clear(); return 1; }
+    if (ch == 3u || ((k->modifiers & MINT_KEYMOD_CTRL) && (ch == 'c' || ch == 'C'))) { terminal_cancel_job(); return 1; }
     if (ch >= 32u && ch < 127u && terminal_input_length + 1u < sizeof(terminal_input)) {
         terminal_input[terminal_input_length++] = (char)ch; terminal_input[terminal_input_length] = '\0';
         return 1;
@@ -1325,16 +1790,24 @@ static void settings_paint(const mde_layout *l) {
     }
     case SET_INPUT: {
         (void)mint_input_get_info(&input_info);
+        static MINT_USB_INFO usb_info;
+        if (mint_usb_get_status(&usb_info) != 0) bytes_clear(&usb_info, sizeof(usb_info));
+        const char *kbd = input_info.keyboard_ready ? "PS/2, ready" : "Not detected";
+        const char *ptr = input_info.mouse_ready ? "PS/2, ready" : "Not detected";
+        for (uint32_t i = 0; i < usb_info.device_count && i < MINT_USB_MAX_DEVICES; ++i) {
+            if (usb_info.devices[i].kind == MINT_USB_KIND_KEYBOARD) kbd = "USB, ready";
+            if (usb_info.devices[i].kind == MINT_USB_KIND_MOUSE) ptr = "USB mouse, ready";
+            if (usb_info.devices[i].kind == MINT_USB_KIND_TABLET) ptr = "USB tablet, ready";
+        }
         format_u64(a, sizeof(a), input_info.keyboard_events);
         format_u64(bb, sizeof(bb), input_info.pointer_motion_events);
         format_u64(cc, sizeof(cc), input_info.pointer_button_events);
         format_u64(d, sizeof(d), input_info.dropped_events);
         const char *labels[6] = {"Keyboard", "Pointer", "Key events", "Pointer moves", "Button events", "Dropped events"};
-        const char *values[6] = {input_info.keyboard_ready ? "PS/2, ready" : "Not detected",
-                                 input_info.mouse_ready ? "PS/2, ready" : "Not detected", a, bb, cc, d};
+        const char *values[6] = {kbd, ptr, a, bb, cc, d};
         settings_rows(&b, labels, values, 6);
         settings_note(&b, "Command shortcuts use the Windows key. Pointer acceleration is built in.");
-        settings_note(&b, "USB keyboards and mice need firmware legacy emulation until the USB driver arrives.");
+        settings_note(&b, "USB keyboards, mice and tablets work through the xHCI driver (no USB hubs yet).");
         break;
     }
     case SET_STORAGE: {
@@ -1362,23 +1835,31 @@ static void settings_paint(const mde_layout *l) {
         break;
     }
     case SET_NETWORK: {
-        (void)mint_e1000_get_status(&terminal_e1000_info);
-        const char *state = terminal_e1000_info.state == MINT_E1000_ACTIVE ? "Driver active (polling)" :
-                            terminal_e1000_info.state == MINT_E1000_FOUND ? "Detected, driver idle" :
-                            terminal_e1000_info.state == MINT_E1000_FAILED ? "Initialization failed" : "Not detected";
-        static const char hx[] = "0123456789ABCDEF";
-        size_t m = 0;
-        for (int i = 0; i < 6; ++i) { a[m++] = hx[terminal_e1000_info.mac[i] >> 4]; a[m++] = hx[terminal_e1000_info.mac[i] & 15u]; if (i < 5) a[m++] = ':'; }
-        a[m] = '\0';
-        const char *labels[4] = {"Ethernet (Intel 82540EM)", "MAC address", "Internet", "Wi-Fi"};
-        const char *values[4] = {state, terminal_e1000_info.state == MINT_E1000_ACTIVE ? a : "\xE2\x80\x94", "Not available (no TCP/IP stack)", "No supported hardware"};
-        settings_rows(&b, labels, values, 4);
-        settings_note(&b, "Open the Network app to start the driver or run the internal loopback test.");
+        if (mint_net_get_status(&net_info) != 0) bytes_clear(&net_info, sizeof(net_info));
+        uint32_t dot; int connected;
+        const char *state = network_state_text(&net_info, &dot, &connected);
+        int up = net_info.state == MINT_NET_STATE_UP;
+        a[0] = bb[0] = cc[0] = '\0';
+        if (up) { ip_append(a, sizeof(a), net_info.ip); ip_append(bb, sizeof(bb), net_info.gateway); ip_append(cc, sizeof(cc), net_info.dns); }
+        copy_text(d, sizeof(d), net_info.adapter[0] ? net_info.adapter : "None");
+        const char *labels[5] = {"Ethernet", "IP Address", "Router", "DNS Server", "Adapter"};
+        const char *values[5] = {state, up ? a : "\xE2\x80\x94", up ? bb : "\xE2\x80\x94", up ? cc : "\xE2\x80\x94", d};
+        settings_rows(&b, labels, values, 5);
+        gfx_rect g = R(b.x0, b.y0, W(b), 36);
+        ui_group(g);
+        ui_label(g.x0 + 14, g.y0 + 23, FONT_BODY, "Connect automatically when MintDE starts", T.text);
+        ui_switch(g.x1 - 58, g.y0 + 7, (int)network_autoconnect);
+        b.y0 = g.y1 + 18;
+        int have_adapter = net_info.nic_device_id || net_info.driver_active;
+        ui_button(R(b.x0, b.y0, 120, 28), connected ? "Disconnect" : "Connect", !connected && have_adapter, have_adapter);
+        b.y0 += 46;
+        settings_note(&b, "Automatic connection applies to virtual-machine adapters; experimental drivers start only on request.");
+        settings_note(&b, "Wi-Fi is not supported.");
         break;
     }
     case SET_PRIVACY: {
         const char *labels[5] = {"Disk writes", "Network", "Memory protection", "Processes", "Firmware"};
-        const char *values[5] = {"Blocked (read-only volumes)", "No outgoing connections", "NX, W^X and guard pages",
+        const char *values[5] = {"Blocked (read-only volumes)", "Outgoing only; nothing listens", "NX, W^X and guard pages",
                                  "Isolated ring-3 address spaces", "UEFI Desktop is the recovery path"};
         settings_rows(&b, labels, values, 5);
         break;
@@ -1425,6 +1906,10 @@ static int settings_click(const mde_layout *l, int32_t x, int32_t y) {
             if (in(R(b.x0 + 8 + i * 200, b.y0 + 8, 180, 110), x, y)) {
                 desktop_settings.wallpaper = (uint32_t)i; (void)shell_apply_settings(); return 1;
             }
+    } else if (settings_category == SET_NETWORK) {
+        int32_t sy = b.y0 + 5 * 36 + 18;
+        if (in(R(b.x1 - 70, sy, 70, 36), x, y)) { network_autoconnect = !network_autoconnect; return 1; }
+        if (in(R(b.x0, sy + 36 + 18, 120, 28), x, y)) return network_toggle();
     } else if (settings_category == SET_POWER) {
         int32_t by = b.y0 + 5 * 36 + 18;
         if (in(R(b.x0, by, 110, 28), x, y)) { shell_request_power(MINT_POWER_ACTION_RESTART); return 1; }
@@ -1628,15 +2113,15 @@ static const char *pci_class_name(uint8_t c, uint8_t s) {
     }
 }
 static void drivers_paint(const mde_layout *l) {
-    static const char *const items[3] = {"Drivers", "PCI Devices", "Power (ACPI)"};
-    static const uint32_t syms[3] = {SYM_GEAR, SYM_INFO, SYM_WARNING};
+    static const char *const items[4] = {"Drivers", "PCI Devices", "USB", "Power (ACPI)"};
+    static const uint32_t syms[4] = {SYM_GEAR, SYM_INFO, SYM_TOGGLES, SYM_WARNING};
     ui_sidebar_header(l->sidebar.x0 + 18, l->sidebar.y0 + 18, "Hardware");
-    for (uint32_t i = 0; i < 3u; ++i) {
+    for (uint32_t i = 0; i < 4u; ++i) {
         gfx_rect ir = drivers_item_rect(l, i);
         ui_sidebar_item(ir, items[i], 0, 0, driver_view == i, l->focused);
         ui_symbol_glyph(ir.x0 + 18, ir.y0 + 14, syms[i], OPAQUE(driver_view == i && l->focused ? 0xFFFFFFu : T.text2));
     }
-    toolbar_title(l, items[driver_view < 3u ? driver_view : 0u], 0);
+    toolbar_title(l, items[driver_view < 4u ? driver_view : 0u], 0);
     gfx_rect c = l->content;
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(T.group_bg));
     gfx_rect g = R(c.x0 + 24, c.y0 + 20, W(c) - 48, H(c) - 56);
@@ -1680,6 +2165,41 @@ static void drivers_paint(const mde_layout *l) {
             format_u64(a, sizeof(a), d->interrupt_line);
             ui_label(g.x0 + 420, ry + 17, FONT_CAPTION, d->interrupt_pin ? a : "\xE2\x80\x94", T.text2);
         }
+    } else if (driver_view == 2u) {
+        static MINT_USB_INFO usb;
+        if (mint_usb_get_status(&usb) != 0) bytes_clear(&usb, sizeof(usb));
+        char head[96];
+        copy_text(head, sizeof(head), usb.state == MINT_USB_STATE_RUNNING ? "xHCI controller running" :
+                                       usb.state == MINT_USB_STATE_FAILED ? "xHCI controller failed" : "No xHCI controller");
+        if (usb.state == MINT_USB_STATE_RUNNING) {
+            str_append(head, sizeof(head), "  \xC2\xB7  "); format_u64(a, sizeof(a), usb.ports); str_append(head, sizeof(head), a);
+            str_append(head, sizeof(head), " ports  \xC2\xB7  "); format_u64(a, sizeof(a), usb.reports); str_append(head, sizeof(head), a);
+            str_append(head, sizeof(head), " HID reports");
+        }
+        ui_label(g.x0 + 14, g.y0 + 22, FONT_BODY_MEDIUM, head, T.text);
+        if (usb.status[0]) gfx_text_fit(S, FONT_CAPTION, g.x0 + 14, g.y0 + 40, usb.status, W(g) - 28, OPAQUE(T.text2));
+        ui_label(g.x0 + 14, g.y0 + 66, FONT_CAPTION_BOLD, "Port", T.text2);
+        ui_label(g.x0 + 64, g.y0 + 66, FONT_CAPTION_BOLD, "Device", T.text2);
+        ui_label(g.x0 + 300, g.y0 + 66, FONT_CAPTION_BOLD, "Kind", T.text2);
+        ui_label(g.x0 + 400, g.y0 + 66, FONT_CAPTION_BOLD, "Speed", T.text2);
+        ui_label(g.x0 + 490, g.y0 + 66, FONT_CAPTION_BOLD, "Vendor:Product", T.text2);
+        static const char *const kinds[6] = {"Unknown", "Keyboard", "Mouse", "Tablet", "Hub", "Other"};
+        static const char *const speeds[5] = {"\xE2\x80\x94", "Full (12M)", "Low (1.5M)", "High (480M)", "Super (5G)"};
+        for (uint32_t i = 0; i < usb.device_count && i < MINT_USB_MAX_DEVICES; ++i) {
+            MINT_USB_DEVICE_INFO *dv = &usb.devices[i];
+            int32_t ry = g.y0 + 76 + (int32_t)i * 26;
+            if (i & 1u) gfx_fill(S, g.x0 + 1, ry, W(g) - 2, 26, OPAQUE(T.row_alt));
+            format_u64(a, sizeof(a), dv->port); ui_label(g.x0 + 14, ry + 18, FONT_CAPTION, a, T.text);
+            gfx_text_fit(S, FONT_BODY, g.x0 + 64, ry + 18, dv->product[0] ? dv->product : "USB device", 225, OPAQUE(T.text));
+            ui_label(g.x0 + 300, ry + 18, FONT_CAPTION, kinds[dv->kind < 6u ? dv->kind : 0u], T.text);
+            ui_label(g.x0 + 400, ry + 18, FONT_CAPTION, speeds[dv->speed < 5u ? dv->speed : 0u], T.text2);
+            hex4(a, dv->vendor_id); hex4(b, dv->product_id);
+            str_append(a, sizeof(a), ":"); str_append(a, sizeof(a), b);
+            ui_label(g.x0 + 490, ry + 18, FONT_CAPTION, a, T.text2);
+        }
+        if (!usb.device_count)
+            ui_label(g.x0 + 14, g.y0 + 100, FONT_BODY, usb.state == MINT_USB_STATE_RUNNING ? "No USB devices connected." :
+                                                       "USB devices are available only through firmware emulation.", T.text3);
     } else {
         MINT_POWER_INFO pi = {0};
         (void)mint_power_get_status(&pi);
@@ -1695,56 +2215,105 @@ static void drivers_paint(const mde_layout *l) {
     ui_label(c.x0 + 28, c.y1 - 14, FONT_CAPTION, "A detected device is not the same as driver support. MintOS uses its own drivers, not macOS kexts.", T.text2);
 }
 static int drivers_click(const mde_layout *l, int32_t x, int32_t y) {
-    for (uint32_t i = 0; i < 3u; ++i) if (in(drivers_item_rect(l, i), x, y)) { driver_view = i; return 1; }
+    for (uint32_t i = 0; i < 4u; ++i) if (in(drivers_item_rect(l, i), x, y)) { driver_view = i; return 1; }
     return 0;
 }
 
 /* ------------------------------------------------------------ Network */
+static uint32_t network_autoconnect = 1u;
+static void mac_text(char *out, size_t cap, const uint8_t mac[6]) {
+    static const char hx[] = "0123456789ABCDEF";
+    size_t m = 0;
+    for (int i = 0; i < 6 && m + 3u < cap; ++i) {
+        out[m++] = hx[mac[i] >> 4]; out[m++] = hx[mac[i] & 15u];
+        if (i < 5) out[m++] = ':';
+    }
+    out[m] = '\0';
+}
+/* Status text, dot colour and whether a Disconnect action applies. */
+static const char *network_state_text(const MINT_NET_INFO *n, uint32_t *dot, int *connected) {
+    *connected = 0;
+    if (!n->nic_device_id && !n->driver_active) { *dot = 0x8E8E93u; return "No supported adapter"; }
+    switch (n->state) {
+    case MINT_NET_STATE_UP: *dot = 0x34C759u; *connected = 1; return "Connected";
+    case MINT_NET_STATE_DHCP: *dot = 0xFF9500u; *connected = 1; return "Connecting\xE2\x80\xA6";
+    case MINT_NET_STATE_NO_LINK: *dot = 0xFF9500u; *connected = 1; return "Cable unplugged";
+    case MINT_NET_STATE_FAILED: *dot = 0xFF3B30u; return n->status[0] ? n->status : "Not connected";
+    default: *dot = 0x8E8E93u; return "Not connected";
+    }
+}
+static gfx_rect network_button_rect(const mde_layout *l) { gfx_rect c = l->content; return R(c.x1 - 24 - 120, c.y0 + 34, 120, 28); }
 static void network_paint(const mde_layout *l) {
     gfx_rect c = l->content;
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(T.group_bg));
-    (void)mint_e1000_get_status(&terminal_e1000_info);
-    gfx_image(S, c.x0 + 24, c.y0 + 20, 56, 56, mint_icon_network_128, 128, 128, 255u);
-    ui_label(c.x0 + 96, c.y0 + 44, FONT_HEADLINE, "Ethernet", T.text);
-    const char *state = terminal_e1000_info.state == MINT_E1000_ACTIVE ? "Driver active \xE2\x80\x94 no TCP/IP" :
-                        terminal_e1000_info.state == MINT_E1000_FOUND ? "Intel 82540EM detected, driver idle" :
-                        terminal_e1000_info.state == MINT_E1000_FAILED ? "Initialization failed (see COM1)" : "No supported adapter";
-    uint32_t dot = terminal_e1000_info.state == MINT_E1000_ACTIVE ? 0x34C759u : terminal_e1000_info.state == MINT_E1000_FAILED ? 0xFF3B30u : 0xFF9500u;
-    gfx_circle(S, c.x0 + 101, c.y0 + 62, 4, OPAQUE(dot));
-    ui_label(c.x0 + 112, c.y0 + 66, FONT_BODY, state, T.text2);
-    char v[4][40];
-    format_u64(v[0], 40, terminal_e1000_info.tx_completed); str_append(v[0], 40, " / ");
-    format_u64(v[1], 40, terminal_e1000_info.tx_submitted); str_append(v[0], 40, v[1]);
-    format_u64(v[1], 40, terminal_e1000_info.rx_received);
-    format_u64(v[2], 40, terminal_e1000_info.loopback_passed); str_append(v[2], 40, " passed, ");
-    format_u64(v[3], 40, terminal_e1000_info.loopback_failed); str_append(v[2], 40, v[3]); str_append(v[2], 40, " failed");
-    gfx_rect g = R(c.x0 + 24, c.y0 + 96, W(c) - 48, 4 * 34);
+    if (mint_net_get_status(&net_info) != 0) bytes_clear(&net_info, sizeof(net_info));
+    uint32_t dot; int connected;
+    const char *state = network_state_text(&net_info, &dot, &connected);
+    gfx_image(S, c.x0 + 24, c.y0 + 18, 56, 56, mint_icon_network_128, 128, 128, 255u);
+    ui_label(c.x0 + 96, c.y0 + 42, FONT_HEADLINE, "Ethernet", T.text);
+    gfx_circle(S, c.x0 + 101, c.y0 + 60, 4, OPAQUE(dot));
+    char line[96];
+    copy_text(line, sizeof(line), state);
+    if (net_info.state == MINT_NET_STATE_UP) { str_append(line, sizeof(line), " \xE2\x80\x94 "); ip_append(line, sizeof(line), net_info.ip); }
+    ui_label(c.x0 + 112, c.y0 + 64, FONT_BODY, line, T.text2);
+    int have_adapter = net_info.nic_device_id || net_info.driver_active;
+    ui_button(network_button_rect(l), connected ? "Disconnect" : net_info.state == MINT_NET_STATE_FAILED ? "Try Again" : "Connect",
+              !connected && have_adapter, have_adapter);
+
+    char v[10][48];
+    int up = net_info.state == MINT_NET_STATE_UP;
+    const char *dash = "\xE2\x80\x94";
+    copy_text(v[0], 48, up ? "Using DHCP" : dash);
+    v[1][0] = v[2][0] = v[3][0] = v[4][0] = '\0';
+    if (up) {
+        ip_append(v[1], 48, net_info.ip); ip_append(v[2], 48, net_info.netmask);
+        ip_append(v[3], 48, net_info.gateway); ip_append(v[4], 48, net_info.dns);
+    }
+    gfx_rect g = R(c.x0 + 24, c.y0 + 96, W(c) - 48, 5 * 32);
     ui_group(g);
-    const char *labels[4] = {"Frames sent (completed / submitted)", "Frames received", "Loopback tests", "Internet"};
-    const char *values[4] = {v[0], v[1], v[2], "Not available"};
-    for (uint32_t i = 0; i < 4u; ++i) ui_group_row(R(g.x0, g.y0 + (int32_t)i * 34, W(g), 34), i, 4u, labels[i], values[i]);
-    int active = terminal_e1000_info.state == MINT_E1000_ACTIVE;
-    ui_button(R(c.x0 + 24, g.y1 + 18, 120, 28), "Start Driver", !active && terminal_e1000_info.state == MINT_E1000_FOUND,
-              terminal_e1000_info.state == MINT_E1000_FOUND);
-    ui_button(R(c.x0 + 156, g.y1 + 18, 140, 28), "Loopback Test", 0, active);
-    if (network_status[0]) ui_label(c.x0 + 310, g.y1 + 37, FONT_BODY, network_status, T.text2);
-    ui_label(c.x0 + 28, c.y1 - 34, FONT_CAPTION, "The driver is opt-in. The loopback test never sends packets onto the network.", T.text2);
-    ui_label(c.x0 + 28, c.y1 - 16, FONT_CAPTION, "No DHCP, DNS or sockets yet.", T.text2);
+    const char *l1[5] = {"Configure IPv4", "IP Address", "Subnet Mask", "Router", "DNS Server"};
+    const char *v1[5] = {v[0], up ? v[1] : dash, up ? v[2] : dash, up ? v[3] : dash, up ? v[4] : dash};
+    for (uint32_t i = 0; i < 5u; ++i) ui_group_row(R(g.x0, g.y0 + (int32_t)i * 32, W(g), 32), i, 5u, l1[i], v1[i]);
+
+    copy_text(v[5], 48, net_info.adapter[0] ? net_info.adapter : "None");
+    if (net_info.driver_active) mac_text(v[6], 48, net_info.mac); else copy_text(v[6], 48, dash);
+    copy_text(v[7], 48, !net_info.driver_active ? "Driver idle" : net_info.link_up ? "Up" : "No link");
+    gfx_rect h = R(g.x0, g.y1 + 16, W(g), 3 * 32);
+    ui_group(h);
+    const char *l2[3] = {"Adapter", "MAC Address", "Link"};
+    const char *v2[3] = {v[5], v[6], v[7]};
+    for (uint32_t i = 0; i < 3u; ++i) ui_group_row(R(h.x0, h.y0 + (int32_t)i * 32, W(h), 32), i, 3u, l2[i], v2[i]);
+
+    char size[24];
+    format_u64(v[8], 48, net_info.rx_frames); str_append(v[8], 48, " packets, ");
+    format_bytes(size, sizeof(size), net_info.rx_bytes); str_append(v[8], 48, size);
+    format_u64(v[9], 48, net_info.tx_frames); str_append(v[9], 48, " packets, ");
+    format_bytes(size, sizeof(size), net_info.tx_bytes); str_append(v[9], 48, size);
+    gfx_rect k = R(g.x0, h.y1 + 16, W(g), 2 * 32);
+    ui_group(k);
+    ui_group_row(R(k.x0, k.y0, W(k), 32), 0, 2u, "Received", v[8]);
+    ui_group_row(R(k.x0, k.y0 + 32, W(k), 32), 1, 2u, "Sent", v[9]);
+
+    int32_t y = k.y1 + 22;
+    if (network_status[0]) { ui_label(c.x0 + 28, y, FONT_CAPTION, network_status, T.text2); y += 18; }
+    if (net_info.adapter_flags & MINT_NET_ADAPTER_EXPERIMENTAL) {
+        ui_label(c.x0 + 28, y, FONT_CAPTION, "This adapter's driver is experimental; it relies on the firmware's PHY setup.", T.text2); y += 18;
+    }
+    ui_label(c.x0 + 28, c.y1 - 16, FONT_CAPTION, "IPv4 with DHCP, DNS, ICMP and TCP. HTTPS sites need TLS, which is not available yet.", T.text2);
+}
+static int network_toggle(void) {
+    if (mint_net_get_status(&net_info) != 0) return 0;
+    uint32_t dot; int connected;
+    (void)network_state_text(&net_info, &dot, &connected);
+    int64_t rc = mint_net_set_up(connected ? MINT_NET_MODE_DOWN : MINT_NET_MODE_DHCP);
+    copy_text(network_status, sizeof(network_status), connected ? "Disconnected." :
+              rc == 0 ? "Requesting an address\xE2\x80\xA6" : rc == -MINT_ENODEV ? "No supported adapter was found." :
+              "The adapter could not be started; see Storage & Logs.");
+    if (!connected) network_autoconnect = 1u;
+    return 1;
 }
 static int network_click(const mde_layout *l, int32_t x, int32_t y) {
-    gfx_rect c = l->content;
-    int32_t by = c.y0 + 96 + 4 * 34 + 18;
-    if (in(R(c.x0 + 24, by, 120, 28), x, y)) {
-        int64_t rc = mint_e1000_start();
-        copy_text(network_status, sizeof(network_status), rc == 0 ? "Driver started; DMA rings active." :
-                  rc == -MINT_ENODEV ? "No adapter detected." : "Start failed; see COM1 log.");
-        return 1;
-    }
-    if (in(R(c.x0 + 156, by, 140, 28), x, y)) {
-        int64_t rc = mint_e1000_run_loopback_test();
-        copy_text(network_status, sizeof(network_status), rc == 0 ? "Loopback passed." : "Loopback failed; details in COM1 / Terminal net status.");
-        return 1;
-    }
+    if (in(network_button_rect(l), x, y)) return network_toggle();
     (void)network_busy_message;
     return 0;
 }
@@ -1908,24 +2477,24 @@ static int disks_key(const MINT_DESKTOP_KEY_EVENT *k) {
 
 /* ------------------------------------------------------------ About windows */
 static const char *const os_versions[8] = {
+    "26.5.011.0  USB input, Intel Ethernet, IPv4/TCP stack, Web browser",
     "26.5.010.0  MintDE 2: macOS-style desktop, shared canvas, RTC clock",
     "26.5.009.0  Real-hardware display, mouse, ACPI power, RAID-mode SATA",
     "26.5.008.0  VirtualBox E1000 RX loopback and descriptor diagnostics",
     "26.5.007.0  E1000 TX timeout isolation",
     "26.5.006.0  E1000 loopback diagnostics and terminal prompt",
     "26.5.005.0  E1000 driver foundation",
-    "26.5.004.0  Driver foundation release",
-    "26.5.003.0  PNG assets and VFS telemetry"
+    "26.5.004.0  Driver foundation release"
 };
 static const char *const de_versions[8] = {
+    "MintDE 2.1.0  Web browser, Network app, Terminal network tools",
     "MintDE 2.0.0  Windows, Dock, Launchpad, Spotlight, Control Center",
     "MintDE 1.0.8  Shut Down / Restart and precise pointer",
     "MintDE 1.0.7  VirtualBox loopback and RX diagnostics",
     "MintDE 1.0.6  E1000 loopback failure diagnostics",
     "MintDE 1.0.5  E1000 loopback diagnostics and terminal prompt",
     "MintDE 1.0.4  E1000 driver UI",
-    "MintDE 1.0.3  Dock, menus and window polish",
-    "MintDE 1.0.2  PNG icons and glass"
+    "MintDE 1.0.3  Dock, menus and window polish"
 };
 static void about_paint(uint32_t app, const mde_layout *l) {
     gfx_rect f = l->frame;
@@ -2074,8 +2643,13 @@ static int calculator_key(const MINT_DESKTOP_KEY_EVENT *k) {
 void settings_select_pane(uint32_t pane) { if (pane < SET_COUNT) settings_category = pane; }
 void app_init(void) {
     files_volume = 0u; files_path[0] = '\0'; files_selected_entry = -1; files_preview_active = 0u;
-    terminal_input_length = 0u; terminal_input[0] = '\0'; terminal_output_count = 0u;
+    terminal_input_length = 0u; terminal_input[0] = '\0'; terminal_clear();
     terminal_push("MintOS26 Terminal \xE2\x80\x94 type help for commands");
+    /* Virtual-machine adapters connect on their own; experimental drivers
+       (PCH-integrated Intel LAN on real PCs) start only when asked. */
+    if (network_autoconnect && mint_net_get_status(&net_info) == 0 && net_info.nic_device_id &&
+        !(net_info.adapter_flags & MINT_NET_ADAPTER_EXPERIMENTAL) && net_info.state == MINT_NET_STATE_DOWN)
+        (void)mint_net_set_up(MINT_NET_MODE_DHCP);
     refresh_storage_data();
     refresh_files();
     calc_format(0);
@@ -2084,6 +2658,7 @@ void app_opened(uint32_t app) {
     if (app == APP_FILES) { refresh_storage_data(); if (files_volume) refresh_fat_files(); else refresh_files(); }
     if (app == APP_STORAGE || app == APP_DISKS || app == APP_SETTINGS || app == APP_MONITOR) refresh_storage_data();
     if (app == APP_DRIVERS || app == APP_MONITOR) refresh_driver_catalog();
+    if (app == APP_WEB) web_opened();
     if (app == APP_ABOUT_OS || app == APP_ABOUT_MINTDE) show_changelog = 0;
 }
 void app_paint(uint32_t app, const mde_layout *l) {
@@ -2099,6 +2674,7 @@ void app_paint(uint32_t app, const mde_layout *l) {
     case APP_DISKS: disks_paint(l); break;
     case APP_ABOUT_OS: case APP_ABOUT_MINTDE: about_paint(app, l); break;
     case APP_CALCULATOR: calculator_paint(l); break;
+    case APP_WEB: web_paint(l); break;
     default: break;
     }
 }
@@ -2113,6 +2689,7 @@ int app_click(uint32_t app, const mde_layout *l, int32_t x, int32_t y, uint32_t 
     case APP_DISKS: return disks_click(l, x, y);
     case APP_ABOUT_OS: case APP_ABOUT_MINTDE: return about_click(app, l, x, y);
     case APP_CALCULATOR: return calculator_click(l, x, y);
+    case APP_WEB: return web_click(l, x, y);
     default: return 0;
     }
 }
@@ -2124,13 +2701,34 @@ int app_key(uint32_t app, const mde_layout *l, const MINT_DESKTOP_KEY_EVENT *k) 
     case APP_TERMINAL: return terminal_key(k);
     case APP_DISKS: return disks_key(k);
     case APP_CALCULATOR: return calculator_key(k);
+    case APP_WEB: return web_key(l, k);
     default: return 0;
     }
 }
 int app_scroll(uint32_t app, const mde_layout *l, int32_t x, int32_t y, int32_t delta) {
     (void)l; (void)x; (void)y;
     if (app == APP_FILES) { files_scroll += delta * 3; if (files_scroll < 0) files_scroll = 0; return 1; }
+    if (app == APP_TERMINAL) { terminal_scroll -= delta * 3; if (terminal_scroll < 0) terminal_scroll = 0; return 1; }
+    if (app == APP_WEB) return web_scroll(l, delta);
     return 0;
+}
+uint32_t app_background(void) {
+    uint32_t dirty = 0;
+    if (job.kind != JOB_NONE && terminal_job_step()) dirty |= 1u << APP_TERMINAL;
+    if (web_background()) dirty |= 1u << APP_WEB;
+    /* Network views follow the live link/DHCP state twice a second. */
+    static uint64_t last_poll;
+    static uint32_t last_signature;
+    uint64_t now = term_ms();
+    if (now - last_poll >= 500u) {
+        last_poll = now;
+        if (mint_net_get_status(&net_info) == 0) {
+            uint32_t signature = net_info.state * 2654435761u ^ net_info.ip ^ (net_info.link_up << 7) ^
+                                 (uint32_t)net_info.rx_frames ^ ((uint32_t)net_info.tx_frames << 3) ^ (net_info.driver_active << 9);
+            if (signature != last_signature) { last_signature = signature; dirty |= (1u << APP_NETWORK) | (1u << APP_SETTINGS); }
+        }
+    }
+    return dirty;
 }
 int app_tick(uint32_t app) {
     ++ui_ticks;
@@ -2140,5 +2738,6 @@ int app_tick(uint32_t app) {
 uint32_t app_cursor(uint32_t app, const mde_layout *l, int32_t x, int32_t y) {
     if ((app == APP_TERMINAL || app == APP_NOTES) && in(l->content, x, y)) return MINT_CURSOR_SHAPE_IBEAM;
     if (app == APP_FILES && in(files_search_rect(l), x, y)) return MINT_CURSOR_SHAPE_IBEAM;
+    if (app == APP_WEB) return web_cursor(l, x, y);
     return MINT_CURSOR_SHAPE_ARROW;
 }

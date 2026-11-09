@@ -56,6 +56,7 @@ int mint_paging_build_tables(MINT_PAGING_TABLES *tables,
 int mint_paging_init(const MINT_BOOT_INFO *boot);
 int mint_paging_is_active(void);
 int mint_paging_mark_uncached_range(uint64_t physical_base, uint64_t byte_size);
+int mint_paging_map_mmio_page(uint64_t virtual_address, uint64_t physical_address);
 int mint_paging_set_framebuffer_write_combining(uint64_t physical_base, uint64_t byte_size);
 /* Expose the current shared supervisor mapping template for constructing independent roots. */
 int mint_paging_export_address_space_template(uint64_t low_pdpt_entries[64],

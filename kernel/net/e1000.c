@@ -5,23 +5,32 @@
 #include "../include/pci.h"
 #include "../include/physmem.h"
 #include "../include/paging.h"
+#include "../include/vmalloc.h"
 #include "../include/serial.h"
 #include "../include/log.h"
 
 #define E1000_VENDOR 0x8086u
 #define E1000_DEVICE_82540EM 0x100Eu
-#define E1000_MMIO_MIN_SIZE 0x6000u
-#define E1000_MMIO_MAP_SIZE 0x6000u
-#define E1000_DMA_PAGES 16u
+#define E1000_MMIO_MAP_SIZE 0x20000u
 #define E1000_DMA_MAX_EXCLUSIVE 0x100000000ULL
 #define E1000_WAIT_LIMIT 250000u
+/* DMA layout: TX descriptors, RX descriptors, 32 RX buffers, 16 TX buffers. */
 #define E1000_RX_DESC_OFF 0x1000u
 #define E1000_RX_BUF_OFF  0x2000u
-#define E1000_TX_BUF_OFF  0x6000u
 #define E1000_BUFFER_SIZE 2048u
+#define E1000_TX_BUF_OFF  (E1000_RX_BUF_OFF + MINT_E1000_RX_RING_COUNT * E1000_BUFFER_SIZE)
+#define E1000_DMA_BYTES   (E1000_TX_BUF_OFF + MINT_E1000_TX_RING_COUNT * E1000_BUFFER_SIZE)
+#define E1000_DMA_PAGES   (E1000_DMA_BYTES / 4096u)
+_Static_assert((E1000_DMA_BYTES % 4096u) == 0u, "E1000 DMA area is page sized");
+_Static_assert((MINT_E1000_TX_RING_COUNT * 16u) % 128u == 0u && (MINT_E1000_RX_RING_COUNT * 16u) % 128u == 0u,
+               "E1000 ring lengths must be multiples of 128 bytes");
 
 #define REG_CTRL  0x0000u
 #define REG_STATUS 0x0008u
+#define REG_CTRL_EXT 0x0018u
+#define REG_EXTCNF_CTRL 0x0F00u
+#define REG_IOSFPC 0x0F28u
+#define REG_TARC0 0x3840u
 #define REG_MDIC  0x0020u
 #define REG_EERD  0x0014u
 #define REG_IMC   0x00D8u
@@ -45,7 +54,10 @@
 #define CTRL_RST (1u << 26)
 #define CTRL_FD (1u << 0)
 #define CTRL_LRST (1u << 3) /* link reset: must be clear before TX is enabled */
+#define CTRL_ASDE (1u << 5)
 #define CTRL_SLU (1u << 6)
+#define CTRL_EXT_DRV_LOAD (1u << 28)
+#define EXTCNF_SWFLAG (1u << 5)
 #define STATUS_LU (1u << 1)
 #define CTRL_SPD_SEL (3u << 8)
 #define CTRL_FRCSPD (1u << 11)
@@ -94,8 +106,52 @@ typedef struct __attribute__((packed)) e1000_tx_desc {
 _Static_assert(sizeof(E1000_RX_DESC) == 16, "E1000 RX descriptor ABI");
 _Static_assert(sizeof(E1000_TX_DESC) == 16, "E1000 TX descriptor ABI");
 
+/* Supported adapters. The classic PCI/PCIe parts are what QEMU, VirtualBox,
+ * VMware and Hyper-V emulate. The PCH-integrated I217/I218/I219 (for example
+ * the I219-LM in a Dell OptiPlex 7040) share the legacy descriptor format but
+ * need firmware-initialized PHY state; they are started without a global
+ * reset and are marked experimental. */
+enum { E1000_FAMILY_CLASSIC = 0, E1000_FAMILY_PCIE = 1, E1000_FAMILY_PCH = 2 };
+typedef struct e1000_model { uint16_t device; uint8_t family; uint8_t spt_errata; const char *name; } E1000_MODEL;
+static const E1000_MODEL e1000_models[] = {
+    {E1000_DEVICE_82540EM, E1000_FAMILY_CLASSIC, 0, "Intel 82540EM Gigabit"},
+    {0x100Fu, E1000_FAMILY_CLASSIC, 0, "Intel 82545EM Gigabit"},
+    {0x1004u, E1000_FAMILY_CLASSIC, 0, "Intel 82543GC Gigabit"},
+    {0x10D3u, E1000_FAMILY_PCIE, 0, "Intel 82574L Gigabit"},
+    {0x153Au, E1000_FAMILY_PCH, 0, "Intel I217-LM (experimental)"},
+    {0x153Bu, E1000_FAMILY_PCH, 0, "Intel I217-V (experimental)"},
+    {0x155Au, E1000_FAMILY_PCH, 0, "Intel I218-LM (experimental)"},
+    {0x1559u, E1000_FAMILY_PCH, 0, "Intel I218-V (experimental)"},
+    {0x15A0u, E1000_FAMILY_PCH, 0, "Intel I218-LM (experimental)"},
+    {0x15A1u, E1000_FAMILY_PCH, 0, "Intel I218-V (experimental)"},
+    {0x15A2u, E1000_FAMILY_PCH, 0, "Intel I218-LM (experimental)"},
+    {0x15A3u, E1000_FAMILY_PCH, 0, "Intel I218-V (experimental)"},
+    {0x156Fu, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x1570u, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15B7u, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x15B8u, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15B9u, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x15BBu, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x15BCu, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15BDu, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x15BEu, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15D6u, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15D7u, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+    {0x15D8u, E1000_FAMILY_PCH, 1, "Intel I219-V (experimental)"},
+    {0x15E3u, E1000_FAMILY_PCH, 1, "Intel I219-LM (experimental)"},
+};
+static const E1000_MODEL *find_model(uint16_t vendor, uint16_t device) {
+    if (vendor != E1000_VENDOR) return 0;
+    for (uint32_t i = 0; i < sizeof(e1000_models) / sizeof(e1000_models[0]); ++i)
+        if (e1000_models[i].device == device) return &e1000_models[i];
+    return 0;
+}
+
 typedef struct e1000_runtime {
     volatile uint8_t *registers;
+    const E1000_MODEL *model;
+    uint8_t phy_address;
+    uint8_t tx_pending[MINT_E1000_TX_RING_COUNT];
     uint64_t dma_physical;
     uint8_t *dma_virtual;
     uint32_t tx_head;
@@ -130,7 +186,7 @@ static int wait_clear(uint32_t offset, uint32_t mask) {
 }
 static int phy_read(uint8_t reg, uint16_t *value) {
     if (!runtime.registers || !value || reg > 31u) return 0;
-    mmio_write(REG_MDIC, mint_e1000_mdic_read_command(MDIC_PHY_ADDR, reg));
+    mmio_write(REG_MDIC, mint_e1000_mdic_read_command(runtime.phy_address ? runtime.phy_address : MDIC_PHY_ADDR, reg));
     for (uint32_t i=0; i<E1000_WAIT_LIMIT; ++i) {
         uint32_t result=mmio_read(REG_MDIC);
         if (mint_e1000_mdic_result_ready(result)) {
@@ -153,9 +209,9 @@ static void capture_loopback_diagnostics(uint32_t stage) {
     info.diag_tdh=mmio_read(REG_TDH); info.diag_tdt=mmio_read(REG_TDT);
     info.diag_rdh=mmio_read(REG_RDH); info.diag_rdt=mmio_read(REG_RDT);
     uint32_t tx_index = runtime.last_tx_valid ? runtime.last_tx_index : runtime.tx_head;
-    if (tx_index >= MINT_E1000_RING_COUNT) tx_index = 0u;
+    if (tx_index >= MINT_E1000_TX_RING_COUNT) tx_index = 0u;
     uint32_t rx_index = runtime.rx_next;
-    if (rx_index >= MINT_E1000_RING_COUNT) rx_index = 0u;
+    if (rx_index >= MINT_E1000_RX_RING_COUNT) rx_index = 0u;
     /* Descriptor status/length are updated asynchronously by device DMA. */
     __asm__ volatile("lfence" ::: "memory");
     volatile E1000_TX_DESC *txd=&tx_ring()[tx_index];
@@ -268,10 +324,41 @@ static int cleanup_failed_init(int mmio_responsive) {
     return 1;
 }
 
+static void copy_name(const char *name) {
+    uint32_t i = 0;
+    for (; name && name[i] && i + 1u < sizeof(info.name); ++i) info.name[i] = name[i];
+    info.name[i] = '\0';
+}
+
 static void set_failed(uint32_t code, const char *message) {
     info.state = MINT_E1000_FAILED; info.last_error = code;
     mint_serial_write("[e1000] "); mint_serial_write(message); mint_serial_write("\n");
     mint_log_emit(MINT_LOG_ERROR, MINT_LOG_COMPONENT_E1000, message);
+}
+
+/* PCH LAN: take the software/firmware PHY semaphore, then make sure the PHY
+   is not left powered down by the firmware (BMCR bit 11). Every wait is
+   bounded; on any failure the PHY is left as the firmware configured it. */
+static void pch_phy_power_up(void) {
+    uint32_t ext = mmio_read(REG_EXTCNF_CTRL);
+    mmio_write(REG_EXTCNF_CTRL, ext | EXTCNF_SWFLAG);
+    int owned = 0;
+    for (uint32_t i = 0; i < E1000_WAIT_LIMIT; ++i) {
+        if (mmio_read(REG_EXTCNF_CTRL) & EXTCNF_SWFLAG) { owned = 1; break; }
+        __asm__ volatile("pause");
+    }
+    if (!owned) return;
+    uint16_t bmcr = 0;
+    if (phy_read(MDIC_PHY_CONTROL, &bmcr) && (bmcr & 0x0800u)) {
+        uint16_t value = (uint16_t)((bmcr & ~0x0800u) | 0x1200u);   /* power up, restart autonegotiation */
+        mmio_write(REG_MDIC, mint_e1000_mdic_write_command(runtime.phy_address, MDIC_PHY_CONTROL, value));
+        for (uint32_t i = 0; i < E1000_WAIT_LIMIT; ++i) {
+            if (mint_e1000_mdic_result_ready(mmio_read(REG_MDIC))) break;
+            __asm__ volatile("pause");
+        }
+        mint_serial_write("[e1000] PCH PHY was powered down; powered up and restarted autonegotiation\n");
+    }
+    mmio_write(REG_EXTCNF_CTRL, mmio_read(REG_EXTCNF_CTRL) & ~EXTCNF_SWFLAG);
 }
 
 int mint_e1000_probe(void) {
@@ -286,16 +373,21 @@ int mint_e1000_probe(void) {
         ? inv->devices_stored : MINT_PCI_MAX_DEVICES;
     for (uint32_t i = 0; i < count; ++i) {
         const MINT_PCI_DEVICE *d = &inv->devices[i];
-        if (d->vendor_id != E1000_VENDOR || d->device_id != E1000_DEVICE_82540EM) continue;
+        const E1000_MODEL *model = find_model(d->vendor_id, d->device_id);
+        if (!model) continue;
         info.state = MINT_E1000_FOUND;
         info.bus = d->bus; info.device = d->device; info.function = d->function;
         info.mmio_base = d->bars[0].address;
-        mint_serial_write("[e1000] Intel 82540EM detected by read-only PCI scan; driver idle, DMA disabled; use Terminal `net start`\n");
+        info.device_id = d->device_id;
+        info.experimental = model->family == E1000_FAMILY_PCH;
+        copy_name(model->name);
+        mint_serial_write("[e1000] "); mint_serial_write(model->name);
+        mint_serial_write(" detected by read-only PCI scan; driver idle, DMA disabled until Terminal `net start` / `net up`\n");
         mint_log_emit(MINT_LOG_INFO, MINT_LOG_COMPONENT_E1000,
-                      "Intel 82540EM detected; driver remains idle until explicit net start; DMA disabled");
+                      "Intel E1000-family adapter detected; driver idle until explicit start; DMA disabled");
         return 1;
     }
-    mint_serial_write("[e1000] Intel 82540EM-compatible NIC not detected; no DMA enabled\n");
+    mint_serial_write("[e1000] no supported Intel E1000-family NIC detected; no DMA enabled\n");
     return 0;
 }
 
@@ -312,23 +404,28 @@ int mint_e1000_init(void) {
     const MINT_PCI_INVENTORY *inv = mint_pci_get_inventory();
     if (!inv) return 0;
     const MINT_PCI_DEVICE *nic = 0;
+    const E1000_MODEL *model = 0;
     uint32_t count = inv->devices_stored < MINT_PCI_MAX_DEVICES ? inv->devices_stored : MINT_PCI_MAX_DEVICES;
     for (uint32_t i=0; i<count; ++i) {
         const MINT_PCI_DEVICE *d=&inv->devices[i];
-        if (d->vendor_id==E1000_VENDOR && d->device_id==E1000_DEVICE_82540EM) { nic=d; break; }
+        if ((model=find_model(d->vendor_id,d->device_id))!=0) { nic=d; break; }
     }
-    if (!nic) { mint_serial_write("[e1000] Intel 82540EM-compatible NIC not detected\n"); return 0; }
+    if (!nic) { mint_serial_write("[e1000] no supported Intel E1000-family NIC detected\n"); return 0; }
     info.state=MINT_E1000_FOUND; info.bus=nic->bus; info.device=nic->device; info.function=nic->function;
+    info.device_id=nic->device_id; info.experimental=model->family==E1000_FAMILY_PCH; copy_name(model->name);
+    runtime.model=model; runtime.phy_address=model->family==E1000_FAMILY_PCH ? 2u : 1u;
     const MINT_PCI_BAR *bar=&nic->bars[0]; info.mmio_base=bar->address;
     if ((bar->kind!=MINT_PCI_BAR_MEMORY32 && bar->kind!=MINT_PCI_BAR_MEMORY64) ||
-        (bar->address & 0xFFFu) || bar->address>=mint_paging_identity_limit() ||
-        E1000_MMIO_MAP_SIZE>mint_paging_identity_limit()-bar->address) {
+        (bar->address & 0xFFFu) || !bar->address) {
         set_failed(1u,"BAR0 is not a valid mapped MMIO range"); return 0;
     }
-    if (!mint_paging_mark_uncached_range(bar->address,E1000_MMIO_MAP_SIZE)) {
-        set_failed(2u,"could not mark BAR0 uncached"); return 0;
+    /* Uncached register window; 64-bit BARs above the identity map get a
+       dedicated kernel mapping. */
+    void *registers = mint_mmio_map(bar->address,E1000_MMIO_MAP_SIZE);
+    if (!registers) {
+        set_failed(2u,"could not map BAR0 uncached"); return 0;
     }
-    runtime.registers=(volatile uint8_t *)(uintptr_t)bar->address;
+    runtime.registers=(volatile uint8_t *)registers;
     uint64_t dma=mint_physmem_claim_contiguous_below(E1000_DMA_PAGES, E1000_DMA_MAX_EXCLUSIVE);
     if (!dma) { runtime.registers=0; set_failed(3u,"no contiguous DMA memory below 4 GiB"); return 0; }
     runtime.dma_physical=dma; runtime.dma_virtual=(uint8_t *)(uintptr_t)dma;
@@ -351,11 +448,22 @@ int mint_e1000_init(void) {
         (void)cleanup_failed_init(0);
         set_failed(6u,"MMIO status read returned all ones"); return 0;
     }
-    /* Mask interrupts and perform the controller reset with a bounded wait. */
+    /* Mask interrupts and perform the controller reset with a bounded wait.
+       PCH LAN parts keep the firmware's PHY/ME configuration: a global reset
+       there needs the ME/PHY handshake this driver does not implement, so the
+       receive/transmit units are only stopped. */
     mmio_write(REG_IMC,0xFFFFFFFFu);
-    mmio_write(REG_CTRL,mmio_read(REG_CTRL)|CTRL_RST);
-    if (!wait_clear(REG_CTRL,CTRL_RST)) {
-        (void)cleanup_failed_init(0); set_failed(7u,"controller reset timed out; DMA was not enabled"); return 0;
+    if (model->family==E1000_FAMILY_PCH) {
+        mmio_write(REG_RCTL,0u); mmio_write(REG_TCTL,0u);
+        for (uint32_t settle=0; settle<20000u; ++settle) { (void)mmio_read(REG_STATUS); __asm__ volatile("pause"); }
+        mmio_write(REG_CTRL_EXT,mmio_read(REG_CTRL_EXT)|CTRL_EXT_DRV_LOAD);
+        pch_phy_power_up();
+    } else {
+        mmio_write(REG_CTRL,mmio_read(REG_CTRL)|CTRL_RST);
+        if (!wait_clear(REG_CTRL,CTRL_RST)) {
+            (void)cleanup_failed_init(0); set_failed(7u,"controller reset timed out; DMA was not enabled"); return 0;
+        }
+        mmio_write(REG_IMC,0xFFFFFFFFu);
     }
     if (mmio_read(REG_STATUS)==0xFFFFFFFFu) { (void)cleanup_failed_init(0); set_failed(8u,"controller vanished after reset"); return 0; }
     /* Some emulated 82540EM states expose CTRL.LRST after reset. Leaving it
@@ -365,24 +473,36 @@ int mint_e1000_init(void) {
     if (mmio_read(REG_CTRL) & CTRL_LRST) {
         (void)cleanup_failed_init(1); set_failed(11u,"CTRL.LRST remained asserted after reset"); return 0;
     }
+    /* Let the MAC follow the PHY's autonegotiated speed and bring the link up. */
+    mmio_write(REG_CTRL,(mmio_read(REG_CTRL)&~(CTRL_LRST|CTRL_FRCSPD|CTRL_FRCDPX))|CTRL_SLU|CTRL_ASDE);
     choose_mac_from_regs();
     /* Drop stale multicast filters. These are ordinary device registers only. */
     for (uint32_t off=REG_MTA; off<REG_RAL0; off+=4u) mmio_write(off,0u);
 
     E1000_TX_DESC *tx=tx_ring(); E1000_RX_DESC *rx=rx_ring();
-    for (uint32_t i=0;i<MINT_E1000_RING_COUNT;++i) {
+    for (uint32_t i=0;i<MINT_E1000_TX_RING_COUNT;++i) {
         tx[i].buffer_address=tx_buffer_pa(i); tx[i].length=0; tx[i].checksum_offset=0;
         tx[i].command=TX_CMD_EOP|TX_CMD_IFCS|TX_CMD_RS; tx[i].status=TX_STATUS_DD; tx[i].checksum_start=0; tx[i].special=0;
+        runtime.tx_pending[i]=0u;
+    }
+    for (uint32_t i=0;i<MINT_E1000_RX_RING_COUNT;++i) {
         rx[i].buffer_address=rx_buffer_pa(i); rx[i].length=0; rx[i].checksum=0; rx[i].status=0; rx[i].errors=0; rx[i].special=0;
     }
     mmio_write(REG_RCTL,0u); mmio_write(REG_TCTL,0u);
     mmio_write(REG_RDBAL,(uint32_t)(dma+E1000_RX_DESC_OFF)); mmio_write(REG_RDBAH,0u);
-    mmio_write(REG_RDLEN,MINT_E1000_RING_COUNT*sizeof(E1000_RX_DESC));
-    mmio_write(REG_RDH,0u); mmio_write(REG_RDT,MINT_E1000_RING_COUNT-1u);
+    mmio_write(REG_RDLEN,MINT_E1000_RX_RING_COUNT*sizeof(E1000_RX_DESC));
+    mmio_write(REG_RDH,0u); mmio_write(REG_RDT,MINT_E1000_RX_RING_COUNT-1u);
     mmio_write(REG_TDBAL,(uint32_t)dma); mmio_write(REG_TDBAH,0u);
-    mmio_write(REG_TDLEN,MINT_E1000_RING_COUNT*sizeof(E1000_TX_DESC));
+    mmio_write(REG_TDLEN,MINT_E1000_TX_RING_COUNT*sizeof(E1000_TX_DESC));
     mmio_write(REG_TDH,0u); mmio_write(REG_TDT,0u);
     mmio_write(REG_TIPG,10u|(8u<<10)|(6u<<20));
+    if (model->spt_errata) {
+        /* Sunrise Point / Kaby Lake PCH errata (as applied by other OS
+           drivers): limit outstanding TX DMA requests to two to avoid a
+           transmit hang, and set the RX descriptor threshold in IOSFPC. */
+        mmio_write(REG_IOSFPC,mmio_read(REG_IOSFPC)|0x00010000u);
+        mmio_write(REG_TARC0,(mmio_read(REG_TARC0)&~0x30000000u)|0x20000000u);
+    }
 
     command |= 0x0004u;
     if (!mint_pci_write_config32(info.bus,info.device,info.function,0x04u,command)) {
@@ -397,30 +517,48 @@ int mint_e1000_init(void) {
         (void)cleanup_failed_init(responsive); set_failed(10u,"descriptor engines did not enable"); return 0;
     }
     runtime.tx_head=0; runtime.rx_next=0; runtime.last_tx_index=0u; runtime.last_tx_valid=0u; runtime.initialized=1u;
-    info.state=MINT_E1000_ACTIVE; info.last_error=0; info.tx_ring_count=MINT_E1000_RING_COUNT; info.rx_ring_count=MINT_E1000_RING_COUNT;
-    mint_serial_write("[e1000] Intel 82540EM driver active; bounded polling RX/TX rings initialized; MAC=");
+    info.state=MINT_E1000_ACTIVE; info.last_error=0; info.tx_ring_count=MINT_E1000_TX_RING_COUNT; info.rx_ring_count=MINT_E1000_RX_RING_COUNT;
+    info.link_up=(mmio_read(REG_STATUS)&STATUS_LU)!=0u;
+    mint_serial_write("[e1000] "); mint_serial_write(model->name);
+    mint_serial_write(" driver active; polling RX/TX rings initialized; MAC=");
     for(uint32_t i=0;i<6u;++i){ if(i)mint_serial_putc(':'); serial_hex8(info.mac[i]); }
-    mint_serial_write(" DMA below 4 GiB; interrupts masked\n");
-    mint_log_emit(MINT_LOG_INFO,MINT_LOG_COMPONENT_E1000,"Intel 82540EM initialized with bounded polling RX/TX rings; interrupts masked");
+    mint_serial_write(info.link_up ? " link up" : " link down");
+    mint_serial_write("; DMA below 4 GiB; interrupts masked\n");
+    mint_log_emit(MINT_LOG_INFO,MINT_LOG_COMPONENT_E1000,"E1000-family adapter initialized with bounded polling RX/TX rings; interrupts masked");
     return 1;
 }
 
-static int transmit_frame(const uint8_t *frame, uint16_t length) {
+/* Counts completions of descriptors handed to the device earlier. */
+static void reclaim_tx(void) {
+    __asm__ volatile("lfence" ::: "memory");
+    for (uint32_t i=0;i<MINT_E1000_TX_RING_COUNT;++i) {
+        if (runtime.tx_pending[i] && (((volatile E1000_TX_DESC *)tx_ring())[i].status&TX_STATUS_DD)) {
+            runtime.tx_pending[i]=0u; ++info.tx_completed;
+        }
+    }
+}
+/* Queues one frame. With wait_done the call also waits (bounded) for the
+   device to report completion, as the loopback diagnostic needs. */
+static int transmit_frame(const uint8_t *frame, uint16_t length, int wait_done) {
     if (!runtime.initialized || !frame || length<14u || length>MINT_E1000_MAX_FRAME) return 0;
     uint32_t i=runtime.tx_head; volatile E1000_TX_DESC *d=&tx_ring()[i];
     runtime.last_tx_index=i; runtime.last_tx_valid=1u;
-    for(uint32_t wait=0; wait<E1000_WAIT_LIMIT && !(d->status&TX_STATUS_DD); ++wait) { }
+    for(uint32_t wait=0; wait<E1000_WAIT_LIMIT && !(d->status&TX_STATUS_DD); ++wait) { __asm__ volatile("pause"); }
     if (!(d->status&TX_STATUS_DD)) { ++info.tx_errors; return 0; }
+    if (runtime.tx_pending[i]) { runtime.tx_pending[i]=0u; ++info.tx_completed; }
     uint16_t padded=length<TX_FRAME_MIN?TX_FRAME_MIN:length;
     uint8_t *buf=tx_buffer(i); for(uint32_t j=0;j<padded;++j) buf[j]=j<length?frame[j]:0;
     d->buffer_address=tx_buffer_pa(i); d->length=padded; d->checksum_offset=0;
     d->command=TX_CMD_EOP|TX_CMD_IFCS|TX_CMD_RS; d->status=0; d->checksum_start=0; d->special=0;
     __asm__ volatile("mfence" ::: "memory");
-    mmio_write(REG_TDT,(i+1u)%MINT_E1000_RING_COUNT);
+    runtime.tx_head=mint_e1000_ring_next(i,MINT_E1000_TX_RING_COUNT);
+    runtime.tx_pending[i]=1u;
+    mmio_write(REG_TDT,runtime.tx_head);
     ++info.tx_submitted;
+    if (!wait_done) return 1;
     for(uint32_t wait=0;wait<E1000_WAIT_LIMIT;++wait) {
         __asm__ volatile("pause");
-        if(d->status&TX_STATUS_DD){++info.tx_completed;runtime.tx_head=mint_e1000_ring_next(i,MINT_E1000_RING_COUNT);return 1;}
+        if(d->status&TX_STATUS_DD){runtime.tx_pending[i]=0u;++info.tx_completed;return 1;}
     }
     ++info.tx_errors;
     return 0;
@@ -437,7 +575,7 @@ static int receive_frame(uint8_t *out, uint16_t capacity, uint16_t *length_out) 
     d->length=0; d->checksum=0; d->errors=0; d->special=0; d->status=0;
     __asm__ volatile("mfence" ::: "memory");
     mmio_write(REG_RDT,i);
-    runtime.rx_next=mint_e1000_ring_next(i,MINT_E1000_RING_COUNT);
+    runtime.rx_next=mint_e1000_ring_next(i,MINT_E1000_RX_RING_COUNT);
     return ok?1:-1;
 }
 
@@ -477,7 +615,7 @@ int mint_e1000_loopback_test(void) {
         frame[12]=(uint8_t)(TX_FRAME_TEST_TYPE>>8); frame[13]=(uint8_t)TX_FRAME_TEST_TYPE;
         static const uint8_t marker[]="MINTOS26-E1000-LOOPBACK";
         for(uint32_t i=0;i<sizeof(marker)-1u;++i)frame[14u+i]=marker[i];
-        int tx_ok=transmit_frame(frame,sizeof(frame));
+        int tx_ok=transmit_frame(frame,sizeof(frame),1);
         if (!tx_ok) {
             failure_stage=MINT_E1000_LB_TX_TIMEOUT;
             goto cleanup;
@@ -528,4 +666,29 @@ int mint_e1000_get_info(MINT_E1000_INFO *out) {
     for(size_t i=0;i<sizeof(*out);++i) dst[i]=src[i];
     out->version=MINT_E1000_INFO_VERSION; out->struct_size=sizeof(*out);
     return 1;
+}
+
+/* ---- packet interface used by the IPv4 stack (kernel/net/net.c) */
+int mint_e1000_active(void) { return runtime.initialized != 0u; }
+int mint_e1000_link_up(void) {
+    if (!runtime.initialized) return 0;
+    info.link_up = (mmio_read(REG_STATUS) & STATUS_LU) != 0u;
+    return (int)info.link_up;
+}
+int mint_e1000_mac(uint8_t out[6]) {
+    if (!runtime.initialized || !out) return 0;
+    for (uint32_t i = 0; i < 6u; ++i) out[i] = info.mac[i];
+    return 1;
+}
+int mint_e1000_send(const void *frame, uint32_t length) {
+    if (length > MINT_E1000_MAX_FRAME) return 0;
+    return transmit_frame((const uint8_t *)frame, (uint16_t)length, 0);
+}
+int mint_e1000_poll(void *out, uint32_t capacity, uint32_t *length) {
+    if (!runtime.initialized || !out || !length) return -1;
+    reclaim_tx();
+    uint16_t got = 0;
+    int rc = receive_frame((uint8_t *)out, capacity > 0xFFFFu ? 0xFFFFu : (uint16_t)capacity, &got);
+    if (rc > 0) *length = got;
+    return rc;
 }

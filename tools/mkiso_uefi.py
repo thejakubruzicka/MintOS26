@@ -14,7 +14,7 @@ def main():
     if len(boot)%S: raise SystemExit('FAT boot image size must be a multiple of 2048')
     cat_lba=20;img_lba=23;img_secs=len(boot)//S;root_lba=img_lba+img_secs;pt_lba=root_lba+1;ptbe_lba=pt_lba+1;readme_lba=ptbe_lba+1;readme_secs=(len(readme)+S-1)//S;total=readme_lba+readme_secs
     iso=bytearray(total*S)
-    p=memoryview(iso)[16*S:17*S];p[0]=1;p[1:6]=b'CD001';p[6]=1;p[8:40]=b'MINTOS26'.ljust(32,b' ');p[40:72]=b'MintOS26 26.5.010.0 UEFI'.ljust(32,b' ');p[80:88]=both32(total);p[120:124]=both16(1);p[124:128]=both16(1);p[128:132]=both16(S);p[132:140]=both32(10);p[140:144]=struct.pack('<I',pt_lba);p[144:148]=struct.pack('>I',ptbe_lba);p[156:190]=rec(root_lba,S,2,b'\x00');p[813:830]=b'MINTOS26 UEFI'.ljust(17,b' ')
+    p=memoryview(iso)[16*S:17*S];p[0]=1;p[1:6]=b'CD001';p[6]=1;p[8:40]=b'MINTOS26'.ljust(32,b' ');p[40:72]=b'MintOS26 26.5.011.0 UEFI'.ljust(32,b' ');p[80:88]=both32(total);p[120:124]=both16(1);p[124:128]=both16(1);p[128:132]=both16(S);p[132:140]=both32(10);p[140:144]=struct.pack('<I',pt_lba);p[144:148]=struct.pack('>I',ptbe_lba);p[156:190]=rec(root_lba,S,2,b'\x00');p[813:830]=b'MINTOS26 UEFI'.ljust(17,b' ')
     b=memoryview(iso)[17*S:18*S];b[0]=0;b[1:6]=b'CD001';b[6]=1;b[7:39]=b'EL TORITO SPECIFICATION'.ljust(32,b' ');b[71:75]=struct.pack('<I',cat_lba)
     t=memoryview(iso)[18*S:19*S];t[0]=255;t[1:6]=b'CD001';t[6]=1
     root=bytearray(S);ents=[rec(root_lba,S,2,b'\x00'),rec(root_lba,S,2,b'\x01'),rec(img_lba,len(boot),0,b'EFI.IMG;1'),rec(readme_lba,len(readme),0,b'README.TXT;1')];off=0

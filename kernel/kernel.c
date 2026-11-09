@@ -20,6 +20,8 @@
 #include "include/log.h"
 #include "include/power.h"
 #include "include/rtc.h"
+#include "include/usb.h"
+#include "include/net.h"
 #include "include/desktop_services.h"
 #include "include/ramfs.h"
 
@@ -572,7 +574,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     __asm__ volatile("cli; cld" ::: "memory");
     mint_serial_init();
     mint_log_init();
-    mint_serial_write("\nMintOS26 26.5.010.0 native kernel entry\n");
+    mint_serial_write("\nMintOS26 26.5.011.0 native kernel entry\n");
     if (!boot || boot->magic != MINT_BOOT_INFO_MAGIC ||
         boot->abi_version != MINT_BOOT_INFO_ABI ||
         boot->struct_size < sizeof(MINT_BOOT_INFO)) {
@@ -679,6 +681,10 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     int64_t ring3_pid = mint_task_create("ring3-smoke-a", ring3_user_task, (void *)(uintptr_t)1u);
     int64_t ring3_pid_b = mint_task_create("ring3-smoke-b", ring3_user_task, (void *)(uintptr_t)2u);
     int64_t desktop_pid = mint_task_create("native-desktop", native_desktop_task, 0);
+    int64_t usb_pid = mint_task_create("usb", mint_usb_task, 0);
+    if (usb_pid < 0) mint_serial_write("[usb] could not create the USB polling task; USB input disabled\n");
+    int64_t net_pid = mint_task_create("net", mint_net_task, 0);
+    if (net_pid < 0) mint_serial_write("[net] could not create the network task; networking disabled\n");
     if (status_pid < 0 || heartbeat_pid < 0 || abi_pid < 0 || ring3_pid < 0 || ring3_pid_b < 0 || desktop_pid < 0) {
         mint_serial_write("[sched] task creation failed; halted\n");
         for (;;) __asm__ volatile("cli; hlt" ::: "memory");

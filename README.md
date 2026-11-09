@@ -1,8 +1,18 @@
-# MintOS26 26.5.010.0 — MintDE 2.0.0
+# MintOS26 26.5.011.0 — MintDE 2.1.0
 
-**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.0.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
+**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.1.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
 
 The startup selector defaults to UEFI Desktop (Enter/1 or a three-second timeout). Press 2/M to request the experimental MintDE native handoff. MintDE calls `ExitBootServices`; this handoff is one-way until reset, so keep EFI enabled and retain UEFI Desktop as the recovery path.
+
+## 26.5.011.0 / MintDE 2.1.0 — USB, networking and the web
+
+- **USB input works natively.** A polled xHCI driver supports USB keyboards, mice and tablets on the computer's own ports (no hubs yet). This matters on machines without PS/2, such as the Dell OptiPlex 7040.
+- **MintOS is on the Internet.**
+  - **Network drivers:** an Intel E1000-family driver covers the adapters that QEMU, VirtualBox, VMware and Hyper-V emulate, plus experimental Intel I217/I218/I219 support.
+  - **Network stack:** MintOS's own IPv4 stack with DHCP, DNS, ping and TCP.
+  - **Automatic connection:** in a virtual machine MintDE connects on its own; open **Network** to see the address.
+- **Web**, a small browser for HTTP pages: links, history, search through wiby.me, and readable text layout. Secure (HTTPS) sites need TLS, which is not implemented yet.
+- **Terminal:** `net up`, `ifconfig`, `ping <host>`, `nslookup <host>`, `curl http://…` and `usb`.
 
 ## MintDE 2.0.0 — a macOS-style desktop
 
@@ -60,7 +70,7 @@ Host tests do not emulate live AHCI/E1000 DMA or prove MintDE runtime behavior. 
 
 ## Next development work
 
-0. **USB input (xHCI + HID) for native MintDE.** Machines with only USB keyboards and mice (including the Dell OptiPlex 7040, whose Skylake PCH has xHCI only) and VirtualBox's default USB tablet have no native input yet. This is the next milestone.
+0. **Secure web (TLS) and USB hubs.** HTTPS is the main thing keeping the Web app from the modern web; USB hubs (and keyboards with built-in hubs) are the main gap in USB input on real PCs. Validate USB input and the experimental I219 driver on the OptiPlex 7040 with COM1 logs.
 1. Validate MintDE 1.0.8 on the VM at multiple display sizes, especially cursor stability, menu dismissal, resize behavior and both formatted and blank disks attached simultaneously.
 2. Design bounded general file writes and persistence separately: allocation, directory updates, flush ordering, rollback and reboot verification must be addressed before enabling them.
 3. Improve terminal input/console I/O, process blocking/wakeup and resource cleanup.

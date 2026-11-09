@@ -22,9 +22,9 @@ checks = {
     'PCI resource inventory exposes BARs, interrupt line/pin and version':
         all(k in pci_h for k in ['MINT_PCI_BAR_SLOTS', 'interrupt_line', 'interrupt_pin', 'MINT_PCI_INVENTORY_VERSION']),
     'driver catalogue distinguishes detected VirtualBox E1000 from a functional network driver':
-        'VirtualBox E1000' in catalog and 'DMA RX/TX rings initialized; polling, no IP stack.' in catalog and 'MINT_E1000_ACTIVE' in catalog and 'bus mastering remains disabled' in catalog,
+        'Intel Ethernet (E1000)' in catalog and 'carries the IPv4 stack' in catalog and 'MINT_E1000_ACTIVE' in catalog and 'bus mastering remains disabled' in catalog and 'IPv4 network stack' in catalog,
     'kernel includes bounded E1000 DMA/ring driver':
-        all(k in (root / 'kernel/net/e1000.c').read_text() for k in ['mint_paging_mark_uncached_range', 'mint_physmem_claim_contiguous_below', 'REG_RDBAL', 'REG_TDBAL', 'mint_e1000_loopback_test']),
+        all(k in (root / 'kernel/net/e1000.c').read_text() for k in ['mint_mmio_map', 'mint_physmem_claim_contiguous_below', 'REG_RDBAL', 'REG_TDBAL', 'mint_e1000_loopback_test']),
     'terminal provides explicit E1000 start, status and opt-in loopback diagnostics':
         'terminal_equals(cmd,"net start")' in desktop and 'terminal_equals(cmd,"net status")' in desktop and 'terminal_equals(cmd,"net test")' in desktop,
     'terminal provides a read-only PCI resource command':

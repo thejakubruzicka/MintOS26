@@ -11,7 +11,7 @@ import sys
 root = Path(__file__).resolve().parents[1]
 out = Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'build/icon-assets.S'
 ICONS = ['files', 'notes', 'terminal', 'settings', 'system-monitor', 'console', 'system-info',
-         'network', 'disk-utility', 'about-mintos', 'mintde', 'launchpad', 'calculator', 'trash']
+         'network', 'disk-utility', 'about-mintos', 'mintde', 'launchpad', 'calculator', 'trash', 'web']
 lines = ['.section .rodata', '']
 for name in ICONS:
     sym = name.replace('-', '_')

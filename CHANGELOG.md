@@ -1,5 +1,21 @@
 # MintOS26 changelog
 
+## 26.5.011.0 / MintDE 2.1.0 — USB input, Intel Ethernet, IPv4/TCP and a web browser
+
+- **USB:** a polled xHCI driver (firmware handoff, rings, device enumeration on root ports, hot-plug) with HID keyboards, mice and tablets. USB devices drive the same input path as PS/2, including Command shortcuts and the new mouse wheel. Hubs and mass storage are not supported yet.
+- **Device registers above 64 GiB** are now mapped through an uncached MMIO window (`mint_mmio_map`). Firmware often places 64-bit BARs this high; QEMU puts the xHCI at 768 GiB.
+- **Intel Ethernet:**
+  - The 82540EM, 82545EM, 82543GC and 82574L are supported. The PCH-integrated I217, I218 and I219 (for example the OptiPlex 7040's I219-LM) are supported experimentally.
+  - Larger rings (32 RX / 16 TX) and non-blocking transmit.
+- **IPv4 stack:** ARP, IPv4, ICMP echo, UDP, a DHCP client with lease renewal, a DNS resolver and a TCP client (flow control, retransmission, graceful close). It is driven by the new `net` kernel task, with non-blocking `NET_*` and `TCP` syscalls.
+- **MintDE 2.1.0:**
+  - A new **Web** browser for HTTP sites (HTTPS needs TLS, which is not available yet) and a redesigned **Network** app.
+  - Terminal adds `net up`, `ifconfig`, `ping`, `nslookup`, `curl` and `usb`.
+  - Hardware & Drivers gains a **USB** page.
+  - Settings adds a Network pane with automatic connection, and the Input pane now shows USB devices.
+  - Accented European letters display in the interface.
+- **Validation:** QEMU q35/OVMF with `qemu-xhci` USB devices and an e1000 NIC, including without a PS/2 controller. Real web pages loaded over the stack with no retransmissions. VirtualBox and physical hardware are not yet validated.
+
 ## 26.5.010.0 / MintDE 2.0.0 — macOS-style desktop
 
 - MintDE 2 is a new desktop in a macOS style: multiple windows with traffic lights, shadows, drag, resize, zoom and minimize; a translucent menu bar with menus, Control Center, Spotlight and a real clock; a glass Dock; Launchpad; ⌘Tab; and Light, Dark and Auto appearance with accent colours.
