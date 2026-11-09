@@ -4,10 +4,10 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 s=(root/'uefi/main.c').read_text()
 checks={
- 'release reports 26.5.009.0': '26.5.009.0' in s,
+ 'release reports 26.5.010.0': '26.5.010.0' in s,
  'launcher contains thirteen apps': 'int apps[13]' in s and 'row*4+col' in s,
- 'About pages identify OS and desktop versions separately': all(k in s for k in ['Version 26.5.009.0  •  x86-64','Version 1.0.8  •  Native desktop environment','APP_ABOUT_MINTDE']),
- 'startup selector defaults safely to UEFI Desktop': all(k in s for k in ['wait_for_boot_choice()','Auto-starting UEFI Desktop','2  MintDE 1.0','boot_image_handle=image']),
+ 'About pages identify OS and desktop versions separately': all(k in s for k in ['Version 26.5.010.0  •  x86-64','Version 2.0.0  •  Native desktop environment']),
+ 'startup selector defaults safely to UEFI Desktop': all(k in s for k in ['wait_for_boot_choice()','Auto-starting UEFI Desktop','2  MintDE 2.0','boot_image_handle=image']),
  'Calendar and month-navigation handlers exist': 'APP_CALENDAR' in s and 'weekday_sun0' in s and 'calendar_month++' in s and 'calendar_month--' in s,
  'Clock uses UEFI RuntimeServices time': 'get_display_time(&t)' in s and 'zone_name()' in s,
  'Czech/German app labels are available': 'locale_id==1' in s and 'locale_id==2' in s,
@@ -26,8 +26,8 @@ checks={
  'Settings uses interactive dropdown controls': all(k in s for k in ['draw_dropdown_row','draw_settings_popup','settings_popup_select','settings_dropdown=3','settings_dropdown=7']),
  'launcher and settings text are width-fitted': s.count('draw_text_fit(')>25,
  'UEFI HTTP GET is firmware-mediated and bounded': all(k in s for k in ['GUID_HTTP_SERVICE_BINDING','perform_http_get','HttpVersion=1','HTTP response status','TCP/IP/DNS is unavailable']),
- 'native shell batches drawing into explicit frames': 'mint_ui_frame_begin()' in (root/'kernel/user/desktop.c').read_text() and 'mint_display_frame_begin' in (root/'kernel/ui/display_surface.c').read_text() and 'MINT_SYS_DISPLAY_FRAME_END' in (root/'kernel/include/uapi/mintos/syscall.h').read_text(),
- 'native windows support title-bar dragging and release': 'window_dragging = 1' in (root/'kernel/user/desktop.c').read_text() and 'window_dragging = 0' in (root/'kernel/user/desktop.c').read_text() and 'window_offset_x' in (root/'kernel/user/desktop.c').read_text(),
+ 'native shell composes into a retained canvas and presents damaged rectangles': 'mint_display_present(d.x0, d.y0, W(d), H(d))' in (root/'kernel/user/desktop.c').read_text() and 'mint_display_present_canvas' in (root/'kernel/ui/display_surface.c').read_text() and 'MINT_SYS_DISPLAY_PRESENT' in (root/'kernel/include/uapi/mintos/syscall.h').read_text(),
+ 'native windows support title-bar dragging and release': 'drag_app = app;' in (root/'kernel/user/desktop.c').read_text() and 'drag_app = -1;' in (root/'kernel/user/desktop.c').read_text() and 'drag_dx' in (root/'kernel/user/desktop.c').read_text(),
  'native kernel is an opt-in ELF64 boot path': all(k in s for k in ['BOOTKERNEL','launch_native_kernel','ExitBootServices']) and 'kernel_entry' in (root/'kernel/kernel.c').read_text(),
 }
 for name,ok in checks.items(): print(('PASS: ' if ok else 'FAIL: ')+name)

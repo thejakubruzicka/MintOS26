@@ -210,3 +210,21 @@ int64_t mint_power_get_status(MINT_POWER_INFO *out) {
 int64_t mint_power_request(uint32_t action) {
     return mint_syscall3(MINT_SYS_POWER_CONTROL, action, MINT_POWER_CONFIRM_TOKEN, 0);
 }
+
+int64_t mint_display_map_canvas(MINT_DISPLAY_CANVAS *out) {
+    return mint_syscall3(MINT_SYS_DISPLAY_MAP_CANVAS, (uint64_t)(uintptr_t)out, 0, 0);
+}
+int64_t mint_display_present(int32_t x, int32_t y, int32_t width, int32_t height) {
+    return mint_syscall5(MINT_SYS_DISPLAY_PRESENT, (uint64_t)(int64_t)x, (uint64_t)(int64_t)y,
+                         (uint64_t)(int64_t)width, (uint64_t)(int64_t)height, 0);
+}
+int64_t mint_display_cursor(int32_t x, int32_t y, uint32_t shape) {
+    return mint_syscall3(MINT_SYS_DISPLAY_CURSOR, (uint64_t)(int64_t)x, (uint64_t)(int64_t)y, shape);
+}
+int64_t mint_ui_render_wallpaper(uint32_t variant) {
+    return mint_syscall3(MINT_SYS_DISPLAY_WALLPAPER_RENDER, variant, 0, 0);
+}
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) {
+    return mint_syscall5(MINT_SYS_FAT16_READ, (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)buffer,
+                         (uint64_t)capacity, MINT_FAT16_READ_PREFIX, 0);
+}

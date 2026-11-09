@@ -134,10 +134,21 @@ static int ranges_overlap_u64(uint64_t a, uint64_t alen, uint64_t b, uint64_t bl
     return a < b + blen && b < a + alen;
 }
 
+static int region_reserve_checked(MINT_ADDRESS_SPACE *space, uint64_t base,
+                                  uint64_t size, uint32_t flags,
+                                  MINT_ASPACE_REGION_KIND kind);
+
 int mint_address_space_region_reserve(MINT_ADDRESS_SPACE *space, uint64_t base,
                                       uint64_t size, uint32_t flags,
                                       MINT_ASPACE_REGION_KIND kind) {
-    if (!g_system_ready || !space || !space->initialized || space->active ||
+    if (!space || space->active) return 0;
+    return region_reserve_checked(space, base, size, flags, kind);
+}
+
+static int region_reserve_checked(MINT_ADDRESS_SPACE *space, uint64_t base,
+                                  uint64_t size, uint32_t flags,
+                                  MINT_ASPACE_REGION_KIND kind) {
+    if (!g_system_ready || !space || !space->initialized ||
         !size || (base & (MINT_PAGING_PAGE_SIZE - 1u)) ||
         (size & (MINT_PAGING_PAGE_SIZE - 1u)) ||
         base < MINT_ASPACE_USER_BASE || base >= MINT_ASPACE_USER_END ||
@@ -563,4 +574,83 @@ int mint_address_space_destroy(MINT_ADDRESS_SPACE *space) {
     }
     zero_bytes(space, sizeof(*space));
     return 1;
+}
+
+/* Map a physically contiguous, kernel-owned range (e.g. the display canvas)
+ * into a user address space as a SHARED region. The pages are not recorded in
+ * frames[], so destroy() and unmap() never release them: the kernel keeps
+ * ownership and the process only borrows the mapping. Page-table pages are
+ * owned by the space as usual. Allowed on the active space (TLB entries are
+ * invalidated per page) so a running process can request its own mapping. */
+#define PTE_SHARED_MARK (1ULL << 9) /* software-available bit: borrowed page */
+int mint_address_space_map_shared(MINT_ADDRESS_SPACE *space, uint64_t va,
+                                  uint64_t pa, uint64_t pages, uint32_t flags) {
+    if (!g_system_ready || !space || !space->initialized || !pages ||
+        pages > (MINT_ASPACE_USER_END - MINT_ASPACE_USER_BASE) / MINT_PAGING_PAGE_SIZE ||
+        (va & PAGE_MASK) || (pa & PAGE_MASK) || (flags & ~PTE_ALLOWED_FLAGS) ||
+        ((flags & MINT_PAGE_MAP_WRITE) && (flags & MINT_PAGE_MAP_EXEC))) return 0;
+    uint64_t bytes = pages * MINT_PAGING_PAGE_SIZE;
+    if (!mint_address_space_is_user_address(va) || bytes > MINT_ASPACE_USER_END - va ||
+        pa >= MINT_IDENTITY_MAP_LIMIT || bytes > MINT_IDENTITY_MAP_LIMIT - pa) return 0;
+    /* Never alias a frame this space owns (that would let it be freed while mapped). */
+    for (unsigned i = 0; i < MINT_ASPACE_MAX_USER_FRAMES; ++i)
+        if (space->frames[i].active && space->frames[i].physical >= pa &&
+            space->frames[i].physical < pa + bytes) return 0;
+    if (!region_reserve_checked(space, va, bytes, flags, MINT_ASPACE_REGION_SHARED)) return 0;
+    uint64_t *root = root_entries(space);
+    uint64_t *pdpt = pdpt_entries(space);
+    uint64_t mapped = 0;
+    if (!root || !pdpt || !(root[0] & PTE_P) || !(root[0] & PTE_US)) goto fail;
+    for (uint64_t page = 0; page < pages; ++page) {
+        uint64_t v = va + page * MINT_PAGING_PAGE_SIZE;
+        uint32_t di = (uint32_t)((v >> 30) & 0x1FFu);
+        uint32_t pi = (uint32_t)((v >> 21) & 0x1FFu);
+        uint32_t ti = (uint32_t)((v >> 12) & 0x1FFu);
+        if (di < USER_PDPT_FIRST || di >= USER_PDPT_END) goto fail;
+        if (!(pdpt[di] & PTE_P)) {
+            uint64_t pd_pa = table_claim(space);
+            if (!pd_pa) goto fail;
+            pdpt[di] = pd_pa | PTE_P | PTE_RW | PTE_US;
+        } else if (!(pdpt[di] & PTE_US) || (pdpt[di] & PDE_PS)) goto fail;
+        uint64_t *pd = (uint64_t *)physical_pointer(pdpt[di] & PTE_ADDR_MASK);
+        if (!pd) goto fail;
+        if (!(pd[pi] & PTE_P)) {
+            uint64_t pt_pa = table_claim(space);
+            if (!pt_pa) goto fail;
+            pd[pi] = pt_pa | PTE_P | PTE_RW | PTE_US;
+        } else if (!(pd[pi] & PTE_US) || (pd[pi] & PDE_PS)) goto fail;
+        uint64_t *pt = (uint64_t *)physical_pointer(pd[pi] & PTE_ADDR_MASK);
+        if (!pt || (pt[ti] & PTE_P)) goto fail;
+        uint64_t pte = ((pa + page * MINT_PAGING_PAGE_SIZE) & PTE_ADDR_MASK) | PTE_P | PTE_US | PTE_SHARED_MARK;
+        if (flags & MINT_PAGE_MAP_WRITE) pte |= PTE_RW;
+        if (flags & MINT_PAGE_MAP_UNCACHED) pte |= PTE_PCD;
+        if (flags & MINT_PAGE_MAP_WRITE_THROUGH) pte |= PTE_PWT;
+        if (space->nx_supported && !(flags & MINT_PAGE_MAP_EXEC)) pte |= PTE_NX;
+        pt[ti] = pte;
+        ++mapped;
+        ++space->mappings_live; ++space->mappings_created;
+        if (space->active) g_backend.invalidate_page(g_backend.context, v);
+    }
+    return 1;
+
+fail:
+    /* Clear only the borrowed PTEs this call installed (identified by the
+       shared mark) and drop the region; page tables stay owned until destroy. */
+    for (uint64_t page = 0; page < mapped && pdpt; ++page) {
+        uint64_t v = va + page * MINT_PAGING_PAGE_SIZE;
+        uint64_t *pd = (uint64_t *)physical_pointer(pdpt[(v >> 30) & 0x1FFu] & PTE_ADDR_MASK);
+        uint64_t *pt = pd ? (uint64_t *)physical_pointer(pd[(v >> 21) & 0x1FFu] & PTE_ADDR_MASK) : 0;
+        if (pt && (pt[(v >> 12) & 0x1FFu] & PTE_SHARED_MARK)) {
+            pt[(v >> 12) & 0x1FFu] = 0;
+            if (space->mappings_live) --space->mappings_live;
+            if (space->active) g_backend.invalidate_page(g_backend.context, v);
+        }
+    }
+    for (unsigned i = 0; i < MINT_ASPACE_MAX_REGIONS; ++i)
+        if (space->regions[i].active && space->regions[i].base == va &&
+            space->regions[i].kind == MINT_ASPACE_REGION_SHARED) {
+            space->regions[i] = (MINT_ADDRESS_REGION){0, 0, 0, 0, 0, 0};
+            if (space->regions_live) --space->regions_live;
+        }
+    return 0;
 }

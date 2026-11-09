@@ -1,4 +1,4 @@
-# MintOS26 Kernel Roadmap — 26.5.009.0 / MintDE 1.0.8
+# MintOS26 Kernel Roadmap — 26.5.010.0 / MintDE 2.0.0
 
 ## Current status
 
@@ -9,6 +9,8 @@
 - **Drivers:** PCI resource inventory plus an experimental opt-in Intel 82540EM/E1000 polling driver with bounded TX/RX rings and an internal loopback diagnostic. The actual VirtualBox loopback still needs live validation; no TCP/IP stack is present. VMware SVGA acceleration, USB mass storage, native NVMe, native audio, ACPI power transitions and hotplug remain incomplete.
 
 - **26.5.009.0 additions:** GOP modes up to 4096x2400 with padded strides (per-mode backbuffers from high memory), write-combined framebuffer via PAT, PS/2 9-bit delta fix and acceleration, ACPI S5 shutdown and FADT/0xCF9/8042 restart, Intel RAID-mode AHCI acceptance. Validated live on QEMU q35/OVMF; physical hardware and VirtualBox still pending.
+
+- **26.5.010.0 additions:** shared display canvas (map/present/overlay pointer/wallpaper syscalls), borrowed SHARED address-space mappings, 8 MiB per-process page limit, CMOS RTC wall clock, GUI/Command key modifier, FAT16 prefix reads. MintDE 2 (macOS-style shell) runs entirely in ring 3 on top of these.
 
 ## Next milestones
 

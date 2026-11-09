@@ -51,6 +51,11 @@
 /* 26.5.009.0: ACPI power information and confirmed shutdown/restart. */
 #define MINT_SYS_POWER_INFO                    0x4D25u
 #define MINT_SYS_POWER_CONTROL                 0x4D26u
+/* 26.5.010.0: shared-canvas display model for MintDE 2 (see desktop_abi.h). */
+#define MINT_SYS_DISPLAY_MAP_CANVAS            0x4D27u
+#define MINT_SYS_DISPLAY_PRESENT               0x4D28u
+#define MINT_SYS_DISPLAY_CURSOR                0x4D29u
+#define MINT_SYS_DISPLAY_WALLPAPER_RENDER      0x4D2Au
 
 #define MINT_CLOCK_REALTIME  0
 #define MINT_CLOCK_MONOTONIC 1

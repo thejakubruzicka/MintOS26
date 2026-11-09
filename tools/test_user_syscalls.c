@@ -70,6 +70,16 @@ static int test_block_flush(void *ctx) { (void)ctx;return 1; }
 int mint_fat16_format_blank(uint32_t block_index) { if(block_index!=0u)return -MINT_EINVAL;test_format_calls++;return 0; }
 int64_t mint_fat16_list_dir(const char *path,MINT_FAT16_DIRENT *entries,uint32_t capacity) { (void)path;(void)entries;(void)capacity;return -MINT_ENODEV; }
 int64_t mint_fat16_read_file(const char *path,void *buffer,size_t capacity) { (void)path;(void)buffer;(void)capacity;return -MINT_ENODEV; }
+/* 26.5.009.0 / 26.5.010.0 kernel services referenced by syscall.c. */
+#include "../kernel/include/power.h"
+#include "../kernel/include/rtc.h"
+static int64_t mock_rtc_epoch;
+int64_t mint_rtc_boot_epoch(void) { return mock_rtc_epoch; }
+int mint_power_get_info(MINT_POWER_INFO *out) { if (out) { MINT_POWER_INFO z = {0}; *out = z; out->version = MINT_POWER_INFO_VERSION; } return 1; }
+int mint_power_shutdown(void) { return -MINT_ENOSYS; }
+int mint_power_restart(void) { return -MINT_ENOSYS; }
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
+
 int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out) { if(!out)return 0; memset(out,0,sizeof(*out)); return 1; }
 int mint_fat16_volume_select(uint32_t ordinal) { (void)ordinal; return 0; }
 void mint_storage_diag_recheck(void) { test_storage_rechecks++; }

@@ -23,6 +23,12 @@ typedef enum mint_desktop_event_type {
     MINT_DESKTOP_EVENT_QUIT = 8
 } MINT_DESKTOP_EVENT_TYPE;
 
+/* Key-event modifier bits. GUI is the Windows/Super key, used as Command. */
+#define MINT_KEYMOD_SHIFT 0x01u
+#define MINT_KEYMOD_CTRL  0x02u
+#define MINT_KEYMOD_ALT   0x04u
+#define MINT_KEYMOD_CAPS  0x08u
+#define MINT_KEYMOD_GUI   0x10u
 typedef struct mint_desktop_key_event {
     uint32_t codepoint;
     uint16_t scancode;
@@ -138,6 +144,41 @@ typedef struct mint_fs_dirent {
 
 int mint_display_surface_init(MINT_DISPLAY_SURFACE *surface,
                               const MINT_FRAMEBUFFER_INFO *framebuffer);
+/* 26.5.010.0 shared-canvas display model. MintDE renders into a kernel-owned
+ * retained canvas mapped into its address space, then asks the kernel to
+ * present damaged rectangles. Canvas pixels are always 0x00RRGGBB; the kernel
+ * converts to the GOP pixel format while presenting. The pointer is a
+ * kernel overlay composited at present/move time, so moving it never
+ * requires MintDE to redraw. */
+#define MINT_DISPLAY_CANVAS_VERSION 1u
+#define MINT_DISPLAY_CANVAS_USER_VA 0x0000004000000000ull /* 256 GiB */
+enum { MINT_CURSOR_SHAPE_HIDDEN = 0u, MINT_CURSOR_SHAPE_ARROW = 1u, MINT_CURSOR_SHAPE_IBEAM = 2u,
+       MINT_CURSOR_SHAPE_RESIZE_EW = 3u, MINT_CURSOR_SHAPE_RESIZE_NS = 4u,
+       MINT_CURSOR_SHAPE_RESIZE_NWSE = 5u, MINT_CURSOR_SHAPE_RESIZE_NESW = 6u,
+       MINT_CURSOR_SHAPE_COUNT = 7u };
+enum { MINT_WALLPAPER_LIGHT = 0u, MINT_WALLPAPER_DARK = 1u };
+typedef struct mint_display_canvas {
+    uint32_t version;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride_pixels;      /* row pitch of every mapped buffer */
+    uint64_t canvas;             /* presented retained frame (user VA) */
+    uint64_t wallpaper;          /* desktop background cache (user VA) */
+    uint64_t scratch;            /* free scratch buffer, same size (user VA) */
+    uint64_t buffer_bytes;       /* bytes in each buffer */
+    uint32_t scanout_format;     /* informational: GOP pixel format */
+    uint32_t flags;
+} MINT_DISPLAY_CANVAS;
+
+/* Kernel-side canvas services (native kernel only). */
+int mint_display_attach_scratch(uint32_t *scratch, uint64_t capacity_pixels);
+int mint_display_canvas_buffers(uint64_t *canvas_pa, uint64_t *wallpaper_pa,
+                                uint64_t *scratch_pa, uint64_t *bytes);
+void mint_display_enter_canvas_mode(void);
+int mint_display_present_canvas(int32_t x, int32_t y, int32_t width, int32_t height);
+int mint_display_set_overlay_cursor(int32_t x, int32_t y, uint32_t shape);
+int mint_display_render_wallpaper(uint32_t variant);
+
 /* Largest scanout (stride x height) the native kernel will drive: 4096x2400
  * covers 3840x2160 and 2560x1600 GOP modes including stride padding. */
 #define MINT_DISPLAY_MAX_PIXELS (4096ull * 2400ull)

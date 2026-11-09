@@ -6,7 +6,7 @@
 /* Classic FAT16 volume interface: read operations are bounded and remain
  * read-only; formatting is a separate, explicit blank-disk operation. */
 #define MINT_FAT16_DIRENT_NAME_MAX 64u
-#define MINT_FAT16_LIST_MAX 16u
+#define MINT_FAT16_LIST_MAX 64u /* 26.5.010.0: was 16; folders like CHANGELOGS exceed it */
 #define MINT_FAT16_MAX_VOLUMES 8u
 #define MINT_FAT16_DIRENT_DIRECTORY 0x01u
 typedef struct mint_fat16_dirent {
@@ -30,6 +30,8 @@ int mint_fat16_volume_select(uint32_t ordinal);
 int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out);
 int mint_fat16_is_device_mounted(uint32_t block_device_index);
 int64_t mint_fat16_read_file(const char *path, void *buffer, size_t capacity);
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity);
+#define MINT_FAT16_READ_PREFIX 1u /* MINT_SYS_FAT16_READ arg3 flag */
 int64_t mint_fat16_list_dir(const char *path, MINT_FAT16_DIRENT *entries, uint32_t capacity);
 /* Initialize only an unpartitioned/zero-LBA0 developer disk between 32 MiB
  * and 2 GiB. The block registry remains read-only; this private formatter is

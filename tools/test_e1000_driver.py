@@ -6,7 +6,7 @@ drv=(root/'kernel/net/e1000.c').read_text()
 phys=(root/'kernel/mm/physmem.c').read_text()
 header=(root/'kernel/include/e1000.h').read_text()
 syscall=(root/'kernel/abi/syscall.c').read_text()
-terminal=(root/'kernel/user/desktop.c').read_text()
+terminal=(root/'kernel/user/desktop.c').read_text()+''.join(f.read_text() for f in sorted((root/'kernel/user/mintde').glob('*.c')) if f.name!='font_data.c')
 checks={
  'boot does read-only detection and defers DMA startup to an explicit command': 'mint_e1000_probe()' in (root/'kernel/kernel.c').read_text() and 'Terminal `net start`' in drv and 'MINT_SYS_E1000_START' in syscall and 'terminal_equals(cmd,"net start")' in terminal,
  'driver binds only the known Intel 82540EM VID:DID': 'E1000_VENDOR 0x8086u' in drv and 'E1000_DEVICE_82540EM 0x100Eu' in drv,

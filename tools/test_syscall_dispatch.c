@@ -17,6 +17,21 @@
 #include "../kernel/include/driver_catalog.h"
 #include "../kernel/include/e1000.h"
 
+
+/* 26.5.009.0 / 26.5.010.0 kernel services referenced by syscall.c. */
+#include "../kernel/include/power.h"
+#include "../kernel/include/rtc.h"
+static int64_t mock_rtc_epoch;
+int64_t mint_rtc_boot_epoch(void) { return mock_rtc_epoch; }
+int mint_power_get_info(MINT_POWER_INFO *out) { if (out) { MINT_POWER_INFO z = {0}; *out = z; out->version = MINT_POWER_INFO_VERSION; } return 1; }
+int mint_power_shutdown(void) { return -MINT_ENOSYS; }
+int mint_power_restart(void) { return -MINT_ENOSYS; }
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
+int mint_address_space_map_shared(MINT_ADDRESS_SPACE *s, uint64_t va, uint64_t pa, uint64_t pages, uint32_t f) {
+    (void)s; (void)va; (void)pa; (void)pages; (void)f; return 0;
+}
+int mint_address_space_region_query(const MINT_ADDRESS_SPACE *s, uint64_t a, MINT_ADDRESS_REGION *r) { (void)s; (void)a; (void)r; return 0; }
+
 static char output[2048];
 static size_t output_len;
 static uint64_t fake_ticks = 12345;
@@ -138,9 +153,16 @@ int main(void) {
            "clock_gettime accepts CLOCK_MONOTONIC");
     EXPECT(ts.tv_sec == 123 && ts.tv_nsec == 450000000,
            "clock_gettime converts 100 Hz ticks to nanoseconds");
+    mock_rtc_epoch = 0;
     EXPECT(mint_syscall_dispatch(MINT_SYS_CLOCK_GETTIME, MINT_CLOCK_REALTIME,
-                                 (uintptr_t)&ts, 0, 0, 0, 0) == -MINT_EINVAL,
-           "clock_gettime rejects unsupported realtime clock");
+                                 (uintptr_t)&ts, 0, 0, 0, 0) == -MINT_ENODEV,
+           "clock_gettime(REALTIME) reports ENODEV when the CMOS RTC was invalid");
+    mock_rtc_epoch = 1793404800; /* 2026-10-31 00:00:00 */
+    EXPECT(mint_syscall_dispatch(MINT_SYS_CLOCK_GETTIME, MINT_CLOCK_REALTIME,
+                                 (uintptr_t)&ts, 0, 0, 0, 0) == 0 && ts.tv_sec == 1793404800 + 123,
+           "clock_gettime(REALTIME) is the RTC boot epoch plus PIT uptime");
+    EXPECT(mint_syscall_dispatch(MINT_SYS_CLOCK_GETTIME, 7, (uintptr_t)&ts, 0, 0, 0, 0) == -MINT_EINVAL,
+           "clock_gettime rejects unknown clocks");
     EXPECT(mint_syscall_dispatch(9999, 0, 0, 0, 0, 0, 0) == -MINT_ENOSYS,
            "unknown syscalls return ENOSYS");
     return 0;

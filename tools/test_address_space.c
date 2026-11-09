@@ -227,6 +227,42 @@ int main(void) {
     fail_after = 1; /* root page succeeds, private PDPT page allocation fails */
     CHECK(!mint_address_space_create(&failed), "simulate private-root creation failure");
     CHECK(active_pages() == 0, "root creation failure releases partial allocations");
+    /* 26.5.010.0: borrowed (shared) kernel buffers, e.g. the display canvas. */
+    {
+        static MINT_ADDRESS_SPACE sh = {0};
+        CHECK(mint_address_space_create(&sh), "create space for shared-buffer mapping");
+        /* "Kernel-owned" physical pages: claimed from the backend outside the space. */
+        uint64_t buf = mock_claim(0); uint64_t buf2 = mock_claim(0); uint64_t buf3 = mock_claim(0);
+        CHECK(buf && buf2 == buf + 4096u && buf3 == buf + 8192u, "three contiguous kernel-owned pages");
+        unsigned before = active_pages();
+        const uint64_t va = 0x0000004000000000ULL;
+        CHECK(mint_address_space_activate(&sh) &&
+              mint_address_space_map_shared(&sh, va, buf, 3, MINT_PAGE_MAP_WRITE),
+              "map_shared works on the active space (process requests its own mapping)");
+        uint64_t pa = 0; uint32_t fl = 0;
+        CHECK(mint_address_space_lookup(&sh, va + 8192u, &pa, &fl) && pa == buf3 &&
+              (fl & MINT_PAGE_MAP_WRITE) && !(fl & MINT_PAGE_MAP_EXEC),
+              "shared pages are writable, never executable, and physically contiguous");
+        MINT_ADDRESS_REGION reg;
+        CHECK(mint_address_space_region_query(&sh, va + 4096u, &reg) && reg.kind == MINT_ASPACE_REGION_SHARED,
+              "shared mapping is recorded as a SHARED region");
+        CHECK(!mint_address_space_map_shared(&sh, va + 4096u, buf, 1, MINT_PAGE_MAP_WRITE),
+              "overlapping shared mapping is refused");
+        CHECK(!mint_address_space_map_shared(&sh, va + 0x100000u, buf, 1, MINT_PAGE_MAP_WRITE | MINT_PAGE_MAP_EXEC),
+              "writable+executable shared mapping is refused");
+        uint64_t own = mint_address_space_alloc_frame(&sh);
+        CHECK(own && !mint_address_space_map_shared(&sh, va + 0x200000u, own, 1, MINT_PAGE_MAP_WRITE),
+              "a frame owned by the space cannot be re-mapped as borrowed memory");
+        CHECK(mint_address_space_activate_kernel() && !mint_address_space_unmap(&sh, va, 0, 0) &&
+              mint_address_space_lookup(&sh, va, &pa, &fl) && pa == buf && mock_claimed(0, buf),
+              "unmap refuses a borrowed page: it stays mapped and allocated");
+        CHECK(mint_address_space_destroy(&sh), "destroy space with shared mapping");
+        CHECK(mock_claimed(0, buf) && mock_claimed(0, buf2) && mock_claimed(0, buf3),
+              "teardown leaves the kernel-owned shared pages allocated");
+        CHECK(before >= 3u && active_pages() == 3u, "teardown released every page-table and owned page, only the 3 borrowed pages remain");
+        (void)mock_release(0, buf); (void)mock_release(0, buf2); (void)mock_release(0, buf3);
+        CHECK(active_pages() == 0, "no leaked page-table pages after shared-mapping teardown");
+    }
     puts("PASS: address-space isolation, mapping permissions, rollback, switching and teardown tests complete");
     return 0;
 }

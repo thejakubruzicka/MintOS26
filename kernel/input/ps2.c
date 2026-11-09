@@ -13,6 +13,7 @@
 #define KMOD_CTRL  0x02u
 #define KMOD_ALT   0x04u
 #define KMOD_CAPS  0x08u
+#define KMOD_GUI   0x10u /* Windows/Super key: MintDE treats it as Command */
 
 static int keyboard_online;
 static int mouse_online;
@@ -137,6 +138,11 @@ void mint_input_process_keyboard_byte(uint8_t byte) {
         return;
     }
     if (!ext && make == 0x3Au && pressed) { modifiers ^= KMOD_CAPS; return; }
+    if (ext && (make == 0x5Bu || make == 0x5Cu)) {
+        /* Left/right GUI keys. Unlike Shift/Ctrl/Alt this also posts an event so
+           MintDE can see Command releases (e.g. ending a Cmd+Tab switch). */
+        if (pressed) modifiers |= KMOD_GUI; else modifiers &= (uint8_t)~KMOD_GUI;
+    }
 
     MINT_DESKTOP_EVENT event = {0};
     event.type = MINT_DESKTOP_EVENT_KEY;

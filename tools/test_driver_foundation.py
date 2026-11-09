@@ -2,7 +2,7 @@
 """Regression contracts for driver resource discovery and contained user faults."""
 from pathlib import Path
 root = Path(__file__).resolve().parents[1]
-desktop = (root / 'kernel/user/desktop.c').read_text()
+desktop =(root/'kernel/user/desktop.c').read_text()+''.join(f.read_text() for f in sorted((root/'kernel/user/mintde').glob('*.c')) if f.name!='font_data.c')
 arch = (root / 'kernel/arch/x86_64/arch.c').read_text()
 asm = (root / 'kernel/arch/x86_64/arch.S').read_text()
 pci = (root / 'kernel/bus/pci.c').read_text()

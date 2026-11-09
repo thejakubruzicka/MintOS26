@@ -6,7 +6,9 @@
 
 #define MINT_ASPACE_SHARED_PDPT_ENTRIES 64u
 #define MINT_ASPACE_PML4_ENTRIES 512u
-#define MINT_ASPACE_MAX_USER_FRAMES 256u
+/* 26.5.010.0: 2048 owned pages (8 MiB) per process so MintDE can carry its
+ * font atlases and icons; large shared buffers use map_shared instead. */
+#define MINT_ASPACE_MAX_USER_FRAMES 2048u
 #define MINT_ASPACE_MAX_REGIONS 32u
 #define MINT_ASPACE_USER_BASE MINT_IDENTITY_MAP_LIMIT
 #define MINT_ASPACE_USER_END (512ULL * 1024ULL * 1024ULL * 1024ULL)
@@ -115,6 +117,10 @@ int mint_address_space_region_reserve(MINT_ADDRESS_SPACE *space, uint64_t base,
 int mint_address_space_region_release(MINT_ADDRESS_SPACE *space, uint64_t base);
 int mint_address_space_region_query(const MINT_ADDRESS_SPACE *space, uint64_t address,
                                     MINT_ADDRESS_REGION *region_out);
+/* Borrow a kernel-owned, physically contiguous range as a SHARED region.
+ * The pages are never released by unmap()/destroy(). */
+int mint_address_space_map_shared(MINT_ADDRESS_SPACE *space, uint64_t virtual_address,
+                                  uint64_t physical_address, uint64_t pages, uint32_t flags);
 int mint_address_space_selftest(void);
 
 #endif

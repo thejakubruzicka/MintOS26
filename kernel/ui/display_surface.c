@@ -21,6 +21,10 @@ static uint32_t *display_backbuffer;
 static uint32_t *display_background;
 static uint64_t display_buffer_pixels;
 static int display_background_valid;
+static uint32_t *display_scratch;
+static int display_canvas_mode;
+static int32_t overlay_x, overlay_y;
+static uint32_t overlay_shape;
 static int display_backbuffer_initialized;
 static uint32_t damage_x0, damage_y0, damage_x1, damage_y1;
 static int display_damage_valid;
@@ -79,6 +83,9 @@ int mint_display_surface_init(MINT_DISPLAY_SURFACE *surface,
     /* A new surface invalidates any previously attached buffers. */
     display_backbuffer = 0;
     display_background = 0;
+    display_scratch = 0;
+    display_canvas_mode = 0;
+    overlay_shape = 0;
     display_buffer_pixels = 0;
     display_backbuffer_initialized = 0;
     display_background_valid = 0;
@@ -136,7 +143,9 @@ int mint_display_frame_begin(void) {
     if (!current_surface || !current_surface->initialized || !scanout_pixels || display_frame_active)
         return 0;
     uint64_t count = (uint64_t)current_surface->stride_pixels * current_surface->height;
-    if (!display_backbuffer || !display_backbuffer_initialized ||
+    /* Once MintDE owns the shared canvas, the legacy per-primitive frame API
+       fails closed so the two models never write the same buffer. */
+    if (display_canvas_mode || !display_backbuffer || !display_backbuffer_initialized ||
         count > display_buffer_pixels) return 0;
     /* Restore the scanout beneath the hardware cursor before beginning a frame.
        The retained backbuffer never includes the cursor overlay. */
@@ -652,3 +661,173 @@ void mint_display_fill_rect(MINT_DISPLAY_SURFACE *s, int32_t x, int32_t y,
     if (s == current_surface && display_frame_active)
         mark_damage((uint32_t)x0, (uint32_t)y0, (uint32_t)x1, (uint32_t)y1);
 }
+
+#if !defined(_WIN32)
+#include "cursor_sprites.h"
+extern const uint8_t mint_native_wallpaper_dark_rgb[] __attribute__((weak));
+extern const uint8_t mint_native_wallpaper_dark_rgb_end[] __attribute__((weak));
+
+int mint_display_attach_scratch(uint32_t *scratch, uint64_t capacity_pixels) {
+    uint64_t required = mint_display_backbuffer_pixels_required();
+    if (!required || !scratch || capacity_pixels < required || !display_backbuffer) return 0;
+    display_scratch = scratch;
+    return 1;
+}
+
+int mint_display_canvas_buffers(uint64_t *canvas_pa, uint64_t *wallpaper_pa,
+                                uint64_t *scratch_pa, uint64_t *bytes) {
+    if (!current_surface || !current_surface->initialized || !display_backbuffer ||
+        !display_background || !display_scratch || !canvas_pa || !wallpaper_pa ||
+        !scratch_pa || !bytes) return 0;
+    *canvas_pa = (uint64_t)(uintptr_t)display_backbuffer;   /* identity-mapped */
+    *wallpaper_pa = (uint64_t)(uintptr_t)display_background;
+    *scratch_pa = (uint64_t)(uintptr_t)display_scratch;
+    *bytes = display_buffer_pixels * sizeof(uint32_t);
+    return 1;
+}
+
+void mint_display_enter_canvas_mode(void) {
+    if (!current_surface || !current_surface->initialized) return;
+    display_canvas_mode = 1;
+    display_frame_active = 0;
+    current_surface->pixels = scanout_pixels;
+    cursor_visible = 0;           /* retire the legacy save/restore cursor */
+    cursor_saved_valid = 0;
+}
+
+static inline uint32_t canvas_to_scanout(uint32_t rgb) {
+    return current_surface->pixel_format == 0u ? encode_rgb(rgb, 0u) : (rgb & 0x00FFFFFFu);
+}
+
+/* Copy canvas [x0,x1)x[y0,y1) to scanout, converting channel order if the
+   GOP mode is RGB. Rows are copied as aligned 64-bit pairs where possible. */
+static void canvas_copy_rect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
+    const uint32_t stride = current_surface->stride_pixels;
+    const int swap = current_surface->pixel_format == 0u;
+    for (uint32_t y = y0; y < y1; ++y) {
+        uint64_t row = (uint64_t)y * stride;
+        uint32_t x = x0;
+        if (!swap) {
+            if ((x & 1u) && x < x1) { scanout_pixels[row + x] = display_backbuffer[row + x] & 0x00FFFFFFu; ++x; }
+            if (!(((uintptr_t)(scanout_pixels + row + x) | (uintptr_t)(display_backbuffer + row + x)) & 7u)) {
+                volatile uint64_t *dst = (volatile uint64_t *)(scanout_pixels + row + x);
+                const uint64_t *src = (const uint64_t *)(display_backbuffer + row + x);
+                uint32_t pairs = (x1 - x) / 2u;
+                for (uint32_t i = 0; i < pairs; ++i) dst[i] = src[i] & 0x00FFFFFF00FFFFFFull;
+                x += pairs * 2u;
+            }
+        }
+        for (; x < x1; ++x) scanout_pixels[row + x] = canvas_to_scanout(display_backbuffer[row + x]);
+    }
+}
+
+static int clip_rect(int32_t x, int32_t y, int32_t w, int32_t h,
+                     uint32_t *x0, uint32_t *y0, uint32_t *x1, uint32_t *y1) {
+    if (w <= 0 || h <= 0) return 0;
+    int64_t a = x, b = y, c = (int64_t)x + w, d = (int64_t)y + h;
+    if (a < 0) a = 0;
+    if (b < 0) b = 0;
+    if (c > current_surface->width) c = current_surface->width;
+    if (d > current_surface->height) d = current_surface->height;
+    if (c <= a || d <= b) return 0;
+    *x0 = (uint32_t)a; *y0 = (uint32_t)b; *x1 = (uint32_t)c; *y1 = (uint32_t)d;
+    return 1;
+}
+
+/* Composite the overlay pointer over canvas pixels directly into scanout. */
+static void overlay_paint(void) {
+    if (!overlay_shape || overlay_shape >= MINT_CURSOR_SHAPE_COUNT) return;
+    const MINT_CURSOR_SPRITE *sp = &mint_cursor_sprites[overlay_shape];
+    int32_t ox = overlay_x - sp->hot_x, oy = overlay_y - sp->hot_y;
+    const uint32_t stride = current_surface->stride_pixels;
+    for (uint32_t sy = 0; sy < MINT_CURSOR_SPRITE_SIZE; ++sy) {
+        int32_t py = oy + (int32_t)sy;
+        if (py < 0 || (uint32_t)py >= current_surface->height) continue;
+        for (uint32_t sx = 0; sx < MINT_CURSOR_SPRITE_SIZE; ++sx) {
+            int32_t px = ox + (int32_t)sx;
+            if (px < 0 || (uint32_t)px >= current_surface->width) continue;
+            const uint8_t *c = sp->rgba + ((uint64_t)sy * MINT_CURSOR_SPRITE_SIZE + sx) * 4u;
+            uint32_t a = c[3];
+            if (!a) continue;
+            uint64_t i = (uint64_t)(uint32_t)py * stride + (uint32_t)px;
+            uint32_t d = display_backbuffer[i], inv = 255u - a;
+            uint32_t r = (c[0] * a + ((d >> 16) & 255u) * inv + 127u) / 255u;
+            uint32_t g = (c[1] * a + ((d >> 8) & 255u) * inv + 127u) / 255u;
+            uint32_t b = (c[2] * a + (d & 255u) * inv + 127u) / 255u;
+            scanout_pixels[i] = canvas_to_scanout((r << 16) | (g << 8) | b);
+        }
+    }
+}
+
+static void overlay_bounds(uint32_t *x0, uint32_t *y0, uint32_t *x1, uint32_t *y1, int *valid) {
+    *valid = 0;
+    if (!overlay_shape || overlay_shape >= MINT_CURSOR_SHAPE_COUNT) return;
+    const MINT_CURSOR_SPRITE *sp = &mint_cursor_sprites[overlay_shape];
+    *valid = clip_rect(overlay_x - sp->hot_x, overlay_y - sp->hot_y,
+                       (int32_t)MINT_CURSOR_SPRITE_SIZE, (int32_t)MINT_CURSOR_SPRITE_SIZE, x0, y0, x1, y1);
+}
+
+int mint_display_present_canvas(int32_t x, int32_t y, int32_t width, int32_t height) {
+    if (!display_canvas_mode || !current_surface || !display_backbuffer) return 0;
+    uint32_t x0, y0, x1, y1;
+    if (!clip_rect(x, y, width, height, &x0, &y0, &x1, &y1)) return 1;
+    canvas_copy_rect(x0, y0, x1, y1);
+    uint32_t cx0, cy0, cx1, cy1; int cv;
+    overlay_bounds(&cx0, &cy0, &cx1, &cy1, &cv);
+    if (cv && cx0 < x1 && x0 < cx1 && cy0 < y1 && y0 < cy1) overlay_paint();
+    display_flush_scanout();
+    return 1;
+}
+
+int mint_display_set_overlay_cursor(int32_t x, int32_t y, uint32_t shape) {
+    if (!display_canvas_mode || !current_surface || !display_backbuffer ||
+        shape >= MINT_CURSOR_SHAPE_COUNT) return 0;
+    uint32_t x0, y0, x1, y1; int valid;
+    overlay_bounds(&x0, &y0, &x1, &y1, &valid);
+    if (valid) canvas_copy_rect(x0, y0, x1, y1);   /* erase from the canvas */
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if ((uint32_t)x >= current_surface->width) x = (int32_t)current_surface->width - 1;
+    if ((uint32_t)y >= current_surface->height) y = (int32_t)current_surface->height - 1;
+    overlay_x = x; overlay_y = y; overlay_shape = shape;
+    overlay_paint();
+    display_flush_scanout();
+    return 1;
+}
+
+/* Render an embedded 1920x1080 RGB wallpaper into the wallpaper cache buffer,
+   bilinearly scaled to the screen. Variant 0 = light, 1 = dark. */
+int mint_display_render_wallpaper(uint32_t variant) {
+    if (!current_surface || !display_background || variant > MINT_WALLPAPER_DARK) return 0;
+    const uint8_t *src = variant ? mint_native_wallpaper_dark_rgb : mint_native_wallpaper_rgb;
+    const uint8_t *end = variant ? mint_native_wallpaper_dark_rgb_end : mint_native_wallpaper_rgb_end;
+    const uint32_t sw = 1920u, sh = 1080u;
+    if (!src || !end || (uint64_t)(end - src) < (uint64_t)sw * sh * 3u) return 0;
+    const uint32_t w = current_surface->width, h = current_surface->height;
+    const uint32_t stride = current_surface->stride_pixels;
+    for (uint32_t y = 0; y < h; ++y) {
+        /* 16.16 fixed-point source coordinates (pixel-centre aligned). */
+        int64_t fy = ((int64_t)(2u * y + 1u) * sh * 65536) / (2 * (int64_t)h) - 32768;
+        if (fy < 0) fy = 0;
+        uint32_t y0 = (uint32_t)(fy >> 16), wy = (uint32_t)((fy >> 8) & 255);
+        uint32_t y1 = y0 + 1u < sh ? y0 + 1u : y0;
+        const uint8_t *r0 = src + (uint64_t)y0 * sw * 3u, *r1 = src + (uint64_t)y1 * sw * 3u;
+        uint32_t *dst = display_background + (uint64_t)y * stride;
+        for (uint32_t x = 0; x < w; ++x) {
+            int64_t fx = ((int64_t)(2u * x + 1u) * sw * 65536) / (2 * (int64_t)w) - 32768;
+            if (fx < 0) fx = 0;
+            uint32_t x0 = (uint32_t)(fx >> 16), wx = (uint32_t)((fx >> 8) & 255);
+            uint32_t x1 = x0 + 1u < sw ? x0 + 1u : x0;
+            uint32_t out = 0;
+            for (uint32_t ch = 0; ch < 3u; ++ch) {
+                uint32_t a = r0[x0 * 3u + ch], b = r0[x1 * 3u + ch];
+                uint32_t c = r1[x0 * 3u + ch], d = r1[x1 * 3u + ch];
+                uint32_t top = a * (256u - wx) + b * wx, bot = c * (256u - wx) + d * wx;
+                out = (out << 8) | ((top * (256u - wy) + bot * wy) >> 16);
+            }
+            dst[x] = out;
+        }
+    }
+    return 1;
+}
+#endif

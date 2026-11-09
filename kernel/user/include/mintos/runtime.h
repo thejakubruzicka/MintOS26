@@ -38,6 +38,8 @@ int64_t mint_storage_diag_get(MINT_STORAGE_SNAPSHOT *out);
 int64_t mint_storage_format_blank(const MINT_STORAGE_FORMAT_REQUEST *request);
 int64_t mint_fat16_list_dir(const char *path, MINT_FAT16_DIRENT *entries, uint32_t capacity);
 int64_t mint_fat16_read_file(const char *path, void *buffer, size_t capacity);
+/* First `capacity` bytes of a file (previews); never fails just for size. */
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity);
 int64_t mint_fat16_get_volumes(MINT_FAT16_VOLUME_LIST *out);
 int64_t mint_fat16_select_volume(uint32_t ordinal);
 int64_t mint_driver_catalog_get(MINT_DRIVER_CATALOG *out);
@@ -51,6 +53,11 @@ int64_t mint_e1000_run_loopback_test(void);
  * on failure with a negative MintOS errno). */
 int64_t mint_power_get_status(MINT_POWER_INFO *out);
 int64_t mint_power_request(uint32_t action);
+/* MintDE 2 shared-canvas display (see desktop_abi.h). */
+int64_t mint_display_map_canvas(MINT_DISPLAY_CANVAS *out);
+int64_t mint_display_present(int32_t x, int32_t y, int32_t width, int32_t height);
+int64_t mint_display_cursor(int32_t x, int32_t y, uint32_t shape);
+int64_t mint_ui_render_wallpaper(uint32_t variant);
 int64_t mint_log_read(MINT_LOG_RECORD *out, uint32_t capacity, uint32_t minimum_severity, uint32_t component_filter);
 int64_t mint_ui_frame_begin(void);
 int64_t mint_ui_frame_end(void);

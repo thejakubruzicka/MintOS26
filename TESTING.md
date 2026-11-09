@@ -1,4 +1,4 @@
-# MintOS26 26.5.009.0 / MintDE 1.0.8 — Test Guide
+# MintOS26 26.5.010.0 / MintDE 2.0.0 — Test Guide
 
 ## Host build and test
 
@@ -19,6 +19,17 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 ## QEMU/OVMF quick run (Linux or macOS)
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
+
+### MintDE 2 desktop test (26.5.010.0)
+
+1. **Desktop:** after boot you should see the wallpaper, menu bar (leaf menu, bold "Files", menus, Control Center, Spotlight, date and time) and the Dock.
+2. **Windows:** open Files from the Dock. Check the rounded window, shadow and traffic lights; × − + appear on hover. Drag the toolbar, double-click it to zoom, resize from the bottom-right corner, minimize with the yellow light, and restore from the Dock.
+3. **Several apps:** open Terminal, Notes and Settings together. Clicking a window brings it to the front, and inactive windows have grey traffic lights. ⌘Tab (Windows key + Tab) switches apps; ⌘W closes; ⌘M minimizes.
+4. **Menus:** hover over leaf menu items (accent highlight), choose System Settings…, and check that Edit items are greyed out.
+5. **Overlays:** ⌘Space opens Spotlight (type "ter", then Enter opens Terminal). The Launchpad Dock icon shows every app. The Control Center icon toggles Dark Mode and accent colour.
+6. **Settings › Appearance:** Light, Dark and Auto (Auto turns dark from 19:00 to 07:00); the accent colour applies everywhere.
+7. **Files:** select the FAT16 volume, double-click into folders, select a text file (preview pane) and use the search filter.
+8. **Disk Utility:** Erase… is only enabled for a blank, unmounted disk.
 
 ### Power management test (26.5.009.0)
 

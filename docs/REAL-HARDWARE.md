@@ -1,7 +1,7 @@
 # Running MintOS26 on real hardware — Dell OptiPlex 7040 guide
 
 Target machine: Dell OptiPlex 7040 (Intel Skylake, Q170 PCH), Core i5/i7-6xxx, NVIDIA GeForce GTX 1050 Ti, UEFI firmware.
-Status: **26.5.009.0 is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
+Status: **26.5.010.0 (MintDE 2.0.0) is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
 
 ## What to expect
 
@@ -35,7 +35,7 @@ The GTX 1050 Ti is driven only through the UEFI GOP framebuffer the card's firmw
 make clean all
 # macOS: find the stick with `diskutil list` (e.g. /dev/disk4), then:
 diskutil unmountDisk /dev/diskN
-sudo dd if=build/mintos26-26.5.009.0-uefi.img of=/dev/rdiskN bs=4m
+sudo dd if=build/mintos26-26.5.010.0-uefi.img of=/dev/rdiskN bs=4m
 diskutil eject /dev/diskN
 ```
 
@@ -43,10 +43,12 @@ balenaEtcher can write the same `.img` file. Boot the stick with **F12** (one-ti
 
 ## Native MintDE on the OptiPlex today
 
+- MintDE 2 uses three screen-sized buffers (about 24 MB at 1080p, 44 MB at 1440p) and a write-combined framebuffer; the pointer is a kernel overlay. The Windows key acts as Command (⌘Space Spotlight, ⌘Tab, ⌘W, ⌘Q).
+- The menu bar clock reads the PC's CMOS clock as-is. Windows usually keeps local time there, Linux usually UTC; MintOS applies no timezone.
 - Native input needs a PS/2 keyboard and mouse, or firmware USB legacy emulation that survives `ExitBootServices`. On UEFI-only Skylake firmware that emulation is usually inactive. If neither works, the desktop draws but does not respond.
 - Run `power` in Terminal (when input works) to see what the firmware's ACPI tables report, including whether an 8042 controller is advertised.
 - The internal SATA disks are mounted read-only only if they contain FAT16. Nothing is ever written to them. The Disk Utility formatter must never be used on this machine.
-- Return to UEFI Desktop by restarting (MintDE menu → Restart…) or with the reset button.
+- Return to UEFI Desktop by restarting (leaf menu → Restart…) or with the reset button.
 
 ## Evidence to collect for each hardware run
 

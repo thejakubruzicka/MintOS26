@@ -79,9 +79,15 @@ def fat16_volume(total_sectors:int, files:dict[str,bytes], label='MINTOS26') -> 
         if nextcluster+count > cluster_count+2: raise ValueError('volume full')
         node.chain=list(range(nextcluster,nextcluster+count));node.cluster=node.chain[0];nextcluster+=count
         for i,c in enumerate(node.chain): fat[c]=node.chain[i+1] if i+1<len(node.chain) else EOC
+    def dir_bytes(node):
+        # '.' and '..' plus every child's 8.3 entry and VFAT long-name records;
+        # directories may span a cluster chain like any FAT16 file.
+        n=len(directory_entries('.',0x10,0))+len(directory_entries('..',0x10,0))
+        for child in node.children.values(): n+=len(directory_entries(child.name,0x10 if child.isdir else 0x20,0))
+        return max(spc*bps, n*32)
     def dirs(node):
         for child in node.children.values():
-            if child.isdir: alloc(child,spc*bps); dirs(child)
+            if child.isdir: alloc(child,dir_bytes(child)); dirs(child)
             else: alloc(child,len(child.data))
     dirs(root)
     image=bytearray(total_sectors*bps)
@@ -103,14 +109,15 @@ def fat16_volume(total_sectors:int, files:dict[str,bytes], label='MINTOS26') -> 
             entries.extend(directory_entries('.',0x10,node.cluster));entries.extend(directory_entries('..',0x10,parent_cluster))
         for child in sorted(node.children.values(),key=lambda x:(not x.isdir,x.name)):
             entries.extend(directory_entries(child.name,0x10 if child.isdir else 0x20,child.cluster,0 if child.isdir else len(child.data)))
-        data=bytearray(max(1,spc*bps if not isroot else root_secs*bps))
+        data=bytearray(root_secs*bps if isroot else len(node.chain)*spc*bps)
         off=0
         for e in entries:
             if off+32>len(data): raise ValueError('directory exceeds allotted entries')
             data[off:off+32]=e;off+=32
         if isroot:
             start=(reserved+nfats*fatsz)*bps; image[start:start+len(data)]=data
-        else: write_cluster(node.cluster,data)
+        else:
+            for idx,c in enumerate(node.chain): write_cluster(c,data[idx*spc*bps:(idx+1)*spc*bps])
         for child in node.children.values():
             if child.isdir: build_dir(child,node.cluster,False)
             else:

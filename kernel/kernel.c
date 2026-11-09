@@ -19,6 +19,7 @@
 #include "include/storage_diag.h"
 #include "include/log.h"
 #include "include/power.h"
+#include "include/rtc.h"
 #include "include/desktop_services.h"
 #include "include/ramfs.h"
 
@@ -537,6 +538,13 @@ static int attach_display_backbuffers(const MINT_FRAMEBUFFER_INFO *f) {
         mint_serial_write("[display] could not reserve backbuffers; drawing directly to scanout\n");
         return 0;
     }
+    /* Third same-size buffer: MintDE's compositor scratch (blur, offscreen). */
+    uint64_t scratch = mint_physmem_claim_contiguous_high(pages);
+    if (!scratch || !mint_display_attach_scratch((uint32_t *)(uintptr_t)scratch,
+                                                pages * MINT_PAGE_SIZE / sizeof(uint32_t))) {
+        if (scratch) (void)mint_physmem_release_contiguous(scratch, pages);
+        mint_serial_write("[display] compositor scratch buffer unavailable; MintDE canvas disabled\n");
+    }
     mint_serial_write("[display] retained backbuffer + backdrop attached: 2 x ");
     mint_serial_dec64(pages * MINT_PAGE_SIZE / 1024u);
     mint_serial_write(" KiB at "); mint_serial_hex64(back);
@@ -564,7 +572,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     __asm__ volatile("cli; cld" ::: "memory");
     mint_serial_init();
     mint_log_init();
-    mint_serial_write("\nMintOS26 26.5.009.0 native kernel entry\n");
+    mint_serial_write("\nMintOS26 26.5.010.0 native kernel entry\n");
     if (!boot || boot->magic != MINT_BOOT_INFO_MAGIC ||
         boot->abi_version != MINT_BOOT_INFO_ABI ||
         boot->struct_size < sizeof(MINT_BOOT_INFO)) {
@@ -657,6 +665,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     draw_early_kernel(boot, memory_ok, reserved_page, paging_ok,
                       mint_paging_nx_is_active(), heap_ok, maptest_ok,
                       vmalloc_ok, vmalloc_test_ok, aspace_test_ok, desktop_core_ok);
+    (void)mint_rtc_init();
     mint_timer_init();
     (void)mint_input_init();
     mint_serial_write("[kernel] enabling maskable interrupts after IDT/PIC/PIT/input setup\n");

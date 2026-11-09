@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "kernel/user/desktop.c"
+SOURCE = ROOT / "kernel/user/mintde/apps.c"  # MintDE 2: Terminal lives in the apps module
 FLAGS = [
     "-target", "x86_64-unknown-none-elf", "-ffreestanding", "-fno-stack-protector",
     "-fno-pic", "-fno-pie", "-fno-builtin", "-mno-red-zone", "-mno-sse", "-mno-mmx",

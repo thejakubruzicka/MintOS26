@@ -349,12 +349,21 @@ uint32_t mint_fat16_block_device_index(void) { return active_volume.mounted ? ac
 uint64_t mint_fat16_partition_lba(void) { return active_volume.mounted ? active_volume.partition_lba : 0; }
 uint32_t mint_fat16_cluster_size_bytes(void) { return active_volume.mounted ? active_volume.sectors_per_cluster*512u : 0; }
 
+static int64_t fat16_read_common(const char *path, void *buffer, size_t capacity, int prefix_ok);
 int64_t mint_fat16_read_file(const char *path, void *buffer, size_t capacity) {
+    return fat16_read_common(path, buffer, capacity, 0);
+}
+/* Read at most `capacity` leading bytes (Quick Look style previews). The
+   whole-file call above still refuses files larger than the buffer. */
+int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) {
+    return fat16_read_common(path, buffer, capacity, 1);
+}
+static int64_t fat16_read_common(const char *path, void *buffer, size_t capacity, int prefix_ok) {
     if (!active_volume.mounted) return -MINT_ENODEV;
     if (!buffer && capacity) return -MINT_EINVAL;
     FAT16_ENTRY_REF ref; int rc=lookup_path(&active_volume,path,&ref); if(rc) return rc;
     uint32_t size=rd32(&ref.entry[28]);
-    if (size>capacity) return -MINT_ENOSPC;
+    if (size>capacity) { if (!prefix_ok) return -MINT_ENOSPC; size=(uint32_t)capacity; }
     if (!size) return 0;
     uint16_t cluster=rd16(&ref.entry[26]);
     size_t copied=0; uint32_t walked=0;

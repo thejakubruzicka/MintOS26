@@ -1,31 +1,39 @@
-# MintOS26 26.5.009.0 / MintDE 1.0.8 worklog
+# MintOS26 26.5.010.0 / MintDE 2.0.0 worklog
 
-Previous worklog: `docs/WORKLOG-26.5.008.0.md`.
+Previous worklog: `docs/WORKLOG-26.5.009.0.md`.
 
-## Baseline reproduction (26.5.008.0, unmodified)
+## Goal
 
-- The source archive matched the handoff SHA-256 (`f48b5d27…2983`). It is imported verbatim as git tag `v26.5.008.0` on `main`; this work is on branch `dev/26.5.009.0`.
-- Host: macOS 27 on Apple Silicon, Apple clang 21, Homebrew lld/qemu 11.1.3/binutils. `make clean all` exited 0 with no warnings.
-- `make check` run per command with the `tools/macos-host` wrapper: 41/43 commands passed (714 PASS lines). `test_context_switch.py` and `test_paging.py` cannot run on a Mach-O host (ELF assembly, undefined linker-script symbols); they are not failures of MintOS code.
-- **First live VM run of 26.5.008.0** (QEMU q35 + OVMF, TCG): UEFI Desktop and native MintDE both boot; ring-3 smoke tests pass. Evidence: `test-evidence/qemu-26.5.008.0-*`.
-- E1000 on QEMU: TX descriptor completes; with the corrected diagnostics the submitted frame length is 0x3C. RX times out under RCTL.LBM_TCVR. QEMU's e1000 loops back only through PHY BMCR loopback, so this neither confirms nor refutes the VirtualBox TCVR hypothesis.
+Make MintDE look and behave as close to macOS as possible, using only original artwork and openly licensed resources.
 
-## Defects found and fixed
+## Design decisions
 
-1. **PS/2 pointer direction inversion.** Deltas were read as `int8_t`, ignoring the 9-bit sign in byte 0. Motion above 127 counts per packet reversed direction. Reproduced in QEMU, where host moves are coalesced; real mice do the same on fast flicks. Fixed, with host tests for ±200-count packets.
-2. **Kernel halt on large or padded GOP modes.** The backbuffers were static 1920x1080 arrays, and `stride*height` above that failed surface init ("invalid/unsupported framebuffer surface; halted"). They are now allocated per mode from high memory, up to 4096x2400.
-3. **Uncached framebuffer.** It is now WC via PAT PA4, with exact-range remapping; large-page splits keep the PAT bit (otherwise a WC leaf would silently become WB).
-4. **No power-off/restart path** on the native kernel. ACPI S5 and reset were added.
-5. **Dell "RAID On" SATA invisible** (class 01:04). Intel RAID-mode HBAs are now accepted after AHCI register validation.
+- **Rendering moved to ring 3.** The old desktop issued one syscall per rectangle or text run and supported a single window. MintDE 2 draws into a kernel-owned canvas mapped into its address space (`MINT_SYS_DISPLAY_MAP_CANVAS`) and presents only damaged rectangles. The pointer is a kernel overlay composited at present and move time, so moving the mouse costs no repaint.
+- **Borrowed mappings, not owned frames.** The per-process page limit was 256 pages (1 MiB). Screen buffers (8–38 MB each) are therefore mapped as a SHARED region that teardown never frees. The owned-page limit was raised to 2048 (8 MiB) for code, fonts and icons only.
+- **Glass without feedback.** Frosted panels (menu bar, Dock, menus, Spotlight, Control Center, alerts) blur the freshly composed scene. The render pass first grows the damage area to include each panel's 2×radius sampling margin, so old glass never blurs into itself. The blur writes back only inside the rounded shape and the clip.
+- **Rounded windows with square app content.** The four corner squares behind a window are saved before it is drawn and blended back afterwards using rounded-rectangle coverage.
+- **Fonts and assets.** Inter 4.1 (SIL OFL) is pre-rendered at 11–44 px into 8-bit coverage tables (`tools/make_fonts.py`), with gamma 0.82 for 1× displays. Wallpapers, icons and pointers are drawn procedurally by committed scripts. The previous photographic wallpaper, which resembled Apple's High Sierra image, was removed.
+- **Logic kept, presentation rewritten.** Storage diagnostics, the Terminal command set, Files navigation, Notes and the Disk Utility safety checks were extracted unchanged from MintDE 1.0.8 into `mintde/apps.c`. Every view was redrawn.
 
-## Verification for 26.5.009.0
+## Problems found during the work
 
-- Host (macOS, `tools/macos-host` wrapper): 44/45 `make check` commands pass with 820 PASS lines; only `test_context_switch.py` (ELF assembly, Linux-host only) cannot run. `test_paging.py` now names linker-script symbols portably, so it runs on macOS, and gained a PAT-split regression check. Summary: `test-evidence/host-check-macos-26.5.009.0-summary.txt`.
-- Host: new `tools/test_acpi.py` (synthetic RSDP/XSDT/RSDT/FADT/DSDT/SSDT: Dell-style SLP_TYP 7, SSDT fallback, multi-byte PkgLength, bad checksums, MethodOp decoy, oversized lengths) and `tools/test_hardware_compat.py` (display surface with 1080p, padded 2048-stride 1080p, 1440p, 4K, 1366x768/1376 stride, 5K refusal; PAT/WC/RAID/PS2 source contracts). Updated `test_ps2_input.c` to spec-correct packets plus fast-motion cases.
-- QEMU 11.1 q35/OVMF, native MintDE (COM1: `test-evidence/qemu-26.5.009.0-native-power-shutdown-com1.log`): `[display] framebuffer remapped write-combining via PAT`; 1920x1080 backbuffers attached at the top of RAM; `[acpi] … PM1a_CNT=0x604 S5=0/0 reset-reg 8042`. Menu → Shut Down… → confirm made QEMU exit (ACPI S5). Menu → Restart… → confirm rebooted to UEFI Desktop. Fast pointer moves kept their direction.
-- **Not validated:** VirtualBox, the physical OptiPlex 7040 / GTX 1050 Ti, the Intel RAID-mode path (QEMU cannot present a class 01:04 Intel HBA), modes above 1080p in a live guest, and WC timing (TCG ignores memory types).
+- **UEFI loader rejected the kernel.** It read at most 8 MiB of `KERNEL.ELF`, and the kernel with two embedded 1080p wallpapers is 14.3 MB, so the read was truncated. The cap was raised to 24 MiB; the 32 MiB load-span limit is unchanged.
+- **Stale object file.** After the page limit changed, `process.obj` was not rebuilt because the Makefile lacked header dependencies. The two struct layouts disagreed and wiped `MINT_PROCESS.pid`, so ring-3 smoke tests failed. Dependencies were added.
+- **Latent Linux-host test break since 26.5.009.0.** The syscall test harnesses did not stub the ACPI power functions; macOS's dynamic lookup hid this. Stubs were added for all new kernel services, and a strict link now leaves only the intentionally weak wallpaper symbols unresolved.
+
+## Verification
+
+- **Host (macOS, `tools/macos-host`):** all `make check` commands pass except `test_context_switch.py` (ELF assembly, Linux host only). New: `tools/test_mintde2.py` (37 checks), address-space shared-mapping cases, and REALTIME clock checks.
+- **QEMU 11.1 q35/OVMF (TCG):** native MintDE 2 boots, `[display] shared canvas mapped`, and the RTC clock shows in the menu bar. Exercised:
+  - The Dock, its tooltips and the Files window: volumes, folder navigation and file preview.
+  - Terminal (`power`, `drives`), and Settings: Appearance → Dark switches the theme and wallpaper.
+  - The leaf menu with hover and System Settings…, Spotlight ("ter" → Terminal), Launchpad and Control Center.
+  - The About window, Calculator (12×3 = 36), Notes typing and ⌘W, Disk Utility, and Storage & Logs.
+  - Window drag, minimize with ⌘M, and ⌘Tab.
+- **Not validated:** VirtualBox; the physical OptiPlex 7040 / GTX 1050 Ti; modes above 1080p in a live guest; real-hardware performance (QEMU here is software-emulated).
 
 ## Next
 
-- **Phase 2 — USB input:** a polled xHCI driver (BIOS handoff via USBLEGSUP, bounded command/event rings) with HID boot keyboard/mouse and report-protocol tablet. This lets native MintDE run on USB-only machines (OptiPlex 7040) and with VirtualBox's default USB tablet. Test in QEMU with `-device qemu-xhci -device usb-kbd -device usb-tablet`.
-- **Phase 3 — MintDE macOS-style rework:** multi-window z-order, traffic-light chrome, translucent menu bar with clock and status icons, dock indicators, Spotlight-style launcher, original wallpaper.
+- Phase 2: polled xHCI + USB HID (keyboard, mouse, tablet) so native MintDE works with USB-only input.
+- PS/2 IntelliMouse wheel → scrolling in lists (`app_scroll` is already wired).
+- Desktop icons for mounted volumes; window animations (minimize "genie" is out of scope without timers).

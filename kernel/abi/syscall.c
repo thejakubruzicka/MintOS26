@@ -19,6 +19,8 @@
 #include "../include/pci.h"
 #include "../include/e1000.h"
 #include "../include/power.h"
+#include "../include/rtc.h"
+#include "../include/process.h"
 
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
  * ring-3 entry below never passes raw user pointers into this function. */
@@ -41,11 +43,14 @@ int64_t mint_syscall_dispatch(uint64_t number, uint64_t arg0, uint64_t arg1,
     case MINT_SYS_GETPID:
         return (int64_t)mint_task_current_pid();
     case MINT_SYS_CLOCK_GETTIME: {
-        if ((int64_t)arg0 != MINT_CLOCK_MONOTONIC) return -MINT_EINVAL;
+        if ((int64_t)arg0 != MINT_CLOCK_MONOTONIC && (int64_t)arg0 != MINT_CLOCK_REALTIME)
+            return -MINT_EINVAL;
+        if ((int64_t)arg0 == MINT_CLOCK_REALTIME && !mint_rtc_boot_epoch()) return -MINT_ENODEV;
         if (!arg1) return -MINT_EFAULT;
         mint_timespec64 *ts = (mint_timespec64 *)(uintptr_t)arg1;
         uint64_t ticks = mint_timer_ticks();
-        ts->tv_sec = (int64_t)(ticks / 100u);
+        ts->tv_sec = (int64_t)(ticks / 100u) +
+                     ((int64_t)arg0 == MINT_CLOCK_REALTIME ? mint_rtc_boot_epoch() : 0);
         ts->tv_nsec = (int64_t)((ticks % 100u) * 10000000u);
         return 0;
     }
@@ -99,7 +104,8 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         return mint_syscall_dispatch(number, arg0, (uint64_t)(uintptr_t)local, arg2, 0, 0, 0);
     }
     if (number == MINT_SYS_CLOCK_GETTIME) {
-        if ((int64_t)arg0 != MINT_CLOCK_MONOTONIC) return -MINT_EINVAL;
+        if ((int64_t)arg0 != MINT_CLOCK_MONOTONIC && (int64_t)arg0 != MINT_CLOCK_REALTIME)
+            return -MINT_EINVAL;
         if (!mint_address_space_validate_user_range(space, arg1, sizeof(mint_timespec64), 1))
             return -MINT_EFAULT;
         mint_timespec64 ts = {0, 0};
@@ -186,6 +192,54 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         if (rc<0) return -MINT_ENODEV;
         return rc ? 0 : -MINT_EIO;
     }
+    if (number == MINT_SYS_DISPLAY_MAP_CANVAS) {
+        MINT_DISPLAY_CANVAS out;
+        MINT_DISPLAY_INFO info;
+        uint64_t canvas_pa = 0, wallpaper_pa = 0, scratch_pa = 0, bytes = 0;
+        if (!mint_address_space_validate_user_range(space, arg0, sizeof(out), 1)) return -MINT_EFAULT;
+        if (!mint_display_current_info(&info) ||
+            !mint_display_canvas_buffers(&canvas_pa, &wallpaper_pa, &scratch_pa, &bytes) ||
+            !bytes || (bytes & 4095u)) return -MINT_ENODEV;
+        const uint64_t two_mib = 2ull * 1024ull * 1024ull;
+        uint64_t span = ((bytes + two_mib - 1u) & ~(two_mib - 1u)) + two_mib; /* + unmapped guard */
+        uint64_t va0 = MINT_DISPLAY_CANVAS_USER_VA, va1 = va0 + span, va2 = va1 + span;
+        MINT_ADDRESS_REGION existing;
+        if (!mint_address_space_region_query(space, va0, &existing)) {
+            /* The process borrows the kernel-owned buffers; they are never freed
+               by its teardown. Write-back cacheable, never executable. */
+            MINT_ADDRESS_SPACE *own = (MINT_ADDRESS_SPACE *)space;
+            uint64_t pages = bytes / 4096u;
+            if (!mint_address_space_map_shared(own, va0, canvas_pa, pages, MINT_PAGE_MAP_WRITE) ||
+                !mint_address_space_map_shared(own, va1, wallpaper_pa, pages, MINT_PAGE_MAP_WRITE) ||
+                !mint_address_space_map_shared(own, va2, scratch_pa, pages, MINT_PAGE_MAP_WRITE))
+                return -MINT_ENOMEM;
+        } else if (existing.kind != MINT_ASPACE_REGION_SHARED) {
+            return -MINT_EINVAL;
+        }
+        mint_display_enter_canvas_mode();
+        out = (MINT_DISPLAY_CANVAS){MINT_DISPLAY_CANVAS_VERSION, info.width, info.height,
+                                    info.stride_pixels, va0, va1, va2, bytes, info.pixel_format, 0u};
+        mint_serial_write("[display] shared canvas mapped into pid ");
+        mint_serial_dec64(mint_task_current_pid());
+        mint_serial_write("\n");
+        return mint_address_space_copy_to_user(space, arg0, &out, sizeof(out)) ? 0 : -MINT_EFAULT;
+    }
+    if (number == MINT_SYS_DISPLAY_PRESENT) {
+        int64_t x = (int64_t)arg0, y = (int64_t)arg1, w = (int64_t)arg2, h = (int64_t)arg3;
+        if (x < -16384 || x > 16384 || y < -16384 || y > 16384 || w < 0 || w > 16384 || h < 0 || h > 16384)
+            return -MINT_EINVAL;
+        return mint_display_present_canvas((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h) ? 0 : -MINT_ENODEV;
+    }
+    if (number == MINT_SYS_DISPLAY_CURSOR) {
+        int64_t x = (int64_t)arg0, y = (int64_t)arg1;
+        if (x < -16384 || x > 16384 || y < -16384 || y > 16384 || arg2 >= MINT_CURSOR_SHAPE_COUNT)
+            return -MINT_EINVAL;
+        return mint_display_set_overlay_cursor((int32_t)x, (int32_t)y, (uint32_t)arg2) ? 0 : -MINT_ENODEV;
+    }
+    if (number == MINT_SYS_DISPLAY_WALLPAPER_RENDER) {
+        if (arg0 > MINT_WALLPAPER_DARK) return -MINT_EINVAL;
+        return mint_display_render_wallpaper((uint32_t)arg0) ? 0 : -MINT_ENODEV;
+    }
     if (number == MINT_SYS_POWER_INFO) {
         MINT_POWER_INFO local;
         if (!mint_address_space_validate_user_range(space,arg0,sizeof(local),1)) return -MINT_EFAULT;
@@ -215,7 +269,9 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         if (path_rc<0) return path_rc;
         size_t bytes=(size_t)arg2*sizeof(MINT_FAT16_DIRENT);
         if (!mint_address_space_validate_user_range(space,arg1,bytes,1)) return -MINT_EFAULT;
-        MINT_FAT16_DIRENT entries[MINT_FAT16_LIST_MAX];
+        /* 64 x 72-byte records do not belong on the 16 KiB transition stack;
+           syscalls are serialized on this single-CPU, cooperative kernel. */
+        static MINT_FAT16_DIRENT entries[MINT_FAT16_LIST_MAX];
         int64_t count=mint_fat16_list_dir(path,entries,(uint32_t)arg2);
         if (count<0) return count;
         size_t written=(size_t)count*sizeof(entries[0]);
@@ -227,7 +283,9 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         int path_rc=copy_user_cstring(space,arg0,path,sizeof(path));
         if (path_rc<0) return path_rc;
         if (arg2 && !mint_address_space_validate_user_range(space,arg1,(size_t)arg2,1)) return -MINT_EFAULT;
-        int64_t got=mint_fat16_read_file(path,local,(size_t)arg2);
+        if (arg3 & ~(uint64_t)MINT_FAT16_READ_PREFIX) return -MINT_EINVAL;
+        int64_t got=(arg3 & MINT_FAT16_READ_PREFIX) ? mint_fat16_read_prefix(path,local,(size_t)arg2)
+                                                     : mint_fat16_read_file(path,local,(size_t)arg2);
         if (got<0) return got;
         if ((uint64_t)got>arg2) return -MINT_ENOSPC;
         return !got || mint_address_space_copy_to_user(space,arg1,local,(size_t)got) ? got : -MINT_EFAULT;
