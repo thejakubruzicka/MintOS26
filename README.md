@@ -1,8 +1,19 @@
-# MintOS26 26.5.012.0 — MintDE 2.2.0
+# MintOS26 26.5.013.0 — MintDE 2.3.0
 
-**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.2.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
+**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.3.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
 
 The startup selector defaults to UEFI Desktop (Enter/1 or a three-second timeout). Press 2/M to request the experimental MintDE native handoff. MintDE calls `ExitBootServices`; this handoff is one-way until reset, so keep EFI enabled and retain UEFI Desktop as the recovery path.
+
+## 26.5.013.0 / MintDE 2.3.0 — files that stay (MintFS)
+
+MintOS has its own read/write filesystem, **MintFS**. It is copy-on-write and checksummed like APFS, so a power cut leaves the last saved state rather than a damaged disk.
+
+- **Setting up a disk:** Disk Utility turns a blank disk into a **MintOS disk** ("MintOS HD") with a macOS-style layout: `/Applications`, `/Users/mintos/Documents`, Downloads, and so on. The disk mounts at every boot.
+- **Files** works like Finder, with Favorites, New Folder, Rename, Duplicate and Trash.
+- **Notes** saves to `~/Documents`.
+- **Terminal** has `ls`, `cd`, `mkdir`, `rm`, `mv`, `cp`, `cat`, `echo > file` and `df`.
+- **Write safety:** MintOS writes only to disks it initialized itself, through a guard in the block layer. Every other disk stays read-only.
+- **Trying it:** in QEMU, run `tools/run_qemu.sh --mintos-disk` (see `TESTING.md`).
 
 ## 26.5.012.0 / MintDE 2.2.0 — secure web (HTTPS)
 
@@ -54,7 +65,7 @@ Validated live on QEMU 11.1 q35/OVMF: native boot, ACPI power-off, restart and f
 
 A COM1 log from the 26.5.001.0 VM showed one valid 512 MiB FAT16 developer disk mounted read-only, with the developer ID and `55 AA` MBR signature, while a second detected disk returned repeatable zero-filled LBA 0 and was correctly rejected as blank. The same log contains a formatter error for one operation followed later by successful read-only mount entries. Treat these as separate events and preserve the full log when testing.
 
-This release still has **read-only filesystem access and no general persistent file-write support**. Notes and Settings remain RAM/session-backed. The blank-disk initializer is deliberately narrow and destructive; use only a disposable data disk in a snapshot, after confirming model, serial and capacity. Mount success is not proof of durable writes.
+**MintOS writes only to MintOS disks:** GPT disks with a MintFS partition that MintOS initialized itself. Those writes go through a block-layer grant covering just that partition. FAT16 and all other disks remain read-only. Without a MintOS disk, Notes stay in session RAM. Settings are always session-only for now. The blank-disk initializer is deliberately narrow and destructive; use only a disposable data disk in a snapshot, after confirming model, serial and capacity. Mount success is not proof of durable writes.
 
 ## Build and host checks
 

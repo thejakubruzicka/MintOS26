@@ -63,6 +63,20 @@
 #define MINT_SYS_NET_RESOLVE                   0x4D32u
 #define MINT_SYS_NET_PING                      0x4D33u
 #define MINT_SYS_TCP                           0x4D34u
+/* MintOS disk files (MintFS). Paths are absolute UTF-8 C strings. */
+#define MINT_SYS_MFS_OPEN                      0x4D40u
+#define MINT_SYS_MFS_READ                      0x4D41u
+#define MINT_SYS_MFS_WRITE                     0x4D42u
+#define MINT_SYS_MFS_SEEK                      0x4D43u
+#define MINT_SYS_MFS_CLOSE                     0x4D44u
+#define MINT_SYS_MFS_STAT                      0x4D45u
+#define MINT_SYS_MFS_LIST                      0x4D46u
+#define MINT_SYS_MFS_MKDIR                     0x4D47u
+#define MINT_SYS_MFS_RENAME                    0x4D48u
+#define MINT_SYS_MFS_REMOVE                    0x4D49u
+#define MINT_SYS_MFS_SYNC                      0x4D4Au
+#define MINT_SYS_MFS_VOLUME                    0x4D4Bu
+#define MINT_SYS_STORAGE_INIT_MINTOS           0x4D4Cu
 
 #define MINT_CLOCK_REALTIME  0
 #define MINT_CLOCK_MONOTONIC 1
@@ -90,6 +104,14 @@
 #define MINT_ETIMEDOUT 110
 #define MINT_ECONNREFUSED 111
 #define MINT_EHOSTUNREACH 113
+#define MINT_EEXIST     17
+#define MINT_ENOTDIR    20
+#define MINT_EISDIR     21
+#define MINT_EMFILE     24
+#define MINT_EFBIG      27
+#define MINT_ENAMETOOLONG 36
+#define MINT_ENOTEMPTY  39
+#define MINT_ECORRUPT  117
 
 typedef struct mint_timespec64 {
     int64_t tv_sec;

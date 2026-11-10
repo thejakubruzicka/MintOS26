@@ -7,6 +7,7 @@
 #include "../include/vmalloc.h"
 #include "../include/syscall.h"
 #include "../include/ramfs.h"
+#include "../include/mintos_fs.h"
 
 static MINT_PROCESS processes[MINT_PROCESS_MAX];
 
@@ -118,6 +119,7 @@ cleanup:
     /* File handles are process-owned resources. Reap them on every process
        exit/failure path so the bounded handle table cannot leak across runs. */
     mint_ramfs_close_owner(p->pid);
+    mint_mfs_close_all(p->pid);
     /* Also restore this task's ordinary transition stack if activation failed
        before we entered ring 3. This keeps every error path symmetric. */
     if (p->prior_privilege_stack_top &&

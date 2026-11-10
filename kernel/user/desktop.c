@@ -1,4 +1,4 @@
-/* MintDE 2.2.0 — native ring-3 desktop for MintOS26 26.5.012.0.
+/* MintDE 2.3.0 — native ring-3 desktop for MintOS26 26.5.013.0.
  *
  * A macOS-style shell rendered entirely in user space into the kernel-shared
  * canvas: window manager (z-order, focus, traffic lights, drag, resize, zoom,
@@ -20,6 +20,7 @@ int32_t pointer_x, pointer_y;
 #define DOCK_PAD 7
 #define DOCK_BLUR 18
 #define MENU_BLUR 22
+#define SIDEBAR_BLUR 26          /* window sidebars: macOS-style vibrancy */
 
 static int32_t SW, SH;
 static mde_window windows[APP_COUNT];
@@ -102,6 +103,21 @@ void shell_format_clock(char *out, size_t cap, int64_t epoch, int with_seconds) 
     if (with_seconds) { t[5] = ':'; t[6] = (char)('0' + ss / 10); t[7] = (char)('0' + ss % 10); }
     str_append(out, cap, t);
 }
+void shell_format_date(char *out, size_t cap, int64_t epoch) {
+    static const char *const mo[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    if (epoch <= 0) { copy_text(out, cap, "--"); return; }
+    int64_t now = shell_now_epoch(), days = epoch / 86400, secs = epoch % 86400;
+    if (now && days == now / 86400) copy_text(out, cap, "Today at ");
+    else if (now && days == now / 86400 - 1) copy_text(out, cap, "Yesterday at ");
+    else {
+        int64_t y; uint32_t m, d; civil_from_days(days, &y, &m, &d);
+        char n[24]; format_u64(out, cap, d); str_append(out, cap, " "); str_append(out, cap, mo[m - 1]); str_append(out, cap, " ");
+        format_u64(n, sizeof(n), (uint64_t)y); str_append(out, cap, n); str_append(out, cap, " at ");
+    }
+    uint32_t hh = (uint32_t)(secs / 3600), mm = (uint32_t)((secs / 60) % 60);
+    char t[6] = {(char)('0' + hh / 10), (char)('0' + hh % 10), ':', (char)('0' + mm / 10), (char)('0' + mm % 10), 0};
+    str_append(out, cap, t);
+}
 static int is_night(void) {
     int64_t e = shell_now_epoch();
     if (!e) return 0;
@@ -163,6 +179,7 @@ static void raise_window(uint32_t app) {
     for (uint32_t i = 0; i < zcount; ++i) if (zorder[i] != app) zorder[j++] = zorder[i];
     zorder[j++] = app; zcount = j;
     if (focused_app >= 0) shell_damage_window((uint32_t)focused_app);
+    if (focused_app != (int32_t)app) shell_damage(R(0, 0, SW, MENUBAR_H));   /* menu bar shows the active app */
     windows[app].minimized = 0;
     focused_app = (int32_t)app;
     shell_damage_window(app);
@@ -255,13 +272,26 @@ static void paint_window(uint32_t app, gfx_rect clip) {
     int focused = l.focused;
     int chrome = app_chrome(app);
     int32_t bar = window_bar(app);
+    int32_t sw = app_sidebar_width(app);
+    gfx_rect sidebar = R(w->x, w->y, sw, w->h), sidebar_clip = gfx_rect_intersect(sidebar, clip);
+    if (sw && !gfx_rect_empty(sidebar_clip)) {
+        /* Vibrancy: blur what lies behind the window under the sidebar (before
+           the window's own shadow touches it) and park the result in the
+           scratch surface until the window body has been drawn. */
+        gfx_clip_set(clip);
+        gfx_blur_rounded(S, sidebar, SIDEBAR_BLUR, 0);
+        gfx_copy(&gfx_scratch, S, sidebar_clip);
+    }
+    gfx_clip_set(clip);
     gfx_shadow(S, w->x, w->y, w->w, w->h, WIN_R, focused ? 38 : 22, focused ? 16 : 8, ARGB(focused ? 0x5A : 0x34, 0, 0, 0));
     gfx_clip_set(clip);
     gfx_corners_save(S, w->x, w->y, w->w, w->h, WIN_R, corner_buf);
     gfx_fill(S, w->x, w->y, w->w, w->h, OPAQUE(app == APP_CALCULATOR ? 0x2B2B2Du : T.window));
-    int32_t sw = app_sidebar_width(app);
     if (sw) {
-        gfx_fill(S, w->x, w->y, sw, w->h, OPAQUE(T.sidebar));
+        if (!gfx_rect_empty(sidebar_clip)) {
+            gfx_copy(S, &gfx_scratch, sidebar_clip);
+            gfx_fill(S, sidebar.x0, sidebar.y0, sw, w->h, T.sidebar_tint);
+        }
         gfx_vline(S, w->x + sw, w->y, w->h, T.separator);
     }
     if (chrome != CHROME_PLAIN) gfx_hline(S, w->x + sw, w->y + bar - 1, w->w - sw, T.separator);
@@ -346,7 +376,8 @@ static void paint_dock(void) {
 /* ------------------------------------------------------------ Menu bar and menus */
 enum { ACT_NONE = 0, ACT_ABOUT_OS, ACT_ABOUT_DE, ACT_SETTINGS, ACT_LAUNCHPAD, ACT_RESTART, ACT_SHUTDOWN,
        ACT_HIDE, ACT_QUIT, ACT_NEW_FILES, ACT_NEW_TERMINAL, ACT_CLOSE, ACT_MINIMIZE, ACT_ZOOM,
-       ACT_BRING_ALL, ACT_TOGGLE_DARK, ACT_SPOTLIGHT, ACT_HELP, ACT_RELEASE_NOTES, ACT_FOCUS_BASE = 100 };
+       ACT_BRING_ALL, ACT_TOGGLE_DARK, ACT_SPOTLIGHT, ACT_HELP, ACT_RELEASE_NOTES, ACT_FOCUS_BASE = 100,
+       ACT_FILES_BASE = 200 };
 typedef struct { const char *label; const char *shortcut; uint32_t action; uint8_t enabled, separator, checked; } menu_item;
 static menu_item menu_items[24];
 static uint32_t menu_count;
@@ -380,7 +411,18 @@ static void build_menu(int32_t m) {
         break;
     case 2:
         add_item("New Files Window", "\xE2\x8C\x98N", ACT_NEW_FILES, 1);
-        add_item("New Terminal Window", 0, ACT_NEW_TERMINAL, 1); add_sep();
+        if (app == APP_FILES && focused_app == APP_FILES) {
+            add_item("New Folder", "\xE2\x87\xA7\xE2\x8C\x98N", ACT_FILES_BASE + FILES_CMD_NEW_FOLDER, files_command_enabled(FILES_CMD_NEW_FOLDER));
+            add_sep();
+            add_item("Rename", "\xE2\x8F\x8E", ACT_FILES_BASE + FILES_CMD_RENAME, files_command_enabled(FILES_CMD_RENAME));
+            add_item("Duplicate", "\xE2\x8C\x98" "D", ACT_FILES_BASE + FILES_CMD_DUPLICATE, files_command_enabled(FILES_CMD_DUPLICATE));
+            add_item("Move to Trash", "\xE2\x8C\x98\xE2\x8C\xAB", ACT_FILES_BASE + FILES_CMD_TRASH, files_command_enabled(FILES_CMD_TRASH));
+            add_sep();
+            add_item("Empty Trash\xE2\x80\xA6", "\xE2\x87\xA7\xE2\x8C\x98\xE2\x8C\xAB", ACT_FILES_BASE + FILES_CMD_EMPTY_TRASH, files_command_enabled(FILES_CMD_EMPTY_TRASH));
+            add_sep();
+        } else {
+            add_item("New Terminal Window", 0, ACT_NEW_TERMINAL, 1); add_sep();
+        }
         add_item("Close Window", "\xE2\x8C\x98W", ACT_CLOSE, focused_app >= 0);
         break;
     case 3:
@@ -498,6 +540,7 @@ static void run_action(uint32_t act) {
     damage_all();
     uint32_t app = current_app_for_menu();
     if (act >= ACT_FOCUS_BASE && act < ACT_FOCUS_BASE + APP_COUNT) { shell_open_app(act - ACT_FOCUS_BASE); return; }
+    if (act > ACT_FILES_BASE && act < ACT_FILES_BASE + FILES_CMD_COUNT) { if (files_command(act - ACT_FILES_BASE)) shell_damage_window(APP_FILES); return; }
     switch (act) {
     case ACT_ABOUT_OS: shell_open_app(APP_ABOUT_OS); break;
     case ACT_ABOUT_DE: shell_open_app(APP_ABOUT_MINTDE); break;
@@ -753,16 +796,22 @@ static void compose(gfx_rect d) {
    margin is recomposed in the same pass so no stale glass feeds back in. */
 static gfx_rect expand_for_glass(gfx_rect d) {
     if (gfx_rect_empty(d)) return d;
-    gfx_rect panels[6]; uint32_t n = 0; int32_t ic;
+    gfx_rect panels[6 + APP_COUNT]; uint32_t n = 0; int32_t ic;
     dock_geometry(&panels[n++], &ic);
     panels[n++] = R(0, 0, SW, MENUBAR_H);
     if (active_menu >= 0) { build_menu(active_menu); panels[n++] = menu_rect(); }
     if (control_center_open) panels[n++] = cc_rect();
     if (spotlight_open) { spotlight_search(); panels[n++] = spotlight_rect(); }
     if (power_confirm) panels[n++] = alert_rect();
+    if (!launchpad_open)
+        for (uint32_t i = 0; i < zcount; ++i) {          /* translucent window sidebars sample behind themselves */
+            uint32_t app = zorder[i];
+            int32_t sw = app_sidebar_width(app);
+            if (sw && windows[app].open && !windows[app].minimized) panels[n++] = R(windows[app].x, windows[app].y, sw, windows[app].h);
+        }
     for (int pass = 0; pass < 2; ++pass)
         for (uint32_t i = 0; i < n; ++i)
-            if (gfx_rect_overlaps(d, panels[i])) d = gfx_rect_union(d, grow(panels[i], 2 * MENU_BLUR, 2 * MENU_BLUR, 2 * MENU_BLUR, 2 * MENU_BLUR));
+            if (gfx_rect_overlaps(d, panels[i])) d = gfx_rect_union(d, grow(panels[i], 2 * SIDEBAR_BLUR, 2 * SIDEBAR_BLUR, 2 * SIDEBAR_BLUR, 2 * SIDEBAR_BLUR));
     return gfx_rect_intersect(d, R(0, 0, SW, SH));
 }
 static void render(void) {
@@ -935,7 +984,7 @@ static void pointer_pressed(uint32_t clicks) {
     }
     int32_t dh = dock_hit(x, y);
     if (dh >= 0) {
-        if (dh == DOCK_TRASH) return;
+        if (dh == DOCK_TRASH) { if (files_show_trash()) shell_open_app(APP_FILES); return; }
         uint32_t app = dock_apps[dh];
         if (windows[app].open && focused_app == (int32_t)app && !windows[app].minimized && app != APP_LAUNCHPAD) return;
         shell_open_app(app);
@@ -1016,7 +1065,9 @@ static void key_pressed(const MINT_DESKTOP_KEY_EVENT *k) {
         case 'q': case 'Q': case 'w': case 'W': if (focused_app >= 0) shell_close_app(app); return;
         case 'm': case 'M': case 'h': case 'H': if (focused_app >= 0) minimize_app(app); return;
         case ',': shell_open_app(APP_SETTINGS); return;
-        case 'n': case 'N': shell_open_app(APP_FILES); return;
+        case 'n': case 'N':
+            if ((k->modifiers & MINT_KEYMOD_SHIFT) && focused_app == APP_FILES) break;   /* New Folder */
+            shell_open_app(APP_FILES); return;
         case 'l': case 'L': if (focused_app == APP_WEB) break; shell_open_app(APP_LAUNCHPAD); return;
         default: break;
         }

@@ -11,8 +11,8 @@ checks={
     'keyboard selects MintDE experimental handoff': "c=='2'||c=='m'||c=='M'" in s and 'launch_native_kernel()' in s,
     'keyboard selects UEFI Desktop': "c=='1'||c=='u'||c=='U'||c==13" in s,
     'direct handoff is visibly identified as experimental': 'Native kernel / experimental one-way handoff' in s,
-    'About MintOS and About MintDE remain distinct': 'Version 26.5.012.0  •  x86-64' in s and 'Version 2.2.0  •  Native desktop environment' in s,
-    'native kernel identifies 26.5.012.0': '26.5.012.0' in k,
+    'About MintOS and About MintDE remain distinct': 'Version 26.5.013.0  •  x86-64' in s and 'Version 2.3.0  •  Native desktop environment' in s,
+    'native kernel identifies 26.5.013.0': '26.5.013.0' in k,
 }
 for name,ok in checks.items(): print(('PASS: ' if ok else 'FAIL: ')+name)
 if not all(checks.values()): raise SystemExit(1)

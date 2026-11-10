@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Host tests for MintDE 2 (renderer, shared canvas, overlay pointer, RTC) and
 source contracts for the macOS-style shell."""
+import re
 from pathlib import Path
 import os
 import subprocess
@@ -31,7 +32,9 @@ checks = {
     'present and cursor syscalls bound their coordinates':
         'w > 16384 || h < 0 || h > 16384' in syscall and 'arg2 >= MINT_CURSOR_SHAPE_COUNT' in syscall,
     'glass panels recompose their blur margin before sampling (no feedback)':
-        'expand_for_glass' in shell and '2 * MENU_BLUR' in shell,
+        'expand_for_glass' in shell and '2 * SIDEBAR_BLUR' in shell and
+        all(int(re.search(r'#define SIDEBAR_BLUR (\d+)', shell).group(1)) >= int(re.search(r'#define %s (\d+)' % k, shell).group(1))
+            for k in ('MENU_BLUR', 'DOCK_BLUR')),
     'Shut Down / Restart still require an explicit confirmation alert':
         'paint_alert' in shell and 'run_power()' in shell and 'shell_request_power(MINT_POWER_ACTION_SHUTDOWN)' in shell,
     'Disk Utility only offers Erase for blank, unmounted disks; the kernel re-validates':

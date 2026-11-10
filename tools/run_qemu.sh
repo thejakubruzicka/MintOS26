@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
 # Boot the MintOS26 GPT UEFI image in QEMU/OVMF on Linux or macOS (Homebrew).
 #
-#   tools/run_qemu.sh [--headless] [--mem MiB] [--no-data] [--blank] [--] [extra qemu args]
+#   tools/run_qemu.sh [--headless] [--mem MiB] [--no-data] [--blank] [--mintos-disk] [--] [extra qemu args]
 #
 # Disks are attached to the q35 ICH9 AHCI controller with snapshot=on, so the
 # guest can never modify the build images (including the Disk Utility
-# formatter). The NIC is an Intel 82540EM (e1000) on QEMU user networking.
+# formatter). The one exception is --mintos-disk: a persistent 1 GiB scratch
+# file (build/qemu-mintos-disk-1g.img, created blank on first use) that Disk
+# Utility can initialize as a MintOS disk, so MintFS data survives restarts.
+# The NIC is an Intel 82540EM (e1000) on QEMU user networking.
 # COM1 goes to build/com1-qemu.log. QEMU's e1000 implements loopback only via
 # PHY BMCR loopback, so `net test` results are not VirtualBox evidence.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="$root/build"
-headless=0; mem=1024; data=1; blank=0; extra=()
+headless=0; mem=1024; data=1; blank=0; mintos=0; extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --headless) headless=1 ;;
     --mem) mem="$2"; shift ;;
     --no-data) data=0 ;;
     --blank) blank=1 ;;
+    --mintos-disk) mintos=1 ;;
     --) shift; extra+=("$@"); break ;;
     *) extra+=("$1") ;;
   esac
@@ -59,6 +63,13 @@ if [ "$blank" = 1 ]; then
   [ -f "$blank_img" ] || dd if=/dev/zero of="$blank_img" bs=1048576 count=0 seek=512 2>/dev/null
   args+=(-drive "if=none,id=blank,format=raw,snapshot=on,file=$blank_img"
          -device ide-hd,drive=blank,bus=ide.2)
+fi
+if [ "$mintos" = 1 ]; then
+  mintos_img="$build/qemu-mintos-disk-1g.img"
+  [ -f "$mintos_img" ] || dd if=/dev/zero of="$mintos_img" bs=1048576 count=0 seek=1024 2>/dev/null
+  args+=(-drive "if=none,id=mintos,format=raw,file=$mintos_img"
+         -device ide-hd,drive=mintos,bus=ide.3)
+  echo "MintOS disk (persistent, writable by the guest): $mintos_img"
 fi
 args+=(-nic user,model=e1000 -serial "file:$build/com1-qemu.log" -vga std)
 if [ "$headless" = 1 ]; then args+=(-display none); fi

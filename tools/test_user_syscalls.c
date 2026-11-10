@@ -92,6 +92,25 @@ int64_t mint_net_tcp_recv(int64_t h, uint8_t *o, uint32_t n) { (void)h; (void)o;
 int64_t mint_net_tcp_state(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_net_tcp_close(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
+#include "../kernel/include/mintos_fs.h"
+/* MintOS-disk file API fakes: record what the syscall layer passed through. */
+static char mfs_last_path[MINT_MFS_PATH_MAX], mfs_last_path2[MINT_MFS_PATH_MAX];
+static uint32_t mfs_last_flags, mfs_init_calls;
+static uint64_t mfs_last_pid;
+static uint8_t mfs_written[64]; static uint32_t mfs_written_len;
+int64_t mint_mfs_open(const char *path, uint32_t flags, uint64_t pid) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",path); mfs_last_flags=flags; mfs_last_pid=pid; return 3; }
+int64_t mint_mfs_read(int64_t fd, void *buf, uint32_t len, uint64_t pid) { (void)pid; if(fd!=3)return -MINT_EBADF; uint32_t n=len<5u?len:5u; memcpy(buf,"MINTS",n); return n; }
+int64_t mint_mfs_write(int64_t fd, const void *buf, uint32_t len, uint64_t pid) { (void)pid; if(fd!=3)return -MINT_EBADF; mfs_written_len=len<64u?len:64u; memcpy(mfs_written,buf,mfs_written_len); return len; }
+int64_t mint_mfs_seek(int64_t fd, int64_t off, uint32_t whence, uint64_t pid) { (void)fd; (void)whence; (void)pid; return off; }
+int64_t mint_mfs_close(int64_t fd, uint64_t pid) { (void)pid; return fd==3 ? 0 : -MINT_EBADF; }
+int64_t mint_mfs_stat(const char *path, MINT_MFS_STAT *out) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",path); memset(out,0,sizeof(*out)); out->size=42; out->type=MINT_MFS_FILE; return 0; }
+int64_t mint_mfs_list(const char *path, uint32_t start, MINT_MFS_DIRENT *out, uint32_t cap) { (void)path; (void)cap; if(start)return 0; memset(out,0,sizeof(*out)); memcpy(out->name,"Documents",10); out->type=MINT_MFS_DIR; return 1; }
+int64_t mint_mfs_mkdir(const char *path) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",path); return 0; }
+int64_t mint_mfs_rename(const char *a, const char *b) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",a); snprintf(mfs_last_path2,sizeof(mfs_last_path2),"%s",b); return 0; }
+int64_t mint_mfs_remove(const char *path) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",path); return 0; }
+int64_t mint_mfs_sync(void) { return 0; }
+int mint_mfs_volume(MINT_MFS_VOLUME *out) { memset(out,0,sizeof(*out)); out->version=MINT_MFS_ABI_VERSION; out->state=MINT_MFS_VOLUME_READY; memcpy(out->label,"MintOS HD",10); return 1; }
+int mint_mintos_disk_initialize(uint32_t index) { if(index!=0u)return -MINT_EINVAL; mfs_init_calls++; return 0; }
 
 int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out) { if(!out)return 0; memset(out,0,sizeof(*out)); return 1; }
 int mint_fat16_volume_select(uint32_t ordinal) { (void)ordinal; return 0; }
@@ -290,6 +309,60 @@ int main(void){
           mint_syscall_dispatch_user(MINT_SYS_STORAGE_FORMAT_BLANK,USER_DATA_VA,0,0,0,0,0)==0 &&
           test_format_calls==1u && test_storage_rechecks==1u,
           "blank-disk formatter syscall requires matching device identity/capacity and exact typed confirmation");
+    /* MintOS disk: initialization uses the same identity + typed-confirmation gate. */
+    memcpy(format_request.confirmation,"FORMAT sdb",sizeof("FORMAT sdb"));
+    CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,&format_request,sizeof(format_request)) &&
+          mint_syscall_dispatch_user(MINT_SYS_STORAGE_INIT_MINTOS,USER_DATA_VA,0,0,0,0,0)==-MINT_EPERM && mfs_init_calls==0u,
+          "MintOS disk initialization rejects a confirmation naming another device");
+    memcpy(format_request.confirmation,"FORMAT sda",sizeof("FORMAT sda"));
+    CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,&format_request,sizeof(format_request)) &&
+          mint_syscall_dispatch_user(MINT_SYS_STORAGE_INIT_MINTOS,USER_DATA_VA,0,0,0,0,0)==0 && mfs_init_calls==1u &&
+          test_storage_rechecks==2u,
+          "MintOS disk initialization runs once after an exact confirmation and revalidates storage");
+    {
+        static const char path[]="/Users/mintos/Documents/Notes.txt";
+        CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,path,sizeof(path)) &&
+              mint_syscall_dispatch_user(MINT_SYS_MFS_OPEN,USER_DATA_VA,MINT_O_READ|MINT_O_WRITE|MINT_O_CREATE,0,0,0,0)==3 &&
+              !strcmp(mfs_last_path,path) && mfs_last_flags==(MINT_O_READ|MINT_O_WRITE|MINT_O_CREATE) && mfs_last_pid==mint_task_current_pid(),
+              "MintFS open copies the user path and passes flags with the caller's pid");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_OPEN,USER_DATA_VA,0x400u,0,0,0,0)==-MINT_EINVAL,
+              "MintFS open rejects unknown flags");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_OPEN,USER_CODE_VA+MINT_PAGING_PAGE_SIZE*64u,MINT_O_READ,0,0,0,0)==-MINT_EFAULT,
+              "MintFS open rejects an unmapped path pointer");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_READ,3,USER_CODE_VA,16,0,0,0)==-MINT_EFAULT,
+              "MintFS read refuses a read-only destination");
+        char got[8]={0};
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_READ,3,USER_DATA_VA+256u,16,0,0,0)==5 &&
+              mint_address_space_copy_from_user(&space,got,USER_DATA_VA+256u,5) && !memcmp(got,"MINTS",5),
+              "MintFS read copies only the bytes read back to the user");
+        CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA+512u,"hello",5) &&
+              mint_syscall_dispatch_user(MINT_SYS_MFS_WRITE,3,USER_DATA_VA+512u,5,0,0,0)==5 &&
+              mfs_written_len==5u && !memcmp(mfs_written,"hello",5),
+              "MintFS write bounces user bytes into the kernel");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_WRITE,3,USER_DATA_VA,USER_DATA_BYTES+4096u,0,0,0)==-MINT_EFAULT,
+              "MintFS write rejects a source range beyond the mapping");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_SEEK,3,10,9,0,0,0)==-MINT_EINVAL,
+              "MintFS seek rejects an unknown whence");
+        static const char from[]="/a", to[]="/b";
+        CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,from,sizeof(from)) &&
+              mint_address_space_copy_to_user(&space,USER_DATA_VA+64u,to,sizeof(to)) &&
+              mint_syscall_dispatch_user(MINT_SYS_MFS_RENAME,USER_DATA_VA,USER_DATA_VA+64u,0,0,0,0)==0 &&
+              !strcmp(mfs_last_path,"/a") && !strcmp(mfs_last_path2,"/b"),
+              "MintFS rename copies both paths");
+        MINT_MFS_DIRENT entry;
+        static const char root_path[]="/";
+        CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,root_path,sizeof(root_path)) &&
+              mint_syscall_dispatch_user(MINT_SYS_MFS_LIST,USER_DATA_VA,0,USER_DATA_VA+1024u,0,0,0)==1 &&
+              mint_address_space_copy_from_user(&space,&entry,USER_DATA_VA+1024u,sizeof(entry)) &&
+              !strcmp(entry.name,"Documents") && entry.type==MINT_MFS_DIR,
+              "MintFS list copies directory entries to the user");
+        MINT_MFS_VOLUME vol;
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_VOLUME,USER_DATA_VA,0,0,0,0,0)==0 &&
+              mint_address_space_copy_from_user(&space,&vol,USER_DATA_VA,sizeof(vol)) &&
+              vol.state==MINT_MFS_VOLUME_READY && !strcmp(vol.label,"MintOS HD"),
+              "MintFS volume status is copied to the user");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_CLOSE,3,0,0,0,0,0)==0,"MintFS close passes the handle through");
+    }
     CHECK(mint_syscall_dispatch_user(MINT_SYS_LOG_READ,USER_DATA_VA,MINT_LOG_READ_MAX+1u,MINT_LOG_WARN,0,0,0)==-MINT_EINVAL,
           "log read rejects requests beyond its fixed maximum");
     CHECK(mint_syscall_dispatch_user(MINT_SYS_CLOCK_GETTIME,MINT_CLOCK_MONOTONIC,USER_DATA_VA,0,0,0,0)==0,"user clock_gettime writes through validated user copy");

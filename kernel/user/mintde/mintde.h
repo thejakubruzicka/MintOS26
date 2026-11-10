@@ -5,8 +5,8 @@
 #include <mintos/runtime.h>
 #include "gfx.h"
 
-#define MINTDE_VERSION "2.2.0"
-#define MINTOS_VERSION "26.5.012.0"
+#define MINTDE_VERSION "2.3.0"
+#define MINTOS_VERSION "26.5.013.0"
 
 enum {
     APP_FILES = 0, APP_NOTES, APP_TERMINAL, APP_SETTINGS, APP_MONITOR, APP_STORAGE,
@@ -39,6 +39,8 @@ typedef struct mde_theme {
     uint32_t separator, control_border;  /* ARGB */
     uint32_t row_alt, selection_inactive;
     uint32_t menu_tint;                  /* ARGB tint over blurred backdrop */
+    uint32_t sidebar_tint;               /* ARGB tint over the blurred window sidebar */
+    uint32_t sidebar_selection;          /* ARGB Finder-style selection pill */
 } mde_theme;
 extern mde_theme T;
 
@@ -54,6 +56,8 @@ void shell_request_power(uint32_t action);
 int shell_apply_settings(void);        /* push desktop_settings to the kernel and restyle */
 int64_t shell_now_epoch(void);         /* RTC wall clock (0 if unavailable) */
 void shell_format_clock(char *out, size_t cap, int64_t epoch, int with_seconds);
+/* Finder-style date: "Today at 14:05", "Yesterday at 09:12", "3 Nov 2026 at 18:40". */
+void shell_format_date(char *out, size_t cap, int64_t epoch);
 
 /* ---- applications (apps.c) */
 const char *app_name(uint32_t app);
@@ -63,6 +67,11 @@ int32_t app_sidebar_width(uint32_t app);
 void app_default_size(uint32_t app, int32_t *w, int32_t *h);
 void app_init(void);
 void app_opened(uint32_t app);
+/* Files commands on MintOS HD (menu bar File menu and shortcuts). */
+enum { FILES_CMD_NEW_FOLDER = 1, FILES_CMD_RENAME, FILES_CMD_DUPLICATE, FILES_CMD_TRASH, FILES_CMD_EMPTY_TRASH, FILES_CMD_COUNT };
+int files_command(uint32_t command);
+int files_command_enabled(uint32_t command);
+int files_show_trash(void);                      /* Dock Trash: 1 if Files now shows the Trash */
 void app_paint(uint32_t app, const mde_layout *l);
 int app_click(uint32_t app, const mde_layout *l, int32_t x, int32_t y, uint32_t clicks);
 int app_key(uint32_t app, const mde_layout *l, const MINT_DESKTOP_KEY_EVENT *k);
@@ -100,9 +109,13 @@ void ui_segmented(gfx_rect r, const char *const *labels, uint32_t count, uint32_
 int32_t ui_segment_at(gfx_rect r, uint32_t count, int32_t x);
 void ui_search_field(gfx_rect r, const char *text, int focused);
 void ui_text_field(gfx_rect r, const char *text, const char *placeholder, int focused);
+/* Same, with the caret after `caret` bytes of text. */
+void ui_text_field_caret(gfx_rect r, const char *text, const char *placeholder, int focused, size_t caret);
 void ui_group(gfx_rect r);
 void ui_group_row(gfx_rect r, uint32_t index, uint32_t count, const char *label, const char *value);
 void ui_sidebar_item(gfx_rect r, const char *label, const uint8_t *icon64, uint32_t color, int selected, int focused);
+/* Finder-style row: gray selection pill, accent-coloured line symbol, regular label. */
+void ui_sidebar_row(gfx_rect r, const char *label, uint32_t symbol, int selected);
 void ui_sidebar_header(int32_t x, int32_t y, const char *label);
 void ui_list_row(gfx_rect r, uint32_t index, int selected, int focused);
 void ui_progress(gfx_rect r, uint32_t permille, uint32_t color);
@@ -114,7 +127,10 @@ void ui_badge(int32_t x, int32_t y, const char *text, uint32_t color);
 
 /* Symbols drawn procedurally (sidebar and toolbar). */
 enum { SYM_CHEVRON_LEFT = 1, SYM_CHEVRON_RIGHT, SYM_SEARCH, SYM_FOLDER, SYM_DISK, SYM_GEAR,
-       SYM_TOGGLES, SYM_PLUS, SYM_MINUS, SYM_INFO, SYM_WARNING, SYM_CHECK, SYM_DOC };
+       SYM_TOGGLES, SYM_PLUS, SYM_MINUS, SYM_INFO, SYM_WARNING, SYM_CHECK, SYM_DOC,
+       /* line-style sidebar symbols (macOS SF Symbols look) */
+       SYM_DRIVE, SYM_RAM, SYM_CHIP, SYM_USB, SYM_BOLT, SYM_LIST, SYM_GEAR_LINE, SYM_CLOCK, SYM_HOUSE, SYM_FOLDER_LINE,
+       SYM_APPS, SYM_DESKTOP, SYM_DOWNLOAD, SYM_TRASH, SYM_FOLDER_PLUS };
 
 /* Icons embedded by tools/embed_icons.py */
 #define ICON_DECL(n) extern const uint8_t mint_icon_##n##_128[]; extern const uint8_t mint_icon_##n##_64[];

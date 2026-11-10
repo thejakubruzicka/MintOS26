@@ -60,6 +60,8 @@ void theme_apply(const MINT_DESKTOP_SETTINGS *s, int night) {
         T.separator = ARGB(0x1E, 0, 0, 0); T.control_border = ARGB(0x2A, 0, 0, 0);
         T.row_alt = 0xF4F5F6u; T.selection_inactive = 0xDCDCE0u;
         T.menu_tint = ARGB(0xB8, 0xF4, 0xF4, 0xF6);
+        T.sidebar_tint = ARGB(0xA4, 0xEC, 0xEC, 0xF0);
+        T.sidebar_selection = ARGB(0x1C, 0x00, 0x00, 0x00);
     } else {
         T.window = 0x2A2A2Cu; T.content = 0x1E1E20u; T.sidebar = 0x252527u;
         T.group = 0x2C2C2Eu; T.group_bg = 0x1E1E20u; T.field = 0x1C1C1Eu; T.control = 0x3A3A3Cu;
@@ -67,6 +69,8 @@ void theme_apply(const MINT_DESKTOP_SETTINGS *s, int night) {
         T.separator = ARGB(0x26, 0xFF, 0xFF, 0xFF); T.control_border = ARGB(0x22, 0xFF, 0xFF, 0xFF);
         T.row_alt = 0x232325u; T.selection_inactive = 0x46464Au;
         T.menu_tint = ARGB(0xB0, 0x24, 0x24, 0x28);
+        T.sidebar_tint = ARGB(0xB4, 0x26, 0x26, 0x2A);
+        T.sidebar_selection = ARGB(0x30, 0xFF, 0xFF, 0xFF);
     }
 }
 
@@ -123,8 +127,70 @@ void ui_symbol_glyph(int32_t cx, int32_t cy, uint32_t sym, uint32_t c) {
     case SYM_DOC:
         gfx_round_rect_stroke(s, cx - 6, cy - 8, 12, 16, 2, c);
         gfx_hline(s, cx - 3, cy - 3, 6, c); gfx_hline(s, cx - 3, cy, 6, c); gfx_hline(s, cx - 3, cy + 3, 4, c); break;
+    case SYM_DRIVE:                                   /* internal drive */
+        gfx_round_rect_stroke(s, cx - 8, cy - 5, 16, 10, 3, c);
+        gfx_hline(s, cx - 7, cy + 1, 14, c);
+        gfx_circle(s, cx + 5, cy + 3, 1, c); break;
+    case SYM_RAM:                                     /* memory module */
+        gfx_round_rect_stroke(s, cx - 8, cy - 4, 16, 8, 2, c);
+        for (int i = -5; i <= 5; i += 3) gfx_fill(s, cx + i, cy + 4, 1, 3, c);
+        gfx_fill(s, cx - 5, cy - 1, 3, 2, c); gfx_fill(s, cx + 2, cy - 1, 3, 2, c); break;
+    case SYM_CHIP:
+        gfx_round_rect_stroke(s, cx - 5, cy - 5, 11, 11, 2, c);
+        for (int i = -3; i <= 3; i += 3) {
+            gfx_fill(s, cx + i, cy - 8, 1, 3, c); gfx_fill(s, cx + i, cy + 6, 1, 3, c);
+            gfx_fill(s, cx - 8, cy + i, 3, 1, c); gfx_fill(s, cx + 6, cy + i, 3, 1, c);
+        } break;
+    case SYM_USB:                                     /* USB trident */
+        gfx_vline(s, cx, cy - 7, 13, c); gfx_line(s, cx, cy - 8, cx - 2, cy - 5, c); gfx_line(s, cx, cy - 8, cx + 2, cy - 5, c);
+        gfx_line(s, cx, cy + 2, cx - 5, cy - 2, c); gfx_vline(s, cx - 5, cy - 4, 3, c); gfx_circle(s, cx - 5, cy - 4, 1, c);
+        gfx_line(s, cx, cy, cx + 5, cy - 4, c); gfx_fill(s, cx + 4, cy - 6, 3, 3, c);
+        gfx_circle(s, cx, cy + 6, 2, c); break;
+    case SYM_BOLT:
+        gfx_line(s, cx + 2, cy - 8, cx - 4, cy + 1, c); gfx_line(s, cx - 4, cy + 1, cx + 4, cy - 1, c);
+        gfx_line(s, cx + 4, cy - 1, cx - 2, cy + 8, c); gfx_line(s, cx + 3, cy - 8, cx - 3, cy + 1, c); break;
+    case SYM_LIST:
+        for (int i = -5; i <= 5; i += 5) { gfx_circle(s, cx - 6, cy + i, 1, c); gfx_fill(s, cx - 3, cy + i, 10, 1, c); } break;
+    case SYM_GEAR_LINE:
+        gfx_circle_stroke(s, cx, cy, 6, c); gfx_circle_stroke(s, cx, cy, 2, c);
+        gfx_fill(s, cx - 1, cy - 9, 2, 3, c); gfx_fill(s, cx - 1, cy + 7, 2, 3, c);
+        gfx_fill(s, cx - 9, cy - 1, 3, 2, c); gfx_fill(s, cx + 7, cy - 1, 3, 2, c);
+        gfx_line(s, cx - 6, cy - 6, cx - 4, cy - 4, c); gfx_line(s, cx + 6, cy - 6, cx + 4, cy - 4, c);
+        gfx_line(s, cx - 6, cy + 6, cx - 4, cy + 4, c); gfx_line(s, cx + 6, cy + 6, cx + 4, cy + 4, c); break;
+    case SYM_CLOCK:
+        gfx_circle_stroke(s, cx, cy, 7, c); gfx_vline(s, cx, cy - 4, 5, c); gfx_line(s, cx, cy, cx + 3, cy + 2, c); break;
+    case SYM_HOUSE:
+        gfx_line(s, cx - 8, cy - 1, cx, cy - 8, c); gfx_line(s, cx, cy - 8, cx + 8, cy - 1, c);
+        gfx_round_rect_stroke(s, cx - 6, cy - 3, 12, 10, 1, c); gfx_fill(s, cx - 1, cy + 2, 3, 5, c); break;
+    case SYM_FOLDER_LINE:
+        gfx_line(s, cx - 8, cy - 6, cx - 3, cy - 6, c); gfx_line(s, cx - 3, cy - 6, cx - 1, cy - 4, c);
+        gfx_round_rect_stroke(s, cx - 8, cy - 4, 16, 11, 2, c); break;
+    case SYM_APPS:                                    /* Applications */
+        gfx_round_rect_stroke(s, cx - 8, cy - 8, 7, 7, 2, c); gfx_round_rect_stroke(s, cx + 1, cy - 8, 7, 7, 2, c);
+        gfx_round_rect_stroke(s, cx - 8, cy + 1, 7, 7, 2, c); gfx_round_rect_stroke(s, cx + 1, cy + 1, 7, 7, 2, c); break;
+    case SYM_DESKTOP:                                 /* display */
+        gfx_round_rect_stroke(s, cx - 8, cy - 7, 16, 11, 2, c);
+        gfx_vline(s, cx, cy + 4, 3, c); gfx_hline(s, cx - 4, cy + 7, 9, c); break;
+    case SYM_DOWNLOAD:                                /* arrow down in a circle */
+        gfx_circle_stroke(s, cx, cy, 7, c); gfx_vline(s, cx, cy - 4, 8, c);
+        gfx_line(s, cx - 3, cy + 1, cx, cy + 4, c); gfx_line(s, cx + 3, cy + 1, cx, cy + 4, c); break;
+    case SYM_TRASH:
+        gfx_hline(s, cx - 7, cy - 6, 15, c); gfx_fill(s, cx - 2, cy - 8, 5, 2, c);
+        gfx_line(s, cx - 6, cy - 5, cx - 5, cy + 7, c); gfx_line(s, cx + 6, cy - 5, cx + 5, cy + 7, c);
+        gfx_hline(s, cx - 5, cy + 7, 11, c); gfx_vline(s, cx - 2, cy - 3, 8, c); gfx_vline(s, cx + 2, cy - 3, 8, c); break;
+    case SYM_FOLDER_PLUS:
+        gfx_line(s, cx - 8, cy - 6, cx - 3, cy - 6, c); gfx_line(s, cx - 3, cy - 6, cx - 1, cy - 4, c);
+        gfx_round_rect_stroke(s, cx - 8, cy - 4, 16, 11, 2, c);
+        gfx_fill(s, cx - 3, cy + 1, 7, 1, c); gfx_fill(s, cx, cy - 2, 1, 7, c); break;
     default: break;
     }
+}
+
+void ui_sidebar_row(gfx_rect r, const char *label, uint32_t symbol, int selected) {
+    int32_t h = r.y1 - r.y0;
+    if (selected) gfx_round_rect(&gfx_screen, r.x0, r.y0, r.x1 - r.x0, h, 6, T.sidebar_selection);
+    if (symbol) ui_symbol_glyph(r.x0 + 17, r.y0 + h / 2, symbol, OPAQUE(T.accent));
+    gfx_text_fit(&gfx_screen, FONT_BODY, r.x0 + 34, baseline_in(r, FONT_BODY), label, r.x1 - r.x0 - 40, OPAQUE(T.text));
 }
 
 /* ------------------------------------------------------------ controls */
@@ -204,7 +270,7 @@ void ui_search_field(gfx_rect r, const char *text, int focused) {
     }
 }
 
-void ui_text_field(gfx_rect r, const char *text, const char *placeholder, int focused) {
+void ui_text_field_caret(gfx_rect r, const char *text, const char *placeholder, int focused, size_t caret) {
     gfx_surface *s = &gfx_screen;
     int32_t w = r.x1 - r.x0, h = r.y1 - r.y0;
     if (focused) gfx_round_rect(s, r.x0 - 3, r.y0 - 3, w + 6, h + 6, 8, WITH_ALPHA(T.accent, 0x70));
@@ -214,9 +280,19 @@ void ui_text_field(gfx_rect r, const char *text, const char *placeholder, int fo
     gfx_text_fit(s, FONT_BODY, r.x0 + 8, baseline_in(r, FONT_BODY), has ? text : (placeholder ? placeholder : ""),
                  w - 16, OPAQUE(has ? T.text : T.text3));
     if (focused) {
-        int32_t cx = r.x0 + 8 + (has ? gfx_text_width(FONT_BODY, text) : 0) + 1;
-        gfx_fill(s, cx, r.y0 + 4, 1, h - 8, OPAQUE(T.text));
+        int32_t tw = 0;
+        if (has) {
+            char head[256]; size_t n = 0;
+            while (text[n] && n < caret && n + 1u < sizeof(head)) { head[n] = text[n]; ++n; }
+            head[n] = '\0';
+            tw = gfx_text_width(FONT_BODY, head);
+            if (tw > w - 16) tw = w - 16;
+        }
+        gfx_fill(s, r.x0 + 8 + tw + 1, r.y0 + 4, 1, h - 8, OPAQUE(T.text));
     }
+}
+void ui_text_field(gfx_rect r, const char *text, const char *placeholder, int focused) {
+    ui_text_field_caret(r, text, placeholder, focused, (size_t)-1);
 }
 
 void ui_group(gfx_rect r) {

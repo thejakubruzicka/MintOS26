@@ -247,3 +247,79 @@ int64_t mint_tcp_recv(int64_t handle, void *out, size_t capacity) {
 }
 int64_t mint_tcp_state(int64_t handle) { return mint_syscall3(MINT_SYS_TCP, MINT_TCP_OP_STATE, (uint64_t)handle, 0); }
 int64_t mint_tcp_close(int64_t handle) { return mint_syscall3(MINT_SYS_TCP, MINT_TCP_OP_CLOSE, (uint64_t)handle, 0); }
+int64_t mint_file_open(const char *path, uint32_t flags) {
+    return mint_syscall3(MINT_SYS_MFS_OPEN, (uint64_t)(uintptr_t)path, flags, 0);
+}
+int64_t mint_file_read(int64_t fd, void *out, size_t capacity) {
+    return mint_syscall3(MINT_SYS_MFS_READ, (uint64_t)fd, (uint64_t)(uintptr_t)out, capacity);
+}
+int64_t mint_file_write(int64_t fd, const void *data, size_t length) {
+    size_t done = 0;
+    while (done < length) {
+        size_t chunk = length - done > MINT_MFS_IO_MAX ? MINT_MFS_IO_MAX : length - done;
+        int64_t w = mint_syscall3(MINT_SYS_MFS_WRITE, (uint64_t)fd, (uint64_t)(uintptr_t)((const uint8_t *)data + done), chunk);
+        if (w < 0) return w;
+        if (w == 0) return -MINT_ENOSPC;
+        done += (size_t)w;
+    }
+    return (int64_t)done;
+}
+int64_t mint_file_seek(int64_t fd, int64_t offset, uint32_t whence) {
+    return mint_syscall3(MINT_SYS_MFS_SEEK, (uint64_t)fd, (uint64_t)offset, whence);
+}
+int64_t mint_file_close(int64_t fd) { return mint_syscall3(MINT_SYS_MFS_CLOSE, (uint64_t)fd, 0, 0); }
+int64_t mint_path_stat(const char *path, MINT_MFS_STAT *out) {
+    return mint_syscall3(MINT_SYS_MFS_STAT, (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)out, 0);
+}
+int64_t mint_dir_list(const char *path, uint32_t start, MINT_MFS_DIRENT *out) {
+    return mint_syscall3(MINT_SYS_MFS_LIST, (uint64_t)(uintptr_t)path, start, (uint64_t)(uintptr_t)out);
+}
+int64_t mint_dir_create(const char *path) { return mint_syscall3(MINT_SYS_MFS_MKDIR, (uint64_t)(uintptr_t)path, 0, 0); }
+int64_t mint_path_rename(const char *from, const char *to) {
+    return mint_syscall3(MINT_SYS_MFS_RENAME, (uint64_t)(uintptr_t)from, (uint64_t)(uintptr_t)to, 0);
+}
+int64_t mint_path_remove(const char *path) { return mint_syscall3(MINT_SYS_MFS_REMOVE, (uint64_t)(uintptr_t)path, 0, 0); }
+int64_t mint_fs_flush(void) { return mint_syscall3(MINT_SYS_MFS_SYNC, 0, 0, 0); }
+int64_t mint_fs_get_volume(MINT_MFS_VOLUME *out) { return mint_syscall3(MINT_SYS_MFS_VOLUME, (uint64_t)(uintptr_t)out, 0, 0); }
+int64_t mint_storage_init_mintos(const MINT_STORAGE_FORMAT_REQUEST *request) {
+    return mint_syscall3(MINT_SYS_STORAGE_INIT_MINTOS, (uint64_t)(uintptr_t)request, 0, 0);
+}
+int64_t mint_file_load(const char *path, void *out, size_t capacity) {
+    int64_t fd = mint_file_open(path, MINT_O_READ);
+    if (fd < 0) return fd;
+    size_t got = 0;
+    while (got < capacity) {
+        int64_t r = mint_file_read(fd, (uint8_t *)out + got, capacity - got);
+        if (r < 0) { (void)mint_file_close(fd); return r; }
+        if (r == 0) break;
+        got += (size_t)r;
+    }
+    (void)mint_file_close(fd);
+    return (int64_t)got;
+}
+static int64_t file_write_whole(const char *path, const void *data, size_t length) {
+    int64_t fd = mint_file_open(path, MINT_O_WRITE | MINT_O_CREATE | MINT_O_TRUNC);
+    if (fd < 0) return fd;
+    int64_t w = length ? mint_file_write(fd, data, length) : 0;
+    int64_t c = mint_file_close(fd);            /* close commits the data */
+    return w < 0 ? w : c < 0 ? c : (int64_t)length;
+}
+/* Safe save: the new contents go to a hidden sibling ".~name", then one atomic
+ * rename replaces the original, so a crash leaves the old or the new file. */
+int64_t mint_file_save(const char *path, const void *data, size_t length) {
+    static char tmp[MINT_MFS_PATH_MAX];
+    size_t n = 0, slash = 0;
+    while (path[n]) { if (path[n] == '/') slash = n; ++n; }
+    if (!n || path[0] != '/' || n - slash - 1u > MINT_MFS_NAME_MAX - 2u || n + 3u > sizeof(tmp))
+        return file_write_whole(path, data, length);
+    size_t o = 0;
+    for (size_t i = 0; i <= slash; ++i) tmp[o++] = path[i];
+    tmp[o++] = '.'; tmp[o++] = '~';
+    for (size_t i = slash + 1u; i < n; ++i) tmp[o++] = path[i];
+    tmp[o] = '\0';
+    int64_t rc = file_write_whole(tmp, data, length);
+    if (rc < 0) { (void)mint_path_remove(tmp); return rc; }
+    int64_t r = mint_path_rename(tmp, path);
+    if (r < 0) { (void)mint_path_remove(tmp); return r; }
+    return rc;
+}

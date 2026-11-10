@@ -1,0 +1,38 @@
+# MintOS26 26.5.013.0 — MintFS: a read/write filesystem
+
+- **MintFS v1** (`kernel/fs/mintfs.c`) is MintOS's own read/write filesystem.
+  - **Copy-on-write:** a change is never written over data the last committed state still uses. New blocks are written and flushed, then one of two alternating superblocks makes the commit durable. After a power cut the volume mounts at its last commit, with no repair pass.
+  - **Checksums:** every metadata block carries a CRC32C, its own address, its owner and the generation that wrote it. Damage is detected on read and reported rather than followed.
+  - **Layout:** 4 KiB blocks and a two-level inode map. Files keep small contents inline, then use 496 direct pointers plus single and double indirect pointers. Folders hold variable-length records.
+  - **Names** are UTF-8, up to 255 bytes, compared case-insensitively for ASCII and stored with their case, like APFS.
+  - Volumes can be up to about 63 GiB.
+  - **Consistency check:** `mintfs_check` verifies checksums and pointers, counts block references, and detects leaked or missing blocks and broken folder links.
+- **MintOS disks:**
+  - **GPT:** Disk Utility can turn a blank disk into a MintOS disk: a protective MBR, primary and backup GPT, and one MintFS partition at 1 MiB.
+  - **Folders:** the volume is "MintOS HD", with a macOS-style tree: `/Applications`, `/Library`, `/System`, `/Volumes`, `/Users/Shared`, and `/Users/mintos/{Desktop, Documents, Downloads, Movies, Music, Pictures}` plus a Trash.
+  - **Mount:** the kernel mounts the first MintOS disk at boot as `/`, and a background `fs` task commits pending file data about every 2 seconds.
+- **Write safety:**
+  - Disks stay read-only to the generic block layer.
+  - MintFS writes through a block-layer write grant limited to its own partition. A write outside that range, or from a different owner, is refused.
+  - Initializing needs all of the following:
+    - a blank disk: zeroed sectors at the start, around both GPT arrays and at the end;
+    - at least 64 MiB;
+    - the device's serial number and size matching what Disk Utility showed;
+    - the typed confirmation `FORMAT <device>`.
+  - Disks that MintOS did not create are never written.
+- **AHCI** transfers up to 4 KiB (8 sectors) per command, for both reads and writes.
+- **File API:** 13 new syscalls (`0x4D40`–`0x4D4C`):
+  - open, read, write, seek, close;
+  - stat, batched folder listing, mkdir, rename (replaces atomically), remove;
+  - sync, volume status and MintOS-disk initialization.
+  - Handles belong to a process and are closed when it exits. The runtime adds `mint_file_load` and an atomic `mint_file_save` (writes a hidden temporary file, then renames it over the original).
+- **Tools:** `tools/mintfs_tool` checks, lists and prints MintOS disk images on the host, read-only.
+- **Tests:**
+  - `tools/test_mintfs.c` is a torture test on a RAM disk with a volatile write cache. It runs random operations against a model with fsck after every commit, remounts, 300 power cuts per seed (with torn writes and crashes inside a commit), a full disk, checksum damage, name rules, and sparse files across every pointer level. It is part of `make check`.
+  - `tools/test_gpt.py` checks the GPT against an independent parser.
+  - `tools/test_mintfs_contracts.py` holds the safety contracts.
+  - The ring-3 syscall harness covers the new calls.
+- **Validation:** in QEMU 11.1 q35/OVMF with a blank 1 GiB SATA disk:
+  - Disk Utility initialized it, and Files, Notes and Terminal created, renamed, trashed and deleted items.
+  - The disk was remounted after hard power-offs, including one in the middle of an edit. The last commit was intact, the unsaved typing was gone, and the host fsck reported the volume clean.
+  - VirtualBox and physical hardware have not been validated yet.

@@ -1,5 +1,20 @@
 # MintOS26 changelog
 
+## 26.5.013.0 / MintDE 2.3.0 — MintFS, a read/write filesystem
+
+- **MintFS:** MintOS's own copy-on-write, checksummed filesystem. A power cut leaves the last commit intact, and there is a consistency checker.
+- **MintOS disks:** Disk Utility turns a blank disk into a GPT disk with one MintFS volume, "MintOS HD", laid out like macOS (`/Applications`, `/Users/mintos/Documents`, …). It mounts at boot.
+- **Write safety:** writes go only through a grant that covers the MintOS partition. Every other disk stays read-only.
+- **AHCI** moves up to 4 KiB per command.
+- **File syscalls:** 13 new calls, plus an atomic save in the runtime.
+- **MintDE 2.3.0:**
+  - Files works like Finder: Favorites, New Folder, Rename, Duplicate, Trash, and dates.
+  - Notes saves to `~/Documents`.
+  - Terminal gains file commands (`ls`, `cd`, `mkdir`, `rm`, `mv`, `cp`, `echo >`, `df`).
+  - Settings and Disk Utility show the volume.
+  - Sidebars use macOS vibrancy.
+- **Tests:** a MintFS torture test with 300 power cuts per seed, GPT checks against an independent parser, safety contracts, and syscall harness cases. In QEMU, data survived hard power-offs and the host fsck reported the disk clean.
+
 ## 26.5.012.0 / MintDE 2.2.0 — TLS 1.3 and HTTPS
 
 - **Crypto library:** MintOS's own, in user space: SHA-2, HMAC/HKDF, ChaCha20-Poly1305, AES-GCM, X25519, and RSA (PKCS#1, PSS) and ECDSA P-256/P-384 verification.

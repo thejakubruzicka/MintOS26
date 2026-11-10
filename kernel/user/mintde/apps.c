@@ -11,12 +11,15 @@
 
 static MINT_FS_DIRENT fs_entries[MINT_RAMFS_MAX_FILES];
 static uint32_t fs_entry_count;
-static char note_buffer[512];
+#define NOTE_MAX 16384u
+#define NOTE_RAM_MAX (MINT_RAMFS_FILE_CAPACITY - 1u)
+static char note_buffer[NOTE_MAX];
 static size_t note_length;
 static uint32_t notes_loaded;
 static MINT_INPUT_INFO input_info;
 static uint32_t disk_selected_device;
 static uint32_t disk_format_prompt;
+static uint32_t disk_format_kind;           /* 0 MintOS (MintFS), 1 MS-DOS (FAT16) */
 static char disk_confirmation[MINT_STORAGE_FORMAT_CONFIRM_LEN];
 static size_t disk_confirmation_length;
 static char disk_result[112];
@@ -76,6 +79,11 @@ static const char *network_state_text(const MINT_NET_INFO *n, uint32_t *dot, int
 static int network_toggle(void);
 static uint32_t network_autoconnect;
 static void terminal_cancel_job(void);
+static uint64_t term_ms(void);
+static int terminal_mfs_command(const char *cmd);
+static const char *terminal_prompt(void);
+static int term_mfs_active(void);
+static int terminal_mfs_mode;
 static int terminal_job_active(void);
 static const char *terminal_job_hint(void);
 
@@ -343,13 +351,16 @@ static void terminal_run_command(void) {
     terminal_push_command(cmd);
     if(terminal_equals(cmd,"clear")) { terminal_clear(); return; }
     if(terminal_network_command(cmd)) return;
+    if(terminal_mfs_command(cmd)) return;
     if(terminal_equals(cmd,"help")) {
         terminal_push("Commands: help, clear, ver, uptime, status, cpu, usb");
         terminal_push("Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] [-s] http(s)://...");
         terminal_push("pci, resources, drivers, mounts, io, logs, net");
         terminal_push("drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat");
         terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
-        terminal_push("power, shutdown, restart (asks for confirmation)"); return;
+        terminal_push("power, shutdown, restart (asks for confirmation)");
+        terminal_push("MintOS HD: ls [-l], cd, pwd, cat, open, mkdir, touch, rm [-r], rmdir, mv, cp, echo txt > file, df, sync");
+        terminal_push("use hd switches to MintOS HD; use sda/sdb to a read-only FAT16 volume"); return;
     }
     if(terminal_equals(cmd,"shutdown") || terminal_equals(cmd,"poweroff")) {
         shell_request_power(MINT_POWER_ACTION_SHUTDOWN); terminal_push("Confirm shutdown in the dialog (Enter) or press Esc"); return;
@@ -616,7 +627,7 @@ static void terminal_run_command(void) {
         return;
     }
     if(terminal_starts_with(cmd,"use ")) {
-        if(terminal_select_named_volume(cmd+4)) { char row[80]="Selected ";terminal_append(row,sizeof(row),cmd+4);terminal_append(row,sizeof(row)," (read-only)");terminal_push(row); }
+        if(terminal_select_named_volume(cmd+4)) { terminal_mfs_mode=0; char row[80]="Selected ";terminal_append(row,sizeof(row),cmd+4);terminal_append(row,sizeof(row)," (read-only)");terminal_push(row); }
         else terminal_push("No mounted volume matches that device; use 'volumes' or 'mounts'");
         return;
     }
@@ -739,24 +750,65 @@ static void files_go_up(void) {
     files_selected_entry=-1; files_preview_active=0; refresh_fat_files();
 }
 
+/* Notes live in ~/Documents/Notes.txt on MintOS HD when it is available
+ * (saved ~1 s after typing stops, atomically); otherwise in the session RAM
+ * store as before. Files can open other text files in Notes. */
+static char notes_path[MINT_MFS_PATH_MAX];
+static uint32_t notes_on_disk, notes_dirty, notes_readonly, notes_save_failed;
+static uint64_t notes_edit_ms;
+
+static int notes_default_path(char *out, size_t cap) {
+    MINT_MFS_VOLUME v;
+    if (mint_fs_get_volume(&v) != 0 || v.state != MINT_MFS_VOLUME_READY) return 0;
+    copy_text(out, cap, v.home); str_append(out, cap, "/Documents/Notes.txt");
+    return 1;
+}
 static void load_notes(void) {
     if (notes_loaded) return;
-    note_length = 0; note_buffer[0] = '\0';
+    note_length = 0; note_buffer[0] = '\0'; notes_readonly = 0; notes_dirty = 0; notes_save_failed = 0;
+    char def[MINT_MFS_PATH_MAX];
+    notes_on_disk = (uint32_t)notes_default_path(def, sizeof(def));
+    int migrate = 0;
+    if (notes_on_disk) {
+        if (!notes_path[0]) copy_text(notes_path, sizeof(notes_path), def);
+        int64_t n = mint_file_load(notes_path, note_buffer, sizeof(note_buffer) - 1u);
+        if (n >= 0) {
+            note_length = (size_t)n; note_buffer[note_length] = '\0';
+            if (note_length >= sizeof(note_buffer) - 1u) notes_readonly = 1u;           /* too large to edit safely */
+            for (size_t i = 0; i < note_length; ++i) if (!note_buffer[i]) { notes_readonly = 1u; break; }
+            notes_loaded = 1u;
+            return;
+        }
+        int is_default = 1;
+        for (size_t i = 0; def[i] || notes_path[i]; ++i) if (def[i] != notes_path[i]) { is_default = 0; break; }
+        if (n == -MINT_ENOENT && is_default) migrate = 1;     /* first run: carry the session note over */
+        else if (n == -MINT_ENOENT) { notes_loaded = 1u; return; }   /* opened file vanished: start empty */
+        else { notes_on_disk = 0; notes_path[0] = '\0'; }
+    }
     int64_t h = mint_fs_open("NOTES.TXT", MINT_FS_OPEN_READ);
     if (h >= 0) {
-        int64_t n = mint_fs_read((uint64_t)h, note_buffer, sizeof(note_buffer)-1u);
+        int64_t n = mint_fs_read((uint64_t)h, note_buffer, NOTE_RAM_MAX);
         if (n > 0) note_length = (size_t)n;
         note_buffer[note_length] = '\0';
         (void)mint_fs_close((uint64_t)h);
     }
+    if (migrate && note_length) { notes_dirty = 1u; notes_edit_ms = 0; }
     notes_loaded = 1u;
 }
 
 static void save_notes(void) {
+    if (notes_on_disk) { notes_dirty = 1u; notes_edit_ms = term_ms(); return; }
     int64_t h = mint_fs_open("NOTES.TXT", MINT_FS_OPEN_WRITE | MINT_FS_OPEN_TRUNC);
     if (h < 0) return;
-    (void)mint_fs_write((uint64_t)h, note_buffer, note_length);
+    (void)mint_fs_write((uint64_t)h, note_buffer, note_length > NOTE_RAM_MAX ? NOTE_RAM_MAX : note_length);
     (void)mint_fs_close((uint64_t)h);
+}
+static void notes_flush(void) {
+    if (!notes_on_disk || !notes_dirty || !notes_path[0]) return;
+    int64_t rc = mint_file_save(notes_path, note_buffer, note_length);
+    notes_save_failed = rc < 0;
+    if (rc >= 0) notes_dirty = 0;
+    else notes_edit_ms = term_ms() + 5000u;              /* retry later */
 }
 
 static const char *driver_state_label(uint32_t state) {
@@ -874,7 +926,8 @@ void app_default_size(uint32_t app, int32_t *w, int32_t *h) {
     *h = app < APP_COUNT ? sz[app][1] : 400;
 }
 const char *app_window_title(uint32_t app) {
-    if (app == APP_TERMINAL) return "root \xE2\x80\x94 mintos \xE2\x80\x94 bounded shell";
+    if (app == APP_TERMINAL) return term_mfs_active() ? "mintos \xE2\x80\x94 mintsh \xE2\x80\x94 MintOS HD"
+                                                                   : "root \xE2\x80\x94 mintos \xE2\x80\x94 bounded shell";
     if (app == APP_WEB) return web_title();
     return app_name(app);
 }
@@ -890,25 +943,58 @@ static void toolbar_title(const mde_layout *l, const char *title, int with_nav) 
 }
 
 /* ------------------------------------------------------------ Files */
-static uint32_t files_count(void) { return files_volume ? fat_entry_count : fs_entry_count; }
-static const char *files_entry_name(uint32_t i) { return files_volume ? fat_entries[i].name : fs_entries[i].name; }
-static uint64_t files_entry_size(uint32_t i) { return files_volume ? fat_entries[i].size : fs_entries[i].size; }
-static int files_entry_is_dir(uint32_t i) { return files_volume && (fat_entries[i].flags & MINT_FAT16_DIRENT_DIRECTORY); }
+/* Locations: MintOS HD (read/write MintFS, Finder-style), FAT16 volumes
+ * (read-only) and the session RAM store. files_volume selects one. */
+#define FILES_MFS 0xFFFFu                 /* files_volume value for MintOS HD */
+#define FILES_MAX 256u
+static MINT_MFS_DIRENT mfs_entries[FILES_MAX];
+static uint32_t mfs_entry_count;
+static char mfs_path[MINT_MFS_PATH_MAX] = "/";
+static MINT_MFS_VOLUME mfs_volume;
+static int mfs_ready, files_started;
+static uint32_t files_renaming, files_rename_select;   /* select: the name (without extension) is selected */
+static size_t files_rename_caret;                       /* byte offset of the caret */
+static char files_rename_text[MINT_MFS_NAME_MAX + 1];
+enum { FILES_CONFIRM_NONE = 0, FILES_CONFIRM_DELETE, FILES_CONFIRM_EMPTY_TRASH };
+static uint32_t files_confirm;
+static char files_message[96];
+static uint64_t files_message_at;
+static char files_work[MINT_MFS_PATH_MAX], files_work2[MINT_MFS_PATH_MAX];
+
+static int files_on_mfs(void) { return files_volume == FILES_MFS; }
+static uint32_t files_count(void) { return files_on_mfs() ? mfs_entry_count : files_volume ? fat_entry_count : fs_entry_count; }
+static const char *files_entry_name(uint32_t i) {
+    return files_on_mfs() ? mfs_entries[i].name : files_volume ? fat_entries[i].name : fs_entries[i].name;
+}
+static uint64_t files_entry_size(uint32_t i) {
+    return files_on_mfs() ? mfs_entries[i].size : files_volume ? fat_entries[i].size : fs_entries[i].size;
+}
+static int files_entry_is_dir(uint32_t i) {
+    if (files_on_mfs()) return mfs_entries[i].type == MINT_MFS_DIR;
+    return files_volume && (fat_entries[i].flags & MINT_FAT16_DIRENT_DIRECTORY);
+}
 static const char *files_kind(uint32_t i) {
     if (files_entry_is_dir(i)) return "Folder";
     const char *n = files_entry_name(i);
-    size_t len = text_length(n);
-    if (len > 4 && n[len - 4] == '.') {
-        const char *e = n + len - 3;
-        if (ci_contains(e, "TXT")) return "Plain Text";
-        if (ci_contains(e, "PNG")) return "PNG Image";
-        if (ci_contains(e, "ELF")) return "Executable";
-        if (ci_contains(e, "RGB")) return "Raw Image";
-        if (ci_contains(e, "DAT")) return "Data";
-    }
-    if (len > 3 && n[len - 2] == '.' && (n[len - 1] == 'C' || n[len - 1] == 'c')) return "C Source";
-    if (len > 3 && n[len - 3] == '.' && ci_contains(n + len - 2, "md")) return "Markdown";
+    size_t len = text_length(n), dot = len;
+    while (dot && n[dot - 1u] != '.') --dot;
+    if (!dot || dot == 1u) return "Document";
+    const char *e = n + dot;
+    size_t el = len - dot;
+    if (el == 3 && ci_contains(e, "txt")) return "Plain Text";
+    if (el == 3 && ci_contains(e, "png")) return "PNG Image";
+    if (el == 3 && ci_contains(e, "elf")) return "Executable";
+    if (el == 3 && ci_contains(e, "rgb")) return "Raw Image";
+    if (el == 3 && ci_contains(e, "dat")) return "Data";
+    if (el == 1 && (e[0] == 'c' || e[0] == 'C')) return "C Source";
+    if (el == 1 && (e[0] == 'h' || e[0] == 'H')) return "C Header";
+    if (el == 2 && ci_contains(e, "md")) return "Markdown";
+    if ((el == 4 && ci_contains(e, "html")) || (el == 3 && ci_contains(e, "htm"))) return "HTML Document";
     return "Document";
+}
+static int files_is_text(uint32_t i) {
+    const char *k = files_kind(i);
+    return !files_entry_is_dir(i) && (k[0] == 'P' || k[0] == 'C' || k[0] == 'M' || k[0] == 'H' || k[0] == 'D');
 }
 static void volume_label(uint32_t vi, char *out, size_t cap) {
     copy_text(out, cap, "Volume");
@@ -922,6 +1008,376 @@ static void volume_label(uint32_t vi, char *out, size_t cap) {
             return;
         }
 }
+
+/* ---- MintOS HD helpers */
+static int same_text(const char *a, const char *b) {
+    while (*a && *a == *b) { ++a; ++b; }
+    return *a == *b;
+}
+static int name_order(const char *a, const char *b) {      /* Finder: case-insensitive */
+    for (;; ++a, ++b) {
+        int x = (unsigned char)*a, y = (unsigned char)*b;
+        if (x >= 'A' && x <= 'Z') x += 32;
+        if (y >= 'A' && y <= 'Z') y += 32;
+        if (x != y || !x) return x - y;
+    }
+}
+static int mfs_join(char *out, size_t cap, const char *dir, const char *name) {
+    size_t n = text_length(dir), m = text_length(name);
+    size_t slash = n && dir[n - 1u] == '/' ? 0u : 1u;
+    if (!m || n + slash + m + 1u > cap) return 0;
+    copy_text(out, cap, dir);
+    if (slash) str_append(out, cap, "/");
+    str_append(out, cap, name);
+    return 1;
+}
+static void mfs_parent(char *path) {
+    size_t n = text_length(path);
+    while (n > 1u && path[n - 1u] != '/') --n;
+    path[n > 1u ? n - 1u : 1u] = '\0';
+    if (!path[0]) { path[0] = '/'; path[1] = '\0'; }
+}
+static void mfs_trash_path(char *out, size_t cap) { copy_text(out, cap, mfs_volume.home); str_append(out, cap, "/.Trash"); }
+static int mfs_in_trash(void) {
+    char t[96]; mfs_trash_path(t, sizeof(t));
+    size_t n = text_length(t);
+    for (size_t i = 0; i < n; ++i) if (mfs_path[i] != t[i]) return 0;
+    return mfs_path[n] == '\0' || mfs_path[n] == '/';
+}
+static void mfs_refresh_volume(void) {
+    mfs_ready = mint_fs_get_volume(&mfs_volume) == 0 && mfs_volume.state == MINT_MFS_VOLUME_READY;
+}
+static int disk_is_mintos(const MINT_STORAGE_DEVICE_INFO *d) {
+    return mfs_ready && d->block_registered && d->block_index == mfs_volume.block_index;
+}
+static void refresh_mfs_files(void) {
+    static MINT_MFS_DIRENT chunk[MINT_MFS_LIST_MAX];
+    mfs_entry_count = 0;
+    for (uint32_t start = 0; mfs_entry_count < FILES_MAX;) {
+        int64_t n = mint_dir_list(mfs_path, start, chunk);
+        if (n <= 0) break;
+        for (int64_t i = 0; i < n && mfs_entry_count < FILES_MAX; ++i)
+            if (chunk[i].name[0] != '.') mfs_entries[mfs_entry_count++] = chunk[i];   /* hidden items */
+        start += (uint32_t)n;
+        if (n < (int64_t)MINT_MFS_LIST_MAX) break;
+    }
+    for (uint32_t i = 1; i < mfs_entry_count; ++i) {
+        MINT_MFS_DIRENT t = mfs_entries[i];
+        uint32_t j = i;
+        while (j && name_order(mfs_entries[j - 1u].name, t.name) > 0) { mfs_entries[j] = mfs_entries[j - 1u]; --j; }
+        mfs_entries[j] = t;
+    }
+}
+static void files_note(const char *text) {
+    copy_text(files_message, sizeof(files_message), text);
+    files_message_at = term_ms();
+}
+static const char *mfs_error_text(int64_t rc) {
+    switch (-rc) {
+    case MINT_EEXIST: return "An item with that name already exists.";
+    case MINT_ENOSPC: return "MintOS HD is full.";
+    case MINT_ENOTEMPTY: return "The folder isn\xE2\x80\x99t empty.";
+    case MINT_ENAMETOOLONG: return "The name is too long.";
+    case MINT_EINVAL: return "That name or location can\xE2\x80\x99t be used.";
+    case MINT_EBUSY: return "The item is in use.";
+    case MINT_ENOENT: return "The item no longer exists.";
+    case MINT_ENODEV: case MINT_EROFS: return "MintOS HD isn\xE2\x80\x99t available.";
+    case MINT_EIO: return "A disk error occurred; restart to recover.";
+    default: return "The operation couldn\xE2\x80\x99t be completed.";
+    }
+}
+static int32_t mfs_find(const char *name) {
+    for (uint32_t i = 0; i < mfs_entry_count; ++i) if (same_text(mfs_entries[i].name, name)) return (int32_t)i;
+    return -1;
+}
+static void files_go_mfs(const char *path) {
+    files_volume = FILES_MFS;
+    copy_text(mfs_path, sizeof(mfs_path), path);
+    files_selected_entry = -1; files_preview_active = 0; files_scroll = 0; files_search[0] = '\0';
+    files_renaming = 0; files_confirm = 0;
+    refresh_mfs_files();
+}
+static void mfs_go_up(void) {
+    if (same_text(mfs_path, "/")) return;
+    char leaf[MINT_MFS_NAME_MAX + 1];
+    size_t n = text_length(mfs_path), s = n;
+    while (s && mfs_path[s - 1u] != '/') --s;
+    copy_text(leaf, sizeof(leaf), mfs_path + s);
+    copy_text(files_work, sizeof(files_work), mfs_path);
+    mfs_parent(files_work);
+    files_go_mfs(files_work);
+    files_selected_entry = mfs_find(leaf);           /* Finder keeps the folder selected */
+}
+static void mfs_select(uint32_t i) {
+    files_selected_entry = (int32_t)i; files_preview_active = 0; files_preview_length = 0; files_preview[0] = '\0';
+    if (i >= mfs_entry_count || mfs_entries[i].type == MINT_MFS_DIR) return;
+    if (!mfs_join(files_work, sizeof(files_work), mfs_path, mfs_entries[i].name)) return;
+    int64_t n = mint_file_load(files_work, files_preview, sizeof(files_preview) - 1u);
+    if (n < 0) return;
+    files_preview_length = (size_t)n; files_preview[files_preview_length] = '\0'; files_preview_active = 1u;
+}
+static void notes_open_file(const char *path);
+static void mfs_open(uint32_t i) {
+    if (i >= mfs_entry_count || !mfs_join(files_work2, sizeof(files_work2), mfs_path, mfs_entries[i].name)) return;
+    if (mfs_entries[i].type == MINT_MFS_DIR) { files_go_mfs(files_work2); return; }
+    if (files_is_text(i)) { notes_open_file(files_work2); shell_open_app(APP_NOTES); return; }
+    files_note("MintOS has no app to open this kind of file yet.");
+}
+/* Unique sibling name: "base", "base 2", ... or "stem copy.ext", "stem copy 2.ext". */
+static int mfs_unique(char *out, size_t cap, const char *dir, const char *name, int copy) {
+    size_t len = text_length(name), dot = len;
+    while (dot && name[dot - 1u] != '.') --dot;
+    size_t stem = copy && dot > 1u ? dot - 1u : len;
+    MINT_MFS_STAT st;
+    for (uint32_t k = 1; k < 1000u; ++k) {
+        char cand[MINT_MFS_NAME_MAX + 1];
+        size_t o = 0;
+        for (size_t q = 0; q < stem && o + 1u < sizeof(cand); ++q) cand[o++] = name[q];
+        cand[o] = '\0';
+        if (copy) str_append(cand, sizeof(cand), " copy");
+        if (k > 1u) { char nb[12]; format_u64(nb, sizeof(nb), k); str_append(cand, sizeof(cand), " "); str_append(cand, sizeof(cand), nb); }
+        if (stem < len) str_append(cand, sizeof(cand), name + stem);
+        if (!mfs_join(out, cap, dir, cand)) return 0;
+        if (mint_path_stat(out, &st) == -MINT_ENOENT) return 1;
+    }
+    return 0;
+}
+/* Deletes a file or a whole folder tree (MintFS removes only empty folders). */
+static int64_t mfs_delete_tree(const char *path) {
+    static char cur[MINT_MFS_PATH_MAX], child[MINT_MFS_PATH_MAX];
+    static MINT_MFS_DIRENT list[MINT_MFS_LIST_MAX];
+    MINT_MFS_STAT st;
+    int64_t rc = mint_path_stat(path, &st);
+    if (rc < 0) return rc;
+    if (st.type != MINT_MFS_DIR) return mint_path_remove(path);
+    copy_text(cur, sizeof(cur), path);
+    size_t root = text_length(path);
+    for (uint32_t guard = 0; guard < 200000u; ++guard) {
+        int64_t n = mint_dir_list(cur, 0, list);
+        if (n < 0) return n;
+        if (n == 0) {
+            if ((rc = mint_path_remove(cur)) < 0) return rc;
+            if (text_length(cur) <= root) return 0;
+            mfs_parent(cur);
+            continue;
+        }
+        for (int64_t i = 0; i < n; ++i) {
+            if (!mfs_join(child, sizeof(child), cur, list[i].name)) return -MINT_ENAMETOOLONG;
+            if (list[i].type == MINT_MFS_DIR) { copy_text(cur, sizeof(cur), child); break; }
+            if ((rc = mint_path_remove(child)) < 0) return rc;
+        }
+    }
+    return -MINT_EIO;
+}
+static void files_after_change(const char *select_name) {
+    refresh_mfs_files();
+    files_selected_entry = select_name ? mfs_find(select_name) : -1;
+    files_preview_active = 0;
+    if (files_selected_entry >= 0) mfs_select((uint32_t)files_selected_entry);
+}
+static void files_new_folder(void) {
+    if (!files_on_mfs() || !mfs_ready) return;
+    for (uint32_t k = 1; k < 200u; ++k) {
+        char name[40]; copy_text(name, sizeof(name), "untitled folder");
+        if (k > 1u) { char nb[12]; format_u64(nb, sizeof(nb), k); str_append(name, sizeof(name), " "); str_append(name, sizeof(name), nb); }
+        if (!mfs_join(files_work, sizeof(files_work), mfs_path, name)) { files_note(mfs_error_text(-MINT_ENAMETOOLONG)); return; }
+        int64_t rc = mint_dir_create(files_work);
+        if (rc == -MINT_EEXIST) continue;
+        if (rc < 0) { files_note(mfs_error_text(rc)); return; }
+        files_search[0] = '\0';
+        files_after_change(name);
+        files_renaming = 1; files_rename_select = 1; copy_text(files_rename_text, sizeof(files_rename_text), name);
+        files_rename_caret = text_length(files_rename_text);
+        return;
+    }
+}
+static void files_begin_rename(void) {
+    if (!files_on_mfs() || files_selected_entry < 0 || (uint32_t)files_selected_entry >= mfs_entry_count) return;
+    files_renaming = 1; files_rename_select = 1;
+    copy_text(files_rename_text, sizeof(files_rename_text), mfs_entries[files_selected_entry].name);
+    files_rename_caret = text_length(files_rename_text);
+}
+/* Finder selects the name without its extension when renaming a file. */
+static size_t files_rename_stem(void) {
+    size_t n = text_length(files_rename_text), dot = n;
+    int dir = files_selected_entry >= 0 && (uint32_t)files_selected_entry < mfs_entry_count &&
+              mfs_entries[files_selected_entry].type == MINT_MFS_DIR;
+    if (dir) return n;
+    while (dot && files_rename_text[dot - 1u] != '.') --dot;
+    return dot > 1u ? dot - 1u : n;
+}
+static void files_rename_replace_stem(void) {
+    size_t stem = files_rename_stem(), n = text_length(files_rename_text), o = 0;
+    for (size_t i = stem; i <= n; ++i) files_rename_text[o++] = files_rename_text[i];
+    files_rename_select = 0; files_rename_caret = 0;
+}
+static void files_commit_rename(void) {
+    if (!files_renaming) return;
+    files_renaming = 0;
+    if (files_selected_entry < 0 || (uint32_t)files_selected_entry >= mfs_entry_count) return;
+    const char *old = mfs_entries[files_selected_entry].name;
+    if (!files_rename_text[0] || same_text(old, files_rename_text)) return;
+    if (files_rename_text[0] == '.') { files_note("Names that begin with a dot are reserved for the system."); return; }
+    if (!mfs_join(files_work, sizeof(files_work), mfs_path, old) ||
+        !mfs_join(files_work2, sizeof(files_work2), mfs_path, files_rename_text)) { files_note(mfs_error_text(-MINT_ENAMETOOLONG)); return; }
+    MINT_MFS_STAT st;
+    /* Changing only the case of a name is a rename onto itself. */
+    if (!(name_order(old, files_rename_text) == 0) && mint_path_stat(files_work2, &st) == 0) {
+        files_note("An item with that name already exists. Choose a different name."); return;
+    }
+    int64_t rc = mint_path_rename(files_work, files_work2);
+    if (rc < 0) { files_note(mfs_error_text(rc)); return; }
+    char keep[MINT_MFS_NAME_MAX + 1]; copy_text(keep, sizeof(keep), files_rename_text);
+    files_after_change(keep);
+}
+static void files_duplicate(void) {
+    if (!files_on_mfs() || files_selected_entry < 0 || (uint32_t)files_selected_entry >= mfs_entry_count) return;
+    MINT_MFS_DIRENT *e = &mfs_entries[files_selected_entry];
+    if (e->type == MINT_MFS_DIR) { files_note("Folders can\xE2\x80\x99t be duplicated yet."); return; }
+    static uint8_t buf[16384];
+    if (!mfs_join(files_work, sizeof(files_work), mfs_path, e->name) ||
+        !mfs_unique(files_work2, sizeof(files_work2), mfs_path, e->name, 1)) { files_note(mfs_error_text(-MINT_ENAMETOOLONG)); return; }
+    int64_t in_fd = mint_file_open(files_work, MINT_O_READ);
+    if (in_fd < 0) { files_note(mfs_error_text(in_fd)); return; }
+    int64_t out_fd = mint_file_open(files_work2, MINT_O_WRITE | MINT_O_CREATE | MINT_O_EXCL);
+    if (out_fd < 0) { (void)mint_file_close(in_fd); files_note(mfs_error_text(out_fd)); return; }
+    int64_t rc = 0;
+    for (;;) {
+        int64_t n = mint_file_read(in_fd, buf, sizeof(buf));
+        if (n <= 0) { rc = n; break; }
+        if ((rc = mint_file_write(out_fd, buf, (size_t)n)) < 0) break;
+    }
+    (void)mint_file_close(in_fd);
+    int64_t c = mint_file_close(out_fd);
+    if (rc < 0 || c < 0) { (void)mint_path_remove(files_work2); files_note(mfs_error_text(rc < 0 ? rc : c)); return; }
+    size_t s = text_length(files_work2);
+    while (s && files_work2[s - 1u] != '/') --s;
+    char keep[MINT_MFS_NAME_MAX + 1]; copy_text(keep, sizeof(keep), files_work2 + s);
+    files_after_change(keep);
+}
+static void files_move_to_trash(void) {
+    if (!files_on_mfs() || files_selected_entry < 0 || (uint32_t)files_selected_entry >= mfs_entry_count) return;
+    if (mfs_in_trash()) { files_confirm = FILES_CONFIRM_DELETE; return; }
+    char trash[96]; mfs_trash_path(trash, sizeof(trash));
+    int64_t rc = mint_dir_create(trash);
+    if (rc < 0 && rc != -MINT_EEXIST) { files_note(mfs_error_text(rc)); return; }
+    const char *name = mfs_entries[files_selected_entry].name;
+    if (!mfs_join(files_work, sizeof(files_work), mfs_path, name) ||
+        !mfs_unique(files_work2, sizeof(files_work2), trash, name, 0)) { files_note(mfs_error_text(-MINT_ENAMETOOLONG)); return; }
+    if ((rc = mint_path_rename(files_work, files_work2)) < 0) { files_note(mfs_error_text(rc)); return; }
+    uint32_t was = (uint32_t)files_selected_entry;
+    files_after_change(0);
+    if (mfs_entry_count) mfs_select(was < mfs_entry_count ? was : mfs_entry_count - 1u);
+}
+static void files_delete_now(void) {
+    files_confirm = 0;
+    if (files_selected_entry < 0 || (uint32_t)files_selected_entry >= mfs_entry_count) return;
+    if (!mfs_join(files_work2, sizeof(files_work2), mfs_path, mfs_entries[files_selected_entry].name)) return;
+    int64_t rc = mfs_delete_tree(files_work2);
+    if (rc < 0) files_note(mfs_error_text(rc));
+    files_after_change(0);
+}
+static void files_empty_trash(void) {
+    static MINT_MFS_DIRENT list[MINT_MFS_LIST_MAX];
+    char trash[96]; mfs_trash_path(trash, sizeof(trash));
+    files_confirm = 0;
+    for (uint32_t guard = 0; guard < 100000u; ++guard) {
+        int64_t n = mint_dir_list(trash, 0, list);
+        if (n <= 0) break;
+        if (!mfs_join(files_work2, sizeof(files_work2), trash, list[0].name)) break;
+        int64_t rc = mfs_delete_tree(files_work2);
+        if (rc < 0) { files_note(mfs_error_text(rc)); break; }
+    }
+    if (files_on_mfs()) files_after_change(0);
+}
+static uint32_t mfs_trash_items(void) {
+    static MINT_MFS_DIRENT one[MINT_MFS_LIST_MAX];
+    char trash[96]; mfs_trash_path(trash, sizeof(trash));
+    int64_t n = mint_dir_list(trash, 0, one);
+    return n > 0 ? (uint32_t)n : 0u;
+}
+
+int files_command_enabled(uint32_t command) {
+    if (!files_on_mfs() || !mfs_ready) return 0;
+    int sel = files_selected_entry >= 0 && (uint32_t)files_selected_entry < mfs_entry_count;
+    switch (command) {
+    case FILES_CMD_NEW_FOLDER: return 1;
+    case FILES_CMD_RENAME: case FILES_CMD_TRASH: return sel;
+    case FILES_CMD_DUPLICATE: return sel && mfs_entries[files_selected_entry].type != MINT_MFS_DIR;
+    case FILES_CMD_EMPTY_TRASH: return mfs_trash_items() > 0u;
+    default: return 0;
+    }
+}
+int files_command(uint32_t command) {
+    if (!files_command_enabled(command)) return 0;
+    files_commit_rename();
+    switch (command) {
+    case FILES_CMD_NEW_FOLDER: files_new_folder(); break;
+    case FILES_CMD_RENAME: files_begin_rename(); break;
+    case FILES_CMD_DUPLICATE: files_duplicate(); break;
+    case FILES_CMD_TRASH: files_move_to_trash(); break;
+    case FILES_CMD_EMPTY_TRASH: files_confirm = FILES_CONFIRM_EMPTY_TRASH; break;
+    default: return 0;
+    }
+    return 1;
+}
+int files_show_trash(void) {
+    mfs_refresh_volume();
+    if (!mfs_ready) return 0;
+    char trash[96]; mfs_trash_path(trash, sizeof(trash));
+    (void)mint_dir_create(trash);
+    files_started = 1;
+    files_go_mfs(trash);
+    return 1;
+}
+
+/* ---- sidebar (Finder: Favorites + Locations) */
+typedef struct { const char *label; uint32_t symbol; uint32_t volume; const char *path; } files_place;
+static files_place places[16];
+static uint32_t place_count, places_fav;
+static char place_paths[5][80];
+static char place_fat_labels[MINT_FAT16_MAX_VOLUMES][40];
+static void files_build_places(void) {
+    uint32_t n = 0; places_fav = 0;
+    if (mfs_ready) {
+        static const char *const sub[5] = {0, "Applications", "Desktop", "Documents", "Downloads"};
+        static const uint32_t sym[5] = {SYM_HOUSE, SYM_APPS, SYM_DESKTOP, SYM_DOC, SYM_DOWNLOAD};
+        for (uint32_t i = 0; i < 5u; ++i) {
+            if (i == 1u) copy_text(place_paths[i], sizeof(place_paths[i]), "/Applications");
+            else {
+                copy_text(place_paths[i], sizeof(place_paths[i]), mfs_volume.home);
+                if (sub[i]) { str_append(place_paths[i], sizeof(place_paths[i]), "/"); str_append(place_paths[i], sizeof(place_paths[i]), sub[i]); }
+            }
+            places[n++] = (files_place){i ? sub[i] : MINT_MFS_HOME_NAME, sym[i], FILES_MFS, place_paths[i]};
+        }
+        places_fav = n;
+        places[n++] = (files_place){mfs_volume.label[0] ? mfs_volume.label : "MintOS HD", SYM_DRIVE, FILES_MFS, "/"};
+    }
+    for (uint32_t v = 0; v < fat_volume_list.count && v < MINT_FAT16_MAX_VOLUMES && n < 15u; ++v) {
+        volume_label(v, place_fat_labels[v], sizeof(place_fat_labels[v]));
+        places[n++] = (files_place){place_fat_labels[v], SYM_DRIVE, v + 1u, 0};
+    }
+    places[n++] = (files_place){"Session (RAM)", SYM_RAM, 0, 0};
+    place_count = n;
+}
+static gfx_rect files_place_rect(const mde_layout *l, uint32_t i) {
+    gfx_rect sb = l->sidebar;
+    int32_t y = sb.y0 + 28 + 30 * (int32_t)i;
+    if (places_fav && i >= places_fav) y += 28;          /* room for the "Locations" header */
+    return R(sb.x0 + 10, y, W(sb) - 20, 28);
+}
+static int files_place_selected(uint32_t i) {
+    if (places[i].volume != files_volume) return 0;
+    return !files_on_mfs() || same_text(places[i].path, mfs_path);
+}
+static void files_choose_place(uint32_t i) {
+    files_renaming = 0; files_confirm = 0;
+    if (places[i].volume == FILES_MFS) { files_go_mfs(places[i].path); return; }
+    files_volume = places[i].volume; files_path[0] = '\0'; files_selected_entry = -1; files_preview_active = 0;
+    files_scroll = 0; files_search[0] = '\0';
+    if (files_volume) refresh_fat_files(); else refresh_files();
+}
+
 static uint32_t files_visible(uint32_t *idx, uint32_t cap) {
     uint32_t n = 0, total = files_count();
     for (uint32_t i = 0; i < total && n < cap; ++i)
@@ -936,42 +1392,72 @@ static gfx_rect files_list_rect(const mde_layout *l) {
     return c;
 }
 static gfx_rect files_search_rect(const mde_layout *l) { return R(l->toolbar.x1 - 196, l->toolbar.y0 + 12, 180, 28); }
+static gfx_rect files_newfolder_rect(const mde_layout *l) { gfx_rect s = files_search_rect(l); return R(s.x0 - 84, s.y0, 34, 28); }
+static gfx_rect files_trash_rect(const mde_layout *l) { gfx_rect s = files_search_rect(l); return R(s.x0 - 44, s.y0, 34, 28); }
+static gfx_rect files_empty_rect(const mde_layout *l) { gfx_rect s = files_search_rect(l); return R(s.x0 - 84, s.y0, 72, 28); }
+static gfx_rect files_alert_rect(const mde_layout *l) {
+    int32_t w = 420, h = 132;
+    return R(l->frame.x0 + (W(l->frame) - w) / 2, l->content.y0 - 1, w, h);
+}
+static int files_dates_shown(gfx_rect lr) { return files_on_mfs() && W(lr) >= 560; }
 
-static void files_paint(const mde_layout *l) {
-    gfx_rect sb = l->sidebar;
-    int32_t y = sb.y0 + 18;
-    ui_sidebar_header(sb.x0 + 18, y, "Locations"); y += 10;
-    ui_sidebar_item(R(sb.x0 + 10, y, W(sb) - 20, 28), "Session (RAM)", 0, 0, files_volume == 0, l->focused);
-    ui_symbol_glyph(sb.x0 + 28, y + 14, SYM_DISK, OPAQUE(files_volume == 0 && l->focused ? 0xFFFFFFu : T.accent));
-    for (uint32_t v = 0; v < fat_volume_list.count && v < MINT_FAT16_MAX_VOLUMES; ++v) {
-        char label[40]; volume_label(v, label, sizeof(label));
-        int32_t iy = y + 30 * (int32_t)(v + 1u);
-        ui_sidebar_item(R(sb.x0 + 10, iy, W(sb) - 20, 28), label, 0, 0, files_volume == v + 1u, l->focused);
-        ui_symbol_glyph(sb.x0 + 28, iy + 14, SYM_DISK, OPAQUE(files_volume == v + 1u && l->focused ? 0xFFFFFFu : T.text2));
+static void files_title(char *out, size_t cap) {
+    if (files_on_mfs()) {
+        if (same_text(mfs_path, "/")) { copy_text(out, cap, mfs_volume.label[0] ? mfs_volume.label : "MintOS HD"); return; }
+        if (mfs_in_trash() && same_text(mfs_path + text_length(mfs_path) - 7u, "/.Trash")) { copy_text(out, cap, "Trash"); return; }
+        size_t n = text_length(mfs_path);
+        while (n && mfs_path[n - 1u] != '/') --n;
+        copy_text(out, cap, mfs_path + n);
+        return;
     }
-    /* toolbar */
-    char title[48];
     if (files_path[0]) {
         size_t n = text_length(files_path);
         while (n && files_path[n - 1u] != '/') --n;
-        copy_text(title, sizeof(title), files_path + n);
-    } else if (files_volume) volume_label(files_volume - 1u, title, sizeof(title));
-    else copy_text(title, sizeof(title), "Session (RAM)");
+        copy_text(out, cap, files_path + n);
+    } else if (files_volume) volume_label(files_volume - 1u, out, cap);
+    else copy_text(out, cap, "Session (RAM)");
+}
+
+static void files_paint(const mde_layout *l) {
+    mfs_refresh_volume();
+    if (files_on_mfs() && !mfs_ready) { files_volume = 0; refresh_files(); }
+    files_build_places();
+    gfx_rect sb = l->sidebar;
+    if (places_fav) {
+        ui_sidebar_header(sb.x0 + 18, sb.y0 + 18, "Favorites");
+        ui_sidebar_header(sb.x0 + 18, files_place_rect(l, places_fav).y0 - 10, "Locations");
+    } else ui_sidebar_header(sb.x0 + 18, sb.y0 + 18, "Locations");
+    for (uint32_t i = 0; i < place_count; ++i)
+        ui_sidebar_row(files_place_rect(l, i), places[i].label, places[i].symbol, files_place_selected(i));
+    /* toolbar */
+    char title[64]; files_title(title, sizeof(title));
     int32_t tx = l->toolbar.x0 + 16;
-    ui_symbol_glyph(tx + 8, l->toolbar.y0 + 26, SYM_CHEVRON_LEFT, OPAQUE(files_path[0] ? T.text : T.text3));
+    int can_up = files_on_mfs() ? !same_text(mfs_path, "/") : files_path[0] != '\0';
+    ui_symbol_glyph(tx + 8, l->toolbar.y0 + 26, SYM_CHEVRON_LEFT, OPAQUE(can_up ? T.text : T.text3));
     ui_symbol_glyph(tx + 34, l->toolbar.y0 + 26, SYM_CHEVRON_RIGHT, OPAQUE(T.text3));
     ui_label(tx + 56, BL(R(0, l->toolbar.y0, 1, 52), FONT_HEADLINE), FONT_HEADLINE, title, T.text);
+    if (files_on_mfs() && mfs_in_trash()) {
+        ui_button(files_empty_rect(l), "Empty", 0, mfs_entry_count > 0u);
+    } else if (files_on_mfs()) {
+        gfx_rect nf = files_newfolder_rect(l), tr = files_trash_rect(l);
+        int sel = files_selected_entry >= 0;
+        ui_symbol_glyph(nf.x0 + W(nf) / 2, nf.y0 + H(nf) / 2, SYM_FOLDER_PLUS, OPAQUE(T.text2));
+        ui_symbol_glyph(tr.x0 + W(tr) / 2, tr.y0 + H(tr) / 2, SYM_TRASH, OPAQUE(sel ? T.text2 : T.text3));
+    }
     ui_search_field(files_search_rect(l), files_search, files_search_focus);
     /* list */
     gfx_rect lr = files_list_rect(l);
     gfx_fill(S, lr.x0, lr.y0, W(lr), H(l->content), OPAQUE(T.content));
-    int32_t name_x = lr.x0 + 16, size_r = lr.x1 - 170, kind_x = lr.x1 - 150;
+    int dates = files_dates_shown(lr);
+    int32_t name_x = lr.x0 + 16, size_r = lr.x1 - 170, kind_x = lr.x1 - 150, date_x = lr.x1 - 370;
+    int32_t name_w = (dates ? date_x - 12 : size_r - 100) - (name_x + 24);
     ui_label(name_x, lr.y0 + 17, FONT_CAPTION_BOLD, "Name", T.text2);
+    if (dates) ui_label(date_x, lr.y0 + 17, FONT_CAPTION_BOLD, "Date Modified", T.text2);
     ui_label_right(size_r, lr.y0 + 17, FONT_CAPTION_BOLD, "Size", T.text2);
     ui_label(kind_x, lr.y0 + 17, FONT_CAPTION_BOLD, "Kind", T.text2);
     gfx_hline(S, lr.x0, lr.y0 + 25, W(lr), T.separator);
-    uint32_t idx[MINT_FAT16_LIST_MAX];
-    uint32_t n = files_visible(idx, MINT_FAT16_LIST_MAX);
+    uint32_t idx[FILES_MAX];
+    uint32_t n = files_visible(idx, FILES_MAX);
     int32_t rows = (H(lr) - 26) / 24;
     if (files_scroll > (int32_t)n - rows) files_scroll = (int32_t)n - rows;
     if (files_scroll < 0) files_scroll = 0;
@@ -981,16 +1467,31 @@ static void files_paint(const mde_layout *l) {
         int sel = files_selected_entry == (int32_t)i;
         ui_list_row(R(row.x0 + 8, row.y0, W(row) - 16, 24), (uint32_t)r, sel, l->focused);
         if (sel) gfx_round_rect(S, row.x0 + 8, row.y0, W(row) - 16, 24, 5, OPAQUE(l->focused ? T.accent : T.selection_inactive));
-        uint32_t fg = sel && l->focused ? 0xFFFFFFu : T.text;
+        uint32_t fg = sel && l->focused ? 0xFFFFFFu : T.text, fg2 = sel && l->focused ? 0xFFFFFFu : T.text2;
         ui_symbol_glyph(name_x + 8, row.y0 + 12, files_entry_is_dir(i) ? SYM_FOLDER : SYM_DOC,
                         OPAQUE(sel && l->focused ? 0xFFFFFFu : (files_entry_is_dir(i) ? 0x4FA8F5u : T.text2)));
-        gfx_text_fit(S, FONT_BODY, name_x + 24, BL(row, FONT_BODY), files_entry_name(i), size_r - name_x - 100, OPAQUE(fg));
-        char sz[24];
+        if (sel && files_renaming) {
+            gfx_rect fr = R(name_x + 20, row.y0 + 1, name_w + 8, 22);
+            ui_text_field_caret(fr, files_rename_text, "", 1, files_rename_select ? files_rename_stem() : files_rename_caret);
+            if (files_rename_select) {
+                char stem[MINT_MFS_NAME_MAX + 1]; size_t sl = files_rename_stem();
+                for (size_t q = 0; q < sl; ++q) stem[q] = files_rename_text[q];
+                stem[sl] = '\0';
+                int32_t sw = gfx_text_width(FONT_BODY, stem);
+                if (sw > W(fr) - 16) sw = W(fr) - 16;
+                gfx_round_rect(S, fr.x0 + 6, fr.y0 + 3, sw + 4, H(fr) - 6, 3, WITH_ALPHA(T.accent, 0x55));
+            }
+        } else {
+            gfx_text_fit(S, FONT_BODY, name_x + 24, BL(row, FONT_BODY), files_entry_name(i), name_w, OPAQUE(fg));
+        }
+        char sz[40];
+        if (dates) { shell_format_date(sz, sizeof(sz), mfs_entries[i].mtime); gfx_text_fit(S, FONT_BODY, date_x, BL(row, FONT_BODY), sz, size_r - date_x - 80, OPAQUE(fg2)); }
         if (files_entry_is_dir(i)) copy_text(sz, sizeof(sz), "--"); else format_bytes(sz, sizeof(sz), files_entry_size(i));
-        ui_label_right(size_r, BL(row, FONT_BODY), FONT_BODY, sz, sel && l->focused ? 0xFFFFFFu : T.text2);
-        ui_label(kind_x, BL(row, FONT_BODY), FONT_BODY, files_kind(i), sel && l->focused ? 0xFFFFFFu : T.text2);
+        ui_label_right(size_r, BL(row, FONT_BODY), FONT_BODY, sz, fg2);
+        ui_label(kind_x, BL(row, FONT_BODY), FONT_BODY, files_kind(i), fg2);
     }
-    if (!n) ui_label_center(lr.x0 + W(lr) / 2, lr.y0 + 90, FONT_BODY, files_search[0] ? "No Results" : "This folder is empty", T.text3);
+    if (!n) ui_label_center(lr.x0 + W(lr) / 2, lr.y0 + 90, FONT_BODY,
+                            files_search[0] ? "No Results" : (files_on_mfs() && mfs_in_trash()) ? "Trash is empty" : "This folder is empty", T.text3);
     /* preview pane (Quick Look style) */
     if (lr.x1 < l->content.x1) {
         gfx_rect pv = R(lr.x1, l->content.y0, l->content.x1 - lr.x1, H(l->content) - 26);
@@ -1002,16 +1503,32 @@ static void files_paint(const mde_layout *l) {
             gfx_round_rect_stroke(S, pv.x0 + 20, pv.y0 + 18, W(pv) - 40, 200, 8, T.separator);
             int32_t ty = pv.y0 + 36;
             if (files_preview_active) {
-                char line[48]; size_t li = 0; int32_t lines = 0;
+                /* word-wrapped text preview */
+                char line[96]; size_t li = 0; int32_t lines = 0, maxw = W(pv) - 64;
                 for (size_t k = 0; k <= files_preview_length && lines < 11; ++k) {
                     char ch = k < files_preview_length ? files_preview[k] : '\n';
                     if (ch == '\r') continue;
-                    if (ch == '\n' || li + 1u >= sizeof(line) || li >= 34u) {
+                    if (ch == '\t') ch = ' ';
+                    if (ch != '\n' && (unsigned char)ch >= 32u && li + 1u < sizeof(line)) {
+                        line[li++] = ch; line[li] = '\0';
+                        if (gfx_text_width(FONT_CAPTION, line) <= maxw) continue;
+                        size_t cut = li - 1u;
+                        while (cut && line[cut] != ' ') --cut;
+                        if (!cut) cut = li - 1u;
+                        char rest[96]; size_t rn = 0;
+                        for (size_t q = cut + (line[cut] == ' ' ? 1u : 0u); q < li; ++q) rest[rn++] = line[q];
+                        line[cut] = '\0';
+                        ui_label(pv.x0 + 32, ty, FONT_CAPTION, line, T.text);
+                        ty += 16; ++lines;
+                        for (size_t q = 0; q < rn; ++q) line[q] = rest[q];
+                        li = rn; line[li] = '\0';
+                        continue;
+                    }
+                    if (ch == '\n') {
                         line[li] = '\0';
                         ui_label(pv.x0 + 32, ty, FONT_CAPTION, line, T.text);
                         ty += 16; ++lines; li = 0;
-                        if (ch != '\n' && ch) line[li++] = ch;
-                    } else if (ch >= 32 && ch < 127) line[li++] = ch;
+                    }
                 }
             } else {
                 ui_label_center(pv.x0 + W(pv) / 2, pv.y0 + 120, FONT_BODY, "No preview", T.text3);
@@ -1024,47 +1541,102 @@ static void files_paint(const mde_layout *l) {
             ui_label(pv.x0 + 20, pv.y0 + 300, FONT_CAPTION_BOLD, "Information", T.text2);
             gfx_hline(S, pv.x0 + 20, pv.y0 + 308, W(pv) - 40, T.separator);
             ui_label(pv.x0 + 20, pv.y0 + 328, FONT_CAPTION, "Access", T.text2);
-            ui_label_right(pv.x1 - 20, pv.y0 + 328, FONT_CAPTION, "Read only", T.text);
+            ui_label_right(pv.x1 - 20, pv.y0 + 328, FONT_CAPTION, files_on_mfs() ? "Read & Write" : "Read only", T.text);
             ui_label(pv.x0 + 20, pv.y0 + 348, FONT_CAPTION, "Where", T.text2);
-            ui_label_right(pv.x1 - 20, pv.y0 + 348, FONT_CAPTION, files_volume ? "FAT16 volume" : "Session (RAM)", T.text);
+            ui_label_right(pv.x1 - 20, pv.y0 + 348, FONT_CAPTION,
+                           files_on_mfs() ? (mfs_volume.label[0] ? mfs_volume.label : "MintOS HD") : files_volume ? "FAT16 volume" : "Session (RAM)", T.text);
+            if (files_on_mfs()) {
+                char when[40]; shell_format_date(when, sizeof(when), mfs_entries[i].mtime);
+                ui_label(pv.x0 + 20, pv.y0 + 368, FONT_CAPTION, "Modified", T.text2);
+                ui_label_right(pv.x1 - 20, pv.y0 + 368, FONT_CAPTION, when, T.text);
+            }
         }
     }
     /* path / status bar */
     gfx_rect st = R(l->content.x0, l->content.y1 - 26, W(l->content), 26);
     gfx_fill(S, st.x0, st.y0, W(st), 26, OPAQUE(T.window));
     gfx_hline(S, st.x0, st.y0, W(st), T.separator);
-    char status[64]; format_u64(status, sizeof(status), n);
-    str_append(status, sizeof(status), n == 1 ? " item" : " items");
-    str_append(status, sizeof(status), files_volume ? ", read-only volume" : ", volatile session storage");
+    char status[96];
+    if (files_message[0] && term_ms() - files_message_at < 6000u) {
+        copy_text(status, sizeof(status), files_message);
+        ui_symbol_glyph(st.x0 + W(st) / 2 - gfx_text_width(FONT_CAPTION, status) / 2 - 14, st.y0 + 13, SYM_WARNING, OPAQUE(0xFF9500u));
+    } else {
+        format_u64(status, sizeof(status), n);
+        str_append(status, sizeof(status), n == 1 ? " item" : " items");
+        if (files_on_mfs()) {
+            char fb[32]; format_bytes(fb, sizeof(fb), mfs_volume.free_bytes);
+            str_append(status, sizeof(status), ", "); str_append(status, sizeof(status), fb); str_append(status, sizeof(status), " available");
+        } else str_append(status, sizeof(status), files_volume ? ", read-only volume" : ", volatile session storage");
+    }
     ui_label_center(st.x0 + W(st) / 2, BL(st, FONT_CAPTION), FONT_CAPTION, status, T.text2);
-}
-
-static void files_choose_volume(uint32_t v) {
-    files_volume = v; files_path[0] = '\0'; files_selected_entry = -1; files_preview_active = 0;
-    files_scroll = 0; files_search[0] = '\0';
-    if (v) refresh_fat_files(); else refresh_files();
+    /* confirmation alert (sheet) */
+    if (files_confirm) {
+        gfx_rect sh = files_alert_rect(l);
+        gfx_shadow(S, sh.x0, sh.y0, W(sh), H(sh), 10, 28, 12, ARGB(0x60, 0, 0, 0));
+        gfx_round_rect(S, sh.x0, sh.y0, W(sh), H(sh), 10, OPAQUE(T.window));
+        gfx_round_rect_stroke(S, sh.x0, sh.y0, W(sh), H(sh), 10, T.separator);
+        gfx_image(S, sh.x0 + 20, sh.y0 + 20, 48, 48, mint_icon_trash_128, 128, 128, 255u);
+        char t1[96];
+        if (files_confirm == FILES_CONFIRM_EMPTY_TRASH) copy_text(t1, sizeof(t1), "Permanently erase the items in the Trash?");
+        else {
+            copy_text(t1, sizeof(t1), "Delete \xE2\x80\x9C");
+            if (files_selected_entry >= 0 && (uint32_t)files_selected_entry < mfs_entry_count) str_append(t1, sizeof(t1), mfs_entries[files_selected_entry].name);
+            str_append(t1, sizeof(t1), "\xE2\x80\x9D immediately?");
+        }
+        gfx_text_fit(S, FONT_HEADLINE, sh.x0 + 84, sh.y0 + 38, t1, W(sh) - 104, OPAQUE(T.text));
+        ui_label(sh.x0 + 84, sh.y0 + 62, FONT_CAPTION, "You can\xE2\x80\x99t undo this action.", T.text2);
+        ui_button(R(sh.x1 - 228, sh.y1 - 46, 96, 28), "Cancel", 0, 1);
+        ui_button(R(sh.x1 - 122, sh.y1 - 46, 102, 28), files_confirm == FILES_CONFIRM_EMPTY_TRASH ? "Empty Trash" : "Delete", 1, 1);
+    }
 }
 
 static int files_click(const mde_layout *l, int32_t x, int32_t y, uint32_t clicks) {
-    files_search_focus = in(files_search_rect(l), x, y);
-    if (files_search_focus) return 1;
-    gfx_rect sb = l->sidebar;
-    if (in(sb, x, y)) {
-        int32_t base = sb.y0 + 28;
-        if (y >= base) {
-            uint32_t item = (uint32_t)((y - base) / 30);
-            if (item <= fat_volume_list.count && item <= MINT_FAT16_MAX_VOLUMES) files_choose_volume(item);
+    if (files_confirm) {
+        gfx_rect sh = files_alert_rect(l);
+        if (in(R(sh.x1 - 228, sh.y1 - 46, 96, 28), x, y)) files_confirm = 0;
+        else if (in(R(sh.x1 - 122, sh.y1 - 46, 102, 28), x, y)) {
+            if (files_confirm == FILES_CONFIRM_EMPTY_TRASH) files_empty_trash(); else files_delete_now();
         }
         return 1;
     }
-    if (in(R(l->toolbar.x0 + 12, l->toolbar.y0 + 12, 24, 28), x, y)) { files_go_up(); files_scroll = 0; return 1; }
     gfx_rect lr = files_list_rect(l);
+    if (files_renaming) {
+        /* a click inside the edited name keeps editing; anywhere else commits it (Finder) */
+        if (in(lr, x, y) && y >= lr.y0 + 26 && (y - lr.y0 - 26) / 24 + files_scroll >= 0) {
+            uint32_t idx[FILES_MAX]; uint32_t n = files_visible(idx, FILES_MAX);
+            int32_t r = (y - lr.y0 - 26) / 24 + files_scroll;
+            if (r >= 0 && (uint32_t)r < n && (int32_t)idx[r] == files_selected_entry) return 1;
+        }
+        files_commit_rename();
+    }
+    files_search_focus = in(files_search_rect(l), x, y);
+    if (files_search_focus) return 1;
+    if (in(l->sidebar, x, y)) {
+        for (uint32_t i = 0; i < place_count; ++i)
+            if (in(files_place_rect(l, i), x, y)) { files_choose_place(i); break; }
+        return 1;
+    }
+    if (in(R(l->toolbar.x0 + 12, l->toolbar.y0 + 12, 24, 28), x, y)) {
+        if (files_on_mfs()) mfs_go_up(); else files_go_up();
+        files_scroll = 0; return 1;
+    }
+    if (files_on_mfs() && mfs_in_trash()) {
+        if (in(files_empty_rect(l), x, y)) { if (mfs_entry_count) files_confirm = FILES_CONFIRM_EMPTY_TRASH; return 1; }
+    } else if (files_on_mfs()) {
+        if (in(files_newfolder_rect(l), x, y)) { files_new_folder(); return 1; }
+        if (in(files_trash_rect(l), x, y)) { files_move_to_trash(); return 1; }
+    }
     if (in(lr, x, y) && y >= lr.y0 + 26) {
-        uint32_t idx[MINT_FAT16_LIST_MAX];
-        uint32_t n = files_visible(idx, MINT_FAT16_LIST_MAX);
+        uint32_t idx[FILES_MAX];
+        uint32_t n = files_visible(idx, FILES_MAX);
         int32_t r = (y - lr.y0 - 26) / 24 + files_scroll;
         if (r < 0 || (uint32_t)r >= n) { files_selected_entry = -1; files_preview_active = 0; return 1; }
         uint32_t i = idx[r];
+        if (files_on_mfs()) {
+            if (clicks >= 2) { mfs_open(i); files_search[0] = '\0'; }
+            else mfs_select(i);
+            return 1;
+        }
         if (files_entry_is_dir(i)) {
             if (clicks >= 2) { files_select_entry(i); files_scroll = 0; files_search[0] = '\0'; }
             else { files_selected_entry = (int32_t)i; files_preview_active = 0; }
@@ -1074,8 +1646,66 @@ static int files_click(const mde_layout *l, int32_t x, int32_t y, uint32_t click
     return 0;
 }
 
+/* Appends a typed codepoint to a UTF-8 buffer (Finder rename, Notes). */
+static int utf8_append(char *buf, size_t *len, size_t cap, uint32_t cp) {
+    char t[4]; size_t n;
+    if (cp < 0x80u) { t[0] = (char)cp; n = 1; }
+    else if (cp < 0x800u) { t[0] = (char)(0xC0u | (cp >> 6)); t[1] = (char)(0x80u | (cp & 0x3Fu)); n = 2; }
+    else if (cp < 0x10000u) { t[0] = (char)(0xE0u | (cp >> 12)); t[1] = (char)(0x80u | ((cp >> 6) & 0x3Fu)); t[2] = (char)(0x80u | (cp & 0x3Fu)); n = 3; }
+    else return 0;
+    if (*len + n + 1u > cap) return 0;
+    for (size_t i = 0; i < n; ++i) buf[(*len)++] = t[i];
+    buf[*len] = '\0';
+    return 1;
+}
+static void utf8_backspace(char *buf, size_t *len) {
+    if (!*len) return;
+    do --*len; while (*len && ((unsigned char)buf[*len] & 0xC0u) == 0x80u);
+    buf[*len] = '\0';
+}
+
 static int files_key(const MINT_DESKTOP_KEY_EVENT *k) {
     uint32_t ch = k->codepoint;
+    int cmd = (k->modifiers & MINT_KEYMOD_GUI) != 0, shift = (k->modifiers & MINT_KEYMOD_SHIFT) != 0;
+    int alt = (k->modifiers & MINT_KEYMOD_ALT) != 0;
+    if (files_confirm) {
+        if (ch == 27u) files_confirm = 0;
+        else if (ch == '\n') { if (files_confirm == FILES_CONFIRM_EMPTY_TRASH) files_empty_trash(); else files_delete_now(); }
+        return 1;
+    }
+    if (files_renaming) {
+        if (ch == 27u) { files_renaming = 0; return 1; }
+        if (ch == '\n' || ch == 9u) { files_commit_rename(); return 1; }
+        size_t len = text_length(files_rename_text);
+        if (files_rename_caret > len) files_rename_caret = len;
+        if (k->scancode == 0x14Bu || k->scancode == 0x14Du) {           /* left / right */
+            if (files_rename_select) { files_rename_caret = k->scancode == 0x14Bu ? 0 : files_rename_stem(); files_rename_select = 0; return 1; }
+            if (k->scancode == 0x14Bu) { while (files_rename_caret && ((unsigned char)files_rename_text[--files_rename_caret] & 0xC0u) == 0x80u) {} }
+            else if (files_rename_caret < len) { do ++files_rename_caret; while (files_rename_caret < len && ((unsigned char)files_rename_text[files_rename_caret] & 0xC0u) == 0x80u); }
+            return 1;
+        }
+        if (files_rename_select && (ch == 8u || (!cmd && ch >= 32u && ch != 127u && ch != '/'))) files_rename_replace_stem();
+        if (ch == 8u) {
+            if (files_rename_caret) {
+                size_t from = files_rename_caret;
+                while (files_rename_caret && ((unsigned char)files_rename_text[--files_rename_caret] & 0xC0u) == 0x80u) {}
+                for (size_t i = from; i <= len; ++i) files_rename_text[files_rename_caret + i - from] = files_rename_text[i];
+            }
+        } else if (!cmd && ch >= 32u && ch != 127u && ch != '/') {
+            char tail[MINT_MFS_NAME_MAX + 1];
+            copy_text(tail, sizeof(tail), files_rename_text + files_rename_caret);
+            files_rename_text[files_rename_caret] = '\0';
+            size_t n = files_rename_caret;
+            if (utf8_append(files_rename_text, &n, sizeof(files_rename_text), ch) && n + text_length(tail) < sizeof(files_rename_text)) {
+                files_rename_caret = n;
+                str_append(files_rename_text, sizeof(files_rename_text), tail);
+            } else {
+                files_rename_text[files_rename_caret] = '\0';              /* too long: restore */
+                str_append(files_rename_text, sizeof(files_rename_text), tail);
+            }
+        }
+        return 1;
+    }
     if (files_search_focus) {
         size_t n = text_length(files_search);
         if (ch == 8u) { if (n) files_search[n - 1u] = '\0'; }
@@ -1084,8 +1714,25 @@ static int files_key(const MINT_DESKTOP_KEY_EVENT *k) {
         files_scroll = 0;
         return 1;
     }
-    uint32_t idx[MINT_FAT16_LIST_MAX];
-    uint32_t n = files_visible(idx, MINT_FAT16_LIST_MAX);
+    if (files_on_mfs()) {
+        if (cmd && shift && (ch == 'n' || ch == 'N')) return files_command(FILES_CMD_NEW_FOLDER) || 1;
+        if (cmd && ch == 8u) {
+            if (shift) return files_command(FILES_CMD_EMPTY_TRASH) || 1;
+            if (alt) { if (files_selected_entry >= 0) files_confirm = FILES_CONFIRM_DELETE; return 1; }
+            return files_command(FILES_CMD_TRASH) || 1;
+        }
+        if (cmd && (ch == 'd' || ch == 'D')) return files_command(FILES_CMD_DUPLICATE) || 1;
+        if (cmd && k->scancode == 0x148u) { mfs_go_up(); return 1; }
+        if (cmd && (k->scancode == 0x150u || ch == 'o' || ch == 'O')) {
+            if (files_selected_entry >= 0) mfs_open((uint32_t)files_selected_entry);
+            return 1;
+        }
+        if (ch == '\n') { files_begin_rename(); return 1; }
+        if (ch == 8u) { mfs_go_up(); return 1; }
+    }
+    if (cmd) return 0;
+    uint32_t idx[FILES_MAX];
+    uint32_t n = files_visible(idx, FILES_MAX);
     int32_t pos = -1;
     for (uint32_t i = 0; i < n; ++i) if ((int32_t)idx[i] == files_selected_entry) pos = (int32_t)i;
     if (k->scancode == 0x150u && n) { pos = pos + 1 < (int32_t)n ? pos + 1 : pos; }
@@ -1096,11 +1743,283 @@ static int files_key(const MINT_DESKTOP_KEY_EVENT *k) {
     if (pos >= 0) {
         uint32_t i = idx[pos];
         if (files_entry_is_dir(i)) { files_selected_entry = (int32_t)i; files_preview_active = 0; }
+        else if (files_on_mfs()) mfs_select(i);
         else files_select_entry(i);
         if (pos < files_scroll) files_scroll = pos;
         if (pos >= files_scroll + 12) files_scroll = pos - 11;
     }
     return 1;
+}
+
+/* ------------------------------------------------------------ Terminal on MintOS HD
+ * When a MintOS disk is mounted the shell works there (home folder first),
+ * with the usual commands; `use sda` switches back to a read-only FAT16 volume. */
+static int terminal_mfs_mode = 1;
+static char term_cwd[MINT_MFS_PATH_MAX];
+static char term_path_a[MINT_MFS_PATH_MAX], term_path_b[MINT_MFS_PATH_MAX], term_norm[MINT_MFS_PATH_MAX];
+
+static int term_mfs_active(void) {
+    mfs_refresh_volume();
+    if (mfs_ready && !term_cwd[0]) copy_text(term_cwd, sizeof(term_cwd), mfs_volume.home);
+    return terminal_mfs_mode && mfs_ready;
+}
+static const char *terminal_prompt(void) { return term_mfs_active() ? "mintos@MintOS % " : "root#mintos > "; }
+
+/* Shell path (absolute, relative, ~, ., ..) -> normalised absolute path. */
+static int term_resolve(const char *arg, char *out, size_t cap) {
+    if (!arg || !arg[0] || same_text(arg, "~")) { copy_text(out, cap, mfs_volume.home); return 1; }
+    if (arg[0] == '/') copy_text(term_norm, sizeof(term_norm), arg);
+    else if (arg[0] == '~' && arg[1] == '/') { copy_text(term_norm, sizeof(term_norm), mfs_volume.home); str_append(term_norm, sizeof(term_norm), arg + 1); }
+    else { copy_text(term_norm, sizeof(term_norm), term_cwd); str_append(term_norm, sizeof(term_norm), "/"); str_append(term_norm, sizeof(term_norm), arg); }
+    copy_text(out, cap, "/");
+    size_t i = 0, n = text_length(term_norm);
+    while (i < n) {
+        while (i < n && term_norm[i] == '/') ++i;
+        size_t s = i;
+        while (i < n && term_norm[i] != '/') ++i;
+        size_t len = i - s;
+        if (!len || (len == 1 && term_norm[s] == '.')) continue;
+        if (len == 2 && term_norm[s] == '.' && term_norm[s + 1] == '.') { mfs_parent(out); continue; }
+        if (len > MINT_MFS_NAME_MAX || text_length(out) + len + 2u > cap) return 0;
+        if (!same_text(out, "/")) str_append(out, cap, "/");
+        size_t o = text_length(out);
+        for (size_t q = 0; q < len; ++q) out[o + q] = term_norm[s + q];
+        out[o + len] = '\0';
+    }
+    return 1;
+}
+/* Splits "cmd a "b c" d" into up to `max` arguments (quotes allow spaces). */
+static int term_args(const char *s, char out[][MINT_MFS_NAME_MAX + 1], int max) {
+    int n = 0;
+    while (*s && *s != ' ') ++s;                       /* skip the command word */
+    while (n < max) {
+        while (*s == ' ') ++s;
+        if (!*s) break;
+        size_t o = 0;
+        char quote = (*s == '"' || *s == '\'') ? *s++ : 0;
+        while (*s && (quote ? *s != quote : *s != ' ')) { if (o < MINT_MFS_NAME_MAX) out[n][o++] = *s; ++s; }
+        if (quote && *s) ++s;
+        out[n++][o] = '\0';
+    }
+    return n;
+}
+static void term_error(const char *what, const char *arg, int64_t rc) {
+    char row[TERM_COLS];
+    copy_text(row, sizeof(row), what); str_append(row, sizeof(row), ": ");
+    if (arg && arg[0]) { str_append(row, sizeof(row), arg); str_append(row, sizeof(row), ": "); }
+    str_append(row, sizeof(row), mfs_error_text(rc));
+    terminal_push(row);
+}
+static int term_is_dir(const char *path) {
+    MINT_MFS_STAT st;
+    return mint_path_stat(path, &st) == 0 && st.type == MINT_MFS_DIR;
+}
+/* "dst" may name an existing folder: then the item keeps its name inside it. */
+static int term_target(const char *src, const char *dst_arg, char *out, size_t cap) {
+    if (!term_resolve(dst_arg, out, cap)) return 0;
+    if (term_is_dir(out)) {
+        size_t s = text_length(src);
+        while (s && src[s - 1u] != '/') --s;
+        char leaf[MINT_MFS_NAME_MAX + 1]; copy_text(leaf, sizeof(leaf), src + s);
+        if (!same_text(out, "/")) str_append(out, cap, "/");
+        if (text_length(out) + text_length(leaf) + 1u > cap) return 0;
+        str_append(out, cap, leaf);
+    }
+    return 1;
+}
+static int64_t mfs_copy_file(const char *from, const char *to) {
+    static uint8_t buf[16384];
+    int64_t in_fd = mint_file_open(from, MINT_O_READ);
+    if (in_fd < 0) return in_fd;
+    int64_t out_fd = mint_file_open(to, MINT_O_WRITE | MINT_O_CREATE | MINT_O_TRUNC);
+    if (out_fd < 0) { (void)mint_file_close(in_fd); return out_fd; }
+    int64_t rc = 0;
+    for (;;) {
+        int64_t n = mint_file_read(in_fd, buf, sizeof(buf));
+        if (n <= 0) { rc = n; break; }
+        if ((rc = mint_file_write(out_fd, buf, (size_t)n)) < 0) break;
+    }
+    (void)mint_file_close(in_fd);
+    int64_t c = mint_file_close(out_fd);
+    return rc < 0 ? rc : c;
+}
+static void term_cat(const char *path) {
+    static char text[8192];
+    int64_t n = mint_file_load(path, text, sizeof(text) - 1u);
+    if (n < 0) { term_error("cat", path, n); return; }
+    text[n] = '\0';
+    char row[TERM_COLS]; size_t o = 0;
+    for (int64_t i = 0; i <= n; ++i) {
+        char ch = i < n ? text[i] : '\n';
+        if (ch == '\r') continue;
+        if (ch == '\n' || o + 1u >= TERM_WRAP) {
+            if (i == n && o == 0) break;                     /* file ends with a newline */
+            row[o] = '\0'; terminal_push(row); o = 0;
+            if (ch != '\n') row[o++] = ch;
+            if (i == n) break;
+            continue;
+        }
+        row[o++] = ch == '\t' ? ' ' : ch;
+    }
+    if (n == (int64_t)sizeof(text) - 1) terminal_push("... (first 8 KB shown)");
+}
+static void term_ls(const char *path, int longform) {
+    static MINT_MFS_DIRENT list[128], chunk[MINT_MFS_LIST_MAX];
+    uint32_t count = 0;
+    for (uint32_t start = 0; count < 128u;) {
+        int64_t n = mint_dir_list(path, start, chunk);
+        if (n < 0) { term_error("ls", path, n); return; }
+        if (n == 0) break;
+        for (int64_t i = 0; i < n && count < 128u; ++i) if (chunk[i].name[0] != '.') list[count++] = chunk[i];
+        start += (uint32_t)n;
+        if (n < (int64_t)MINT_MFS_LIST_MAX) break;
+    }
+    for (uint32_t i = 1; i < count; ++i) {
+        MINT_MFS_DIRENT t = list[i]; uint32_t j = i;
+        while (j && name_order(list[j - 1u].name, t.name) > 0) { list[j] = list[j - 1u]; --j; }
+        list[j] = t;
+    }
+    if (!count) { terminal_push(longform ? "total 0" : "(empty folder)"); return; }
+    for (uint32_t i = 0; i < count; ++i) {
+        char row[TERM_COLS * 2];
+        if (longform) {
+            char sz[24], when[40];
+            copy_text(row, sizeof(row), list[i].type == MINT_MFS_DIR ? "drwxr-xr-x  " : "-rw-r--r--  ");
+            if (list[i].type == MINT_MFS_DIR) copy_text(sz, sizeof(sz), "--"); else format_bytes(sz, sizeof(sz), list[i].size);
+            for (size_t pad = text_length(sz); pad < 11u; ++pad) str_append(row, sizeof(row), " ");
+            str_append(row, sizeof(row), sz); str_append(row, sizeof(row), "  ");
+            shell_format_date(when, sizeof(when), list[i].mtime);
+            str_append(row, sizeof(row), when);
+            for (size_t pad = text_length(when); pad < 20u; ++pad) str_append(row, sizeof(row), " ");
+            str_append(row, sizeof(row), "  ");
+        } else row[0] = '\0';
+        str_append(row, sizeof(row), list[i].name);
+        if (list[i].type == MINT_MFS_DIR) str_append(row, sizeof(row), "/");
+        row[TERM_COLS - 1u] = '\0';
+        terminal_push(row);
+    }
+}
+
+static int terminal_mfs_command(const char *cmd) {
+    if (terminal_equals(cmd, "use hd") || terminal_equals(cmd, "use mintos")) {
+        mfs_refresh_volume();
+        if (!mfs_ready) { terminal_push("No MintOS disk. Disk Utility can make a blank disk a MintOS disk."); return 1; }
+        terminal_mfs_mode = 1; terminal_push("Using MintOS HD (read/write). 'use sda' switches to a FAT16 volume."); return 1;
+    }
+    if (!term_mfs_active()) return 0;
+    static char a[3][MINT_MFS_NAME_MAX + 1];
+    int argc = term_args(cmd, a, 3);
+    char word[16]; size_t w = 0;
+    while (cmd[w] && cmd[w] != ' ' && w + 1u < sizeof(word)) { word[w] = cmd[w]; ++w; }
+    word[w] = '\0';
+    int64_t rc;
+    if (same_text(word, "pwd")) { terminal_push(term_cwd); return 1; }
+    if (same_text(word, "cd")) {
+        if (!term_resolve(argc ? a[0] : "~", term_path_a, sizeof(term_path_a))) { terminal_push("cd: path is too long"); return 1; }
+        if (!term_is_dir(term_path_a)) { term_error("cd", argc ? a[0] : "~", -MINT_ENOENT); return 1; }
+        copy_text(term_cwd, sizeof(term_cwd), term_path_a);
+        return 1;
+    }
+    if (same_text(word, "ls")) {
+        int longform = argc && same_text(a[0], "-l");
+        const char *target = argc > longform ? a[longform] : ".";
+        if (!term_resolve(target, term_path_a, sizeof(term_path_a))) { terminal_push("ls: path is too long"); return 1; }
+        if (!term_is_dir(term_path_a)) {
+            MINT_MFS_STAT st;
+            if ((rc = mint_path_stat(term_path_a, &st)) < 0) { term_error("ls", target, rc); return 1; }
+            terminal_push(target);
+            return 1;
+        }
+        term_ls(term_path_a, longform);
+        return 1;
+    }
+    if (same_text(word, "cat") || same_text(word, "open")) {
+        if (!argc) { terminal_push(same_text(word, "cat") ? "usage: cat <file>" : "usage: open <file>"); return 1; }
+        if (!term_resolve(a[0], term_path_a, sizeof(term_path_a))) { terminal_push("path is too long"); return 1; }
+        if (same_text(word, "open")) {
+            if (term_is_dir(term_path_a)) { files_go_mfs(term_path_a); files_started = 1; shell_open_app(APP_FILES); }
+            else { MINT_MFS_STAT st; if ((rc = mint_path_stat(term_path_a, &st)) < 0) { term_error("open", a[0], rc); return 1; }
+                   notes_open_file(term_path_a); shell_open_app(APP_NOTES); }
+            return 1;
+        }
+        term_cat(term_path_a);
+        return 1;
+    }
+    if (same_text(word, "mkdir") || same_text(word, "rmdir") || same_text(word, "touch") || same_text(word, "rm")) {
+        int recursive = same_text(word, "rm") && argc && (same_text(a[0], "-r") || same_text(a[0], "-rf"));
+        if (argc <= recursive) { char u[48]; copy_text(u, sizeof(u), "usage: "); str_append(u, sizeof(u), word); str_append(u, sizeof(u), recursive || same_text(word, "rm") ? " [-r] <path>" : " <path>"); terminal_push(u); return 1; }
+        const char *arg = a[recursive];
+        if (!term_resolve(arg, term_path_a, sizeof(term_path_a)) || same_text(term_path_a, "/")) { terminal_push("That path can't be changed."); return 1; }
+        if (same_text(word, "mkdir")) rc = mint_dir_create(term_path_a);
+        else if (same_text(word, "touch")) {
+            MINT_MFS_STAT st;
+            if (mint_path_stat(term_path_a, &st) == 0) return 1;
+            rc = mint_file_open(term_path_a, MINT_O_WRITE | MINT_O_CREATE);
+            if (rc >= 0) rc = mint_file_close(rc);
+        } else if (same_text(word, "rmdir")) {
+            rc = term_is_dir(term_path_a) ? mint_path_remove(term_path_a) : -MINT_ENOTDIR;
+        } else {
+            if (term_is_dir(term_path_a) && !recursive) { terminal_push("rm: is a folder (use rm -r or rmdir)"); return 1; }
+            rc = recursive ? mfs_delete_tree(term_path_a) : mint_path_remove(term_path_a);
+        }
+        if (rc < 0) term_error(word, arg, rc);
+        else if ((same_text(word, "rm") || same_text(word, "rmdir")) && term_cwd[0]) {
+            /* never leave the shell inside a deleted folder */
+            size_t n = text_length(term_path_a);
+            int inside = 1;
+            for (size_t i = 0; i < n; ++i) if (term_cwd[i] != term_path_a[i]) { inside = 0; break; }
+            if (inside && (term_cwd[n] == '\0' || term_cwd[n] == '/')) { copy_text(term_cwd, sizeof(term_cwd), term_path_a); mfs_parent(term_cwd); }
+        }
+        return 1;
+    }
+    if (same_text(word, "mv") || same_text(word, "cp")) {
+        if (argc < 2) { terminal_push(same_text(word, "mv") ? "usage: mv <from> <to>" : "usage: cp <file> <to>"); return 1; }
+        if (!term_resolve(a[0], term_path_a, sizeof(term_path_a)) ||
+            !term_target(term_path_a, a[1], term_path_b, sizeof(term_path_b))) { terminal_push("path is too long"); return 1; }
+        if (same_text(word, "mv")) rc = mint_path_rename(term_path_a, term_path_b);
+        else rc = term_is_dir(term_path_a) ? -MINT_EISDIR : mfs_copy_file(term_path_a, term_path_b);
+        if (rc < 0) term_error(word, a[0], rc);
+        return 1;
+    }
+    if (same_text(word, "echo")) {
+        const char *text = cmd + 4;
+        while (*text == ' ') ++text;
+        const char *gt = text;
+        while (*gt && *gt != '>') ++gt;
+        if (!*gt) { terminal_push(text); return 1; }
+        int append = gt[1] == '>';
+        char body[TERM_COLS]; size_t bl = (size_t)(gt - text);
+        while (bl && text[bl - 1u] == ' ') --bl;
+        if (bl >= 2u && (text[0] == '"' || text[0] == '\'') && text[bl - 1u] == text[0]) { ++text; bl -= 2u; }
+        if (bl + 2u > sizeof(body)) bl = sizeof(body) - 2u;
+        for (size_t i = 0; i < bl; ++i) body[i] = text[i];
+        body[bl++] = '\n'; body[bl] = '\0';
+        const char *name = gt + (append ? 2 : 1);
+        while (*name == ' ') ++name;
+        if (!*name || !term_resolve(name, term_path_a, sizeof(term_path_a))) { terminal_push("echo: missing file name"); return 1; }
+        rc = mint_file_open(term_path_a, MINT_O_WRITE | MINT_O_CREATE | (append ? MINT_O_APPEND : MINT_O_TRUNC));
+        if (rc >= 0) { int64_t fd = rc; rc = mint_file_write(fd, body, bl); int64_t c = mint_file_close(fd); if (rc >= 0) rc = c; }
+        if (rc < 0) term_error("echo", name, rc);
+        return 1;
+    }
+    if (same_text(word, "df")) {
+        char row[TERM_COLS], n1[32], n2[32], n3[32];
+        format_bytes(n1, sizeof(n1), mfs_volume.total_bytes);
+        format_bytes(n2, sizeof(n2), mfs_volume.total_bytes - mfs_volume.free_bytes);
+        format_bytes(n3, sizeof(n3), mfs_volume.free_bytes);
+        terminal_push("Volume        Size      Used      Avail     Mounted on");
+        copy_text(row, sizeof(row), mfs_volume.label);
+        for (size_t p = text_length(row); p < 14u; ++p) str_append(row, sizeof(row), " ");
+        str_append(row, sizeof(row), n1); for (size_t p = text_length(n1); p < 10u; ++p) str_append(row, sizeof(row), " ");
+        str_append(row, sizeof(row), n2); for (size_t p = text_length(n2); p < 10u; ++p) str_append(row, sizeof(row), " ");
+        str_append(row, sizeof(row), n3); for (size_t p = text_length(n3); p < 10u; ++p) str_append(row, sizeof(row), " ");
+        str_append(row, sizeof(row), "/ (MintFS, ");
+        str_append(row, sizeof(row), mfs_volume.device); str_append(row, sizeof(row), ")");
+        terminal_push(row);
+        return 1;
+    }
+    if (same_text(word, "sync")) { rc = mint_fs_flush(); if (rc < 0) term_error("sync", 0, rc); return 1; }
+    return 0;
 }
 
 /* ------------------------------------------------------------ Notes */
@@ -1113,7 +2032,7 @@ static void notes_title(char *out, size_t cap) {
 static void notes_paint(const mde_layout *l) {
     load_notes();
     gfx_rect sb = l->sidebar;
-    ui_sidebar_header(sb.x0 + 18, sb.y0 + 18, "Session");
+    ui_sidebar_header(sb.x0 + 18, sb.y0 + 18, notes_on_disk ? "On My MintOS" : "Session");
     gfx_rect item = R(sb.x0 + 10, sb.y0 + 28, W(sb) - 20, 52);
     gfx_round_rect(S, item.x0, item.y0, W(item), H(item), 7, OPAQUE(l->focused ? 0xF7C833u : T.selection_inactive));
     char title[40]; notes_title(title, sizeof(title));
@@ -1128,7 +2047,17 @@ static void notes_paint(const mde_layout *l) {
     toolbar_title(l, "Notes", 0);
     gfx_rect c = l->content;
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(T.content));
-    ui_label_center(c.x0 + W(c) / 2, c.y0 + 22, FONT_CAPTION, "Session (RAM) \xE2\x80\x94 cleared at restart", T.text3);
+    char where[MINT_MFS_NAME_MAX + 48];
+    if (!notes_on_disk) copy_text(where, sizeof(where), "Session (RAM) \xE2\x80\x94 cleared at restart");
+    else if (notes_readonly) copy_text(where, sizeof(where), "Too large to edit in Notes \xE2\x80\x94 read only");
+    else if (notes_save_failed) copy_text(where, sizeof(where), "Not saved \xE2\x80\x94 MintOS HD reported an error");
+    else {
+        size_t s0 = text_length(notes_path);
+        while (s0 && notes_path[s0 - 1u] != '/') --s0;
+        copy_text(where, sizeof(where), notes_path + s0);
+        str_append(where, sizeof(where), notes_dirty ? " \xE2\x80\x94 Edited" : " \xE2\x80\x94 Saved on MintOS HD");
+    }
+    ui_label_center(c.x0 + W(c) / 2, c.y0 + 22, FONT_CAPTION, where, T.text3);
     /* word-wrapped editor */
     int32_t x = c.x0 + 28, y = c.y0 + 54, maxw = W(c) - 56, line_h = 21;
     char line[160]; size_t ln = 0; int first = 1;
@@ -1165,13 +2094,24 @@ static void notes_paint(const mde_layout *l) {
         gfx_fill(S, caret_x + 1, caret_y - (note_length && note_buffer[note_length - 1] != '\n' && caret_y == c.y0 + 54 ? 20 : 14),
                  2, note_length && caret_y == c.y0 + 54 ? 24 : 17, OPAQUE(0xE0A800u));
 }
+static void notes_open_file(const char *path) {
+    notes_flush();
+    copy_text(notes_path, sizeof(notes_path), path);
+    notes_loaded = 0;
+    load_notes();
+}
 static int notes_key(const MINT_DESKTOP_KEY_EVENT *k) {
     load_notes();
     uint32_t ch = k->codepoint;
-    if (ch == 8u) { if (note_length) note_buffer[--note_length] = '\0'; }
-    else if ((ch == '\n' || (ch >= 32u && ch < 127u)) && note_length + 1u < sizeof(note_buffer)) {
-        note_buffer[note_length++] = (char)ch; note_buffer[note_length] = '\0';
-    } else return 0;
+    if (k->modifiers & MINT_KEYMOD_GUI) {
+        if ((ch == 's' || ch == 'S') && notes_on_disk) { notes_flush(); return 1; }
+        return 0;
+    }
+    if (notes_readonly) return 0;
+    size_t cap = notes_on_disk ? sizeof(note_buffer) : NOTE_RAM_MAX + 1u;
+    if (ch == 8u) utf8_backspace(note_buffer, &note_length);
+    else if (ch == '\n' || (ch >= 32u && ch != 127u)) { if (!utf8_append(note_buffer, &note_length, cap, ch)) return 1; }
+    else return 0;
     save_notes();
     return 1;
 }
@@ -1656,7 +2596,7 @@ static void terminal_paint(const mde_layout *l) {
     int32_t y = c.y0 + 8 + gfx_font_ascent(FONT_SMALL);
     for (uint32_t i = first; i < end; ++i) {
         if (TERM_KIND(i)) {
-            int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, "root#mintos > ", TERM_CELL, OPAQUE(prompt));
+            int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, terminal_prompt(), TERM_CELL, OPAQUE(prompt));
             gfx_text_cells(S, FONT_SMALL, x + px, y, TERM_AT(i), TERM_CELL, OPAQUE(fg));
         } else gfx_text_cells(S, FONT_SMALL, x, y, TERM_AT(i), TERM_CELL, OPAQUE(fg));
         y += line_h;
@@ -1672,7 +2612,7 @@ static void terminal_paint(const mde_layout *l) {
         ui_label(x, y, FONT_SMALL, terminal_job_hint(), T.text3);
         return;
     }
-    int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, "root#mintos > ", TERM_CELL, OPAQUE(prompt));
+    int32_t px = gfx_text_cells(S, FONT_SMALL, x, y, terminal_prompt(), TERM_CELL, OPAQUE(prompt));
     int32_t ix = gfx_text_cells(S, FONT_SMALL, x + px, y, terminal_input, TERM_CELL, OPAQUE(fg));
     if (!l->focused) gfx_round_rect_stroke(S, x + px + ix, y - 12, TERM_CELL, 16, 0, OPAQUE(T.text3));
     else if (((ui_ticks / 50u) & 1u) == 0u) gfx_fill(S, x + px + ix, y - 12, TERM_CELL, 16, WITH_ALPHA(fg, 0xB0));
@@ -1860,6 +2800,23 @@ static void settings_paint(const mde_layout *l) {
     }
     case SET_STORAGE: {
         refresh_storage_data();
+        mfs_refresh_volume();
+        if (mfs_ready) {
+            gfx_rect g = R(b.x0, b.y0, W(b), 92);
+            ui_group(g);
+            ui_symbol_glyph(g.x0 + 26, g.y0 + 26, SYM_DRIVE, OPAQUE(T.accent));
+            copy_text(a, sizeof(a), mfs_volume.label); str_append(a, sizeof(a), "  \xC2\xB7  "); str_append(a, sizeof(a), mfs_volume.device);
+            gfx_text_fit(S, FONT_BODY_MEDIUM, g.x0 + 46, g.y0 + 31, a, W(g) - 200, OPAQUE(T.text));
+            uint64_t used = mfs_volume.total_bytes - mfs_volume.free_bytes;
+            format_bytes(bb, sizeof(bb), mfs_volume.free_bytes); str_append(bb, sizeof(bb), " available");
+            ui_label_right(g.x1 - 14, g.y0 + 31, FONT_BODY, bb, T.text2);
+            uint32_t permille = mfs_volume.total_bytes ? (uint32_t)(used * 1000u / mfs_volume.total_bytes) : 0u;
+            ui_progress(R(g.x0 + 14, g.y0 + 46, W(g) - 28, 10), permille < 8u ? 8u : permille, T.accent);
+            ui_label(g.x0 + 14, g.y0 + 78, FONT_CAPTION, "MintFS \xE2\x80\x94 mounted read/write, copy-on-write", T.text2);
+            format_u64(cc, sizeof(cc), mfs_volume.items); str_append(cc, sizeof(cc), " items");
+            ui_label_right(g.x1 - 14, g.y0 + 78, FONT_CAPTION, cc, T.text2);
+            b.y0 = g.y1 + 14;
+        }
         for (uint32_t i = 0; i < storage_snapshot.device_count && i < 3u; ++i) {
             MINT_STORAGE_DEVICE_INFO *dv = &storage_snapshot.devices[i];
             gfx_rect g = R(b.x0, b.y0, W(b), 92);
@@ -1873,13 +2830,16 @@ static void settings_paint(const mde_layout *l) {
             int mounted = 0;
             (void)mint_fat16_get_volumes(&fat_volume_list);
             for (uint32_t v = 0; v < fat_volume_list.count; ++v) if (fat_volume_list.block_indices[v] == dv->block_index && dv->block_registered) mounted = 1;
-            ui_progress(R(g.x0 + 14, g.y0 + 46, W(g) - 28, 10), mounted ? 1000u : 0u, mounted ? T.accent : T.text3);
-            ui_label(g.x0 + 14, g.y0 + 78, FONT_CAPTION, mounted ? "FAT16 \xE2\x80\x94 mounted read-only" : "Not mounted (blank or unsupported)", T.text2);
-            ui_label_right(g.x1 - 14, g.y0 + 78, FONT_CAPTION, "Writes disabled", T.text2);
+            int mintos = disk_is_mintos(dv);
+            ui_progress(R(g.x0 + 14, g.y0 + 46, W(g) - 28, 10), mounted || mintos ? 1000u : 0u, mounted || mintos ? T.accent : T.text3);
+            ui_label(g.x0 + 14, g.y0 + 78, FONT_CAPTION, mintos ? "GUID partition map \xE2\x80\x94 MintOS disk" :
+                     mounted ? "FAT16 \xE2\x80\x94 mounted read-only" : "Not mounted (blank or unsupported)", T.text2);
+            ui_label_right(g.x1 - 14, g.y0 + 78, FONT_CAPTION, mintos ? "Writes: MintFS partition only" : "Writes disabled", T.text2);
             b.y0 = g.y1 + 14;
         }
         if (!storage_snapshot.device_count) settings_note(&b, "No SATA disk was detected by the AHCI driver.");
-        settings_note(&b, "Session (RAM) holds Notes and settings until the computer restarts.");
+        settings_note(&b, mfs_ready ? "Files and Notes are saved on MintOS HD. Settings still last until restart." :
+                                      "Session (RAM) holds Notes and settings until restart. Disk Utility can make a blank disk a MintOS disk.");
         break;
     }
     case SET_NETWORK: {
@@ -2056,10 +3016,9 @@ static void storage_paint(const mde_layout *l) {
                             i == storage_snapshot.device_count + 2u ? "Warnings" : "Errors";
         if (i == storage_snapshot.device_count) ui_sidebar_header(sb.x0 + 18, ir.y0 - 8, "Hardware");
         if (i == storage_snapshot.device_count + 1u) ui_sidebar_header(sb.x0 + 18, ir.y0 - 8, "Reports");
-        ui_sidebar_item(ir, label, 0, 0, i == sel_item, l->focused);
-        uint32_t sym = i < storage_snapshot.device_count ? SYM_DISK : i == storage_snapshot.device_count ? SYM_GEAR :
-                       i == storage_snapshot.device_count + 1u ? SYM_DOC : SYM_WARNING;
-        ui_symbol_glyph(ir.x0 + 18, ir.y0 + 14, sym, OPAQUE(i == sel_item && l->focused ? 0xFFFFFFu : T.text2));
+        uint32_t sym = i < storage_snapshot.device_count ? SYM_DRIVE : i == storage_snapshot.device_count ? SYM_CHIP :
+                       i == storage_snapshot.device_count + 1u ? SYM_LIST : SYM_WARNING;
+        ui_sidebar_row(ir, label, sym, i == sel_item);
     }
     toolbar_title(l, storage_view == 0u ? "Device" : storage_view == 1u ? "Controllers" : "Kernel Log", 0);
     ui_button(R(l->toolbar.x1 - 230, l->toolbar.y0 + 12, 90, 28), "Refresh", 0, 1);
@@ -2162,12 +3121,11 @@ static const char *pci_class_name(uint8_t c, uint8_t s) {
 }
 static void drivers_paint(const mde_layout *l) {
     static const char *const items[4] = {"Drivers", "PCI Devices", "USB", "Power (ACPI)"};
-    static const uint32_t syms[4] = {SYM_GEAR, SYM_INFO, SYM_TOGGLES, SYM_WARNING};
+    static const uint32_t syms[4] = {SYM_GEAR_LINE, SYM_CHIP, SYM_USB, SYM_BOLT};
     ui_sidebar_header(l->sidebar.x0 + 18, l->sidebar.y0 + 18, "Hardware");
     for (uint32_t i = 0; i < 4u; ++i) {
         gfx_rect ir = drivers_item_rect(l, i);
-        ui_sidebar_item(ir, items[i], 0, 0, driver_view == i, l->focused);
-        ui_symbol_glyph(ir.x0 + 18, ir.y0 + 14, syms[i], OPAQUE(driver_view == i && l->focused ? 0xFFFFFFu : T.text2));
+        ui_sidebar_row(ir, items[i], syms[i], driver_view == i);
     }
     toolbar_title(l, items[driver_view < 4u ? driver_view : 0u], 0);
     gfx_rect c = l->content;
@@ -2373,7 +3331,7 @@ static gfx_rect disks_item_rect(const mde_layout *l, uint32_t i) {
 static gfx_rect disks_erase_rect(const mde_layout *l) { return R(l->toolbar.x1 - 196, l->toolbar.y0 + 12, 84, 28); }
 static gfx_rect disks_info_rect(const mde_layout *l) { return R(l->toolbar.x1 - 104, l->toolbar.y0 + 12, 88, 28); }
 static gfx_rect disks_sheet(const mde_layout *l) {
-    int32_t w = 460, h = 214;
+    int32_t w = 480, h = 252;
     return R(l->frame.x0 + (W(l->frame) - w) / 2, l->content.y0 - 1, w, h);
 }
 /* Only offer Erase for what the kernel formatter will accept: a registered
@@ -2382,10 +3340,11 @@ static gfx_rect disks_sheet(const mde_layout *l) {
 static int disk_is_erasable(uint32_t i) {
     if (i >= storage_snapshot.device_count || i >= MINT_STORAGE_MAX_DEVICES) return 0;
     MINT_STORAGE_DEVICE_INFO *d = &storage_snapshot.devices[i];
-    if (!d->block_registered || d->mbr_signature_ok) return 0;
+    if (!d->block_registered || d->mbr_signature_ok || disk_is_mintos(d)) return 0;
     for (uint32_t v = 0; v < fat_volume_list.count; ++v) if (fat_volume_list.block_indices[v] == d->block_index) return 0;
     return 1;
 }
+static gfx_rect disks_kind_rect(gfx_rect sh) { return R(sh.x0 + 84, sh.y0 + 92, W(sh) - 104, 26); }
 static void disk_expected_phrase(char *out, size_t cap) {
     copy_text(out, cap, "FORMAT ");
     if (disk_selected_device < storage_snapshot.device_count) str_append(out, cap, storage_snapshot.devices[disk_selected_device].name);
@@ -2397,13 +3356,13 @@ static void disks_paint(const mde_layout *l) {
         MINT_STORAGE_DEVICE_INFO *d = &storage_snapshot.devices[i];
         gfx_rect ir = disks_item_rect(l, i);
         int sel = disk_selected_device == i;
-        if (sel) gfx_round_rect(S, ir.x0, ir.y0, W(ir), H(ir), 6, l->focused ? OPAQUE(T.accent) : (T.dark ? ARGB(0x30, 0xFF, 0xFF, 0xFF) : ARGB(0x1C, 0, 0, 0)));
-        uint32_t fg = sel && l->focused ? 0xFFFFFFu : T.text;
+        if (sel) gfx_round_rect(S, ir.x0, ir.y0, W(ir), H(ir), 6, T.sidebar_selection);
+        uint32_t fg = T.text;
         gfx_image(S, ir.x0 + 6, ir.y0 + 6, 28, 28, mint_icon_disk_utility_64, 64, 64, 255u);
         gfx_text_fit(S, FONT_BODY_MEDIUM, ir.x0 + 42, ir.y0 + 17, d->model[0] ? d->model : d->name, W(ir) - 50, OPAQUE(fg));
         char cap[32]; format_bytes(cap, sizeof(cap), d->capacity_bytes);
         char sub[48]; copy_text(sub, sizeof(sub), d->name); str_append(sub, sizeof(sub), " \xC2\xB7 "); str_append(sub, sizeof(sub), cap);
-        ui_label(ir.x0 + 42, ir.y0 + 33, FONT_CAPTION, sub, sel && l->focused ? 0xE8F0FFu : T.text2);
+        ui_label(ir.x0 + 42, ir.y0 + 33, FONT_CAPTION, sub, T.text2);
     }
     toolbar_title(l, "Disk Utility", 0);
     ui_button(disks_erase_rect(l), "Erase\xE2\x80\xA6", 0, disk_is_erasable(disk_selected_device));
@@ -2419,18 +3378,31 @@ static void disks_paint(const mde_layout *l) {
     gfx_text_fit(S, FONT_TITLE, c.x0 + 102, c.y0 + 46, d->model[0] ? d->model : d->name, W(c) - 130, OPAQUE(T.text));
     char cap[32]; format_bytes(cap, sizeof(cap), d->capacity_bytes);
     char sub[96]; copy_text(sub, sizeof(sub), cap); str_append(sub, sizeof(sub), " SATA Internal Physical Disk \xC2\xB7 ");
-    str_append(sub, sizeof(sub), d->mbr_signature_ok ? "Master Boot Record" : "Uninitialized");
+    mfs_refresh_volume();
+    int mintos = disk_is_mintos(d);
+    str_append(sub, sizeof(sub), mintos ? "GUID Partition Map" : d->mbr_signature_ok ? "Master Boot Record" : "Uninitialized");
     ui_label(c.x0 + 102, c.y0 + 70, FONT_BODY, sub, T.text2);
     int mounted = 0;
     for (uint32_t v = 0; v < fat_volume_list.count; ++v) if (d->block_registered && fat_volume_list.block_indices[v] == d->block_index) mounted = 1;
     gfx_rect bar = R(c.x0 + 24, c.y0 + 100, W(c) - 48, 22);
-    ui_progress(bar, 1000u, mounted ? T.accent : (T.dark ? 0x48484Au : 0xD1D1D6u));
-    ui_label(bar.x0 + 4, bar.y1 + 20, FONT_CAPTION, mounted ? "MINTOS26 (FAT16)" : "Free / unformatted", T.text2);
-    ui_label_right(bar.x1 - 4, bar.y1 + 20, FONT_CAPTION, cap, T.text2);
+    if (mintos) {
+        uint64_t used = mfs_volume.total_bytes - mfs_volume.free_bytes;
+        uint32_t permille = mfs_volume.total_bytes ? (uint32_t)(used * 1000u / mfs_volume.total_bytes) : 0u;
+        ui_progress(bar, permille < 8u ? 8u : permille, T.accent);
+        char label[96]; copy_text(label, sizeof(label), mfs_volume.label); str_append(label, sizeof(label), " (MintFS) \xC2\xB7 ");
+        char ub[32]; format_bytes(ub, sizeof(ub), used); str_append(label, sizeof(label), ub); str_append(label, sizeof(label), " used");
+        ui_label(bar.x0 + 4, bar.y1 + 20, FONT_CAPTION, label, T.text2);
+        char fb[40]; format_bytes(fb, sizeof(fb), mfs_volume.free_bytes); str_append(fb, sizeof(fb), " free");
+        ui_label_right(bar.x1 - 4, bar.y1 + 20, FONT_CAPTION, fb, T.text2);
+    } else {
+        ui_progress(bar, 1000u, mounted ? T.accent : (T.dark ? 0x48484Au : 0xD1D1D6u));
+        ui_label(bar.x0 + 4, bar.y1 + 20, FONT_CAPTION, mounted ? "MINTOS26 (FAT16)" : "Free / unformatted", T.text2);
+        ui_label_right(bar.x1 - 4, bar.y1 + 20, FONT_CAPTION, cap, T.text2);
+    }
     char ser[48]; copy_text(ser, sizeof(ser), d->serial[0] ? d->serial : "unavailable");
     char sectors[32]; format_u64(sectors, sizeof(sectors), d->sector_count);
     const char *labels[6] = {"Location", "Connection", "Device", "Partition Map", "Serial Number", "Sectors"};
-    const char *values[6] = {"Internal", "SATA (AHCI)", d->name, d->mbr_signature_ok ? "Master Boot Record" : "None (blank)", ser, sectors};
+    const char *values[6] = {"Internal", "SATA (AHCI)", d->name, mintos ? "GUID Partition Map" : d->mbr_signature_ok ? "Master Boot Record" : "None (blank)", ser, sectors};
     gfx_rect g = R(c.x0 + 24, bar.y1 + 36, W(c) - 48, 3 * 34);
     ui_group(g);
     int32_t half = W(g) / 2;
@@ -2440,9 +3412,11 @@ static void disks_paint(const mde_layout *l) {
     }
     gfx_vline(S, g.x0 + half, g.y0 + 6, H(g) - 12, T.separator);
     ui_label(c.x0 + 28, g.y1 + 26, FONT_CAPTION,
-             disk_result[0] ? disk_result : disk_is_erasable(disk_selected_device) ?
-             "This disk looks blank. Erase creates one FAT16 volume (32 MB \xE2\x80\x93 2 GB disks only)." :
-             "This disk has a partition table or is in use, so it cannot be erased. Other writes stay disabled.",
+             disk_result[0] ? disk_result : mintos ?
+             "MintOS disk: Files and Notes save here. Writes stay inside its MintFS partition." :
+             disk_is_erasable(disk_selected_device) ?
+             "This disk looks blank. Erase can make it a MintOS disk (read/write) or a FAT16 volume." :
+             "This disk has a partition table or is in use, so it cannot be erased. Writes to it stay disabled.",
              disk_result[0] ? (disk_result[0] == 'S' ? 0x34C759u : 0xFF9500u) : T.text2);
     if (disk_format_prompt) {
         gfx_rect sh = disks_sheet(l);
@@ -2453,13 +3427,17 @@ static void disks_paint(const mde_layout *l) {
         char title[64]; copy_text(title, sizeof(title), "Erase \xE2\x80\x9C"); str_append(title, sizeof(title), d->name);
         str_append(title, sizeof(title), "\xE2\x80\x9D?");
         ui_label(sh.x0 + 84, sh.y0 + 36, FONT_HEADLINE, title, T.text);
-        ui_label(sh.x0 + 84, sh.y0 + 58, FONT_CAPTION, "Erasing destroys all data on this disk. It then gets an MBR", T.text2);
-        ui_label(sh.x0 + 84, sh.y0 + 74, FONT_CAPTION, "with one FAT16 volume that MintOS mounts read-only.", T.text2);
+        ui_label(sh.x0 + 84, sh.y0 + 58, FONT_CAPTION, "Erasing destroys all data on this disk. It then gets", T.text2);
+        ui_label(sh.x0 + 84, sh.y0 + 74, FONT_CAPTION, disk_format_kind == 0 ?
+                 "a GUID partition map with one read/write MintOS (MintFS) volume." :
+                 "an MBR with one FAT16 volume that MintOS mounts read-only.", T.text2);
+        static const char *const kinds[2] = {"MintOS (MintFS)", "MS-DOS (FAT16)"};
+        ui_segmented(disks_kind_rect(sh), kinds, 2, disk_format_kind);
         char phrase[32]; disk_expected_phrase(phrase, sizeof(phrase));
         char prompt[64]; copy_text(prompt, sizeof(prompt), "Type \xE2\x80\x9C"); str_append(prompt, sizeof(prompt), phrase);
         str_append(prompt, sizeof(prompt), "\xE2\x80\x9D to confirm:");
-        ui_label(sh.x0 + 84, sh.y0 + 104, FONT_BODY, prompt, T.text);
-        ui_text_field(R(sh.x0 + 84, sh.y0 + 114, W(sh) - 104, 26), disk_confirmation, phrase, 1);
+        ui_label(sh.x0 + 84, sh.y0 + 144, FONT_BODY, prompt, T.text);
+        ui_text_field(R(sh.x0 + 84, sh.y0 + 154, W(sh) - 104, 26), disk_confirmation, phrase, 1);
         ui_button(R(sh.x1 - 214, sh.y1 - 44, 90, 28), "Cancel", 0, 1);
         int match = text_length(disk_confirmation) == text_length(phrase) && ci_contains(disk_confirmation, phrase) &&
                     ci_contains(phrase, disk_confirmation);
@@ -2476,8 +3454,13 @@ static void disks_run_format(void) {
         request.expected_sector_count = device->sector_count;
         (void)copy_text(request.expected_serial, sizeof(request.expected_serial), device->serial);
         (void)copy_text(request.confirmation, sizeof(request.confirmation), disk_confirmation);
-        int64_t rc = mint_storage_format_blank(&request);
-        if (rc == 0) copy_text(disk_result, sizeof(disk_result), "Success: disk erased and its FAT16 volume validated read-only.");
+        int64_t rc = disk_format_kind == 0 ? mint_storage_init_mintos(&request) : mint_storage_format_blank(&request);
+        if (rc == 0 && disk_format_kind == 0) {
+            copy_text(disk_result, sizeof(disk_result), "Success: \xE2\x80\x9CMintOS HD\xE2\x80\x9D is ready. Files and Notes now save to it.");
+            mfs_refresh_volume();
+            notes_loaded = 0;
+        } else if (rc == 0) copy_text(disk_result, sizeof(disk_result), "Success: disk erased and its FAT16 volume validated read-only.");
+        else if (rc == -MINT_EBUSY && disk_format_kind == 0) copy_text(disk_result, sizeof(disk_result), "A MintOS disk is already in use. Only one can be mounted at a time.");
         else {
             copy_text(disk_result, sizeof(disk_result), "Erase failed (error ");
             char code[20]; format_u64(code, sizeof(code), (uint64_t)(-rc));
@@ -2491,6 +3474,7 @@ static int disks_click(const mde_layout *l, int32_t x, int32_t y) {
     if (disk_format_prompt) {
         gfx_rect sh = disks_sheet(l);
         if (in(R(sh.x1 - 214, sh.y1 - 44, 90, 28), x, y)) { disk_format_prompt = 0; disk_confirmation[0] = '\0'; disk_confirmation_length = 0; return 1; }
+        if (in(disks_kind_rect(sh), x, y)) { int32_t k = ui_segment_at(disks_kind_rect(sh), 2, x); if (k >= 0) disk_format_kind = (uint32_t)k; return 1; }
         if (in(R(sh.x1 - 112, sh.y1 - 44, 92, 28), x, y)) {
             char phrase[32]; disk_expected_phrase(phrase, sizeof(phrase));
             if (text_length(disk_confirmation) == text_length(phrase) && ci_contains(disk_confirmation, phrase)) disks_run_format();
@@ -2525,24 +3509,24 @@ static int disks_key(const MINT_DESKTOP_KEY_EVENT *k) {
 
 /* ------------------------------------------------------------ About windows */
 static const char *const os_versions[8] = {
+    "26.5.013.0  MintFS: read/write copy-on-write disks, MintOS HD",
     "26.5.012.0  TLS 1.3, certificate checks, HTTPS in Web and curl",
     "26.5.011.0  USB input, Intel Ethernet, IPv4/TCP stack, Web browser",
     "26.5.010.0  MintDE 2: macOS-style desktop, shared canvas, RTC clock",
     "26.5.009.0  Real-hardware display, mouse, ACPI power, RAID-mode SATA",
     "26.5.008.0  VirtualBox E1000 RX loopback and descriptor diagnostics",
     "26.5.007.0  E1000 TX timeout isolation",
-    "26.5.006.0  E1000 loopback diagnostics and terminal prompt",
-    "26.5.005.0  E1000 driver foundation"
+    "26.5.006.0  E1000 loopback diagnostics and terminal prompt"
 };
 static const char *const de_versions[8] = {
+    "MintDE 2.3.0  Finder on MintOS HD, Trash, Notes saved to disk",
     "MintDE 2.2.0  Secure web browsing, padlock, DuckDuckGo search",
     "MintDE 2.1.0  Web browser, Network app, Terminal network tools",
     "MintDE 2.0.0  Windows, Dock, Launchpad, Spotlight, Control Center",
     "MintDE 1.0.8  Shut Down / Restart and precise pointer",
     "MintDE 1.0.7  VirtualBox loopback and RX diagnostics",
     "MintDE 1.0.6  E1000 loopback failure diagnostics",
-    "MintDE 1.0.5  E1000 loopback diagnostics and terminal prompt",
-    "MintDE 1.0.4  E1000 driver UI"
+    "MintDE 1.0.5  E1000 loopback diagnostics and terminal prompt"
 };
 static void about_paint(uint32_t app, const mde_layout *l) {
     gfx_rect f = l->frame;
@@ -2703,7 +3687,19 @@ void app_init(void) {
     calc_format(0);
 }
 void app_opened(uint32_t app) {
-    if (app == APP_FILES) { refresh_storage_data(); if (files_volume) refresh_fat_files(); else refresh_files(); }
+    if (app == APP_FILES) {
+        refresh_storage_data(); mfs_refresh_volume();
+        if (!files_started) { files_started = 1; if (mfs_ready) files_go_mfs(mfs_volume.home); else refresh_files(); }
+        else if (files_on_mfs()) {
+            char keep[MINT_MFS_NAME_MAX + 1] = {0};
+            if (files_selected_entry >= 0 && (uint32_t)files_selected_entry < mfs_entry_count)
+                copy_text(keep, sizeof(keep), mfs_entries[files_selected_entry].name);
+            files_renaming = 0;
+            files_after_change(keep[0] ? keep : 0);
+        }
+        else if (files_volume) refresh_fat_files(); else refresh_files();
+    }
+    if (app == APP_NOTES && !notes_on_disk) notes_loaded = 0;     /* MintOS HD may have appeared */
     if (app == APP_STORAGE || app == APP_DISKS || app == APP_SETTINGS || app == APP_MONITOR) refresh_storage_data();
     if (app == APP_DRIVERS || app == APP_MONITOR) refresh_driver_catalog();
     if (app == APP_WEB) web_opened();
@@ -2768,6 +3764,7 @@ uint32_t app_background(void) {
     static uint64_t last_poll;
     static uint32_t last_signature;
     uint64_t now = term_ms();
+    if (notes_dirty && notes_on_disk && (int64_t)(now - notes_edit_ms) >= 1200) { notes_flush(); dirty |= 1u << APP_NOTES; }
     if (now - last_poll >= 500u) {
         last_poll = now;
         if (mint_net_get_status(&net_info) == 0) {
@@ -2785,7 +3782,7 @@ int app_tick(uint32_t app) {
 }
 uint32_t app_cursor(uint32_t app, const mde_layout *l, int32_t x, int32_t y) {
     if ((app == APP_TERMINAL || app == APP_NOTES) && in(l->content, x, y)) return MINT_CURSOR_SHAPE_IBEAM;
-    if (app == APP_FILES && in(files_search_rect(l), x, y)) return MINT_CURSOR_SHAPE_IBEAM;
+    if (app == APP_FILES && (in(files_search_rect(l), x, y) || files_renaming)) return MINT_CURSOR_SHAPE_IBEAM;
     if (app == APP_WEB) return web_cursor(l, x, y);
     return MINT_CURSOR_SHAPE_ARROW;
 }

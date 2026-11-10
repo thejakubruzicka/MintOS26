@@ -1,0 +1,27 @@
+# tools/mintfs_tool on the QEMU MintOS disk after a hard power-off (26.5.013.0)
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+fsck: clean
+  inodes=19 dirs=16 files=3 reachable=33 marked=33
+  bad_checksums=0 bad_pointers=0 double_refs=0 leaked=0 missing=0 bad_dirs=0 bad_links=0
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+volume "MintOS HD" generation 8, 261850 of 261883 blocks free
+
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+Applications/  0 bytes  mtime=1794342436
+Library/  0 bytes  mtime=1794342436
+System/  0 bytes  mtime=1794342436
+Volumes/  0 bytes  mtime=1794342436
+Users/  32 bytes  mtime=1794342436
+  Shared/  0 bytes  mtime=1794342436
+  mintos/  120 bytes  mtime=1794342436
+    Desktop/  0 bytes  mtime=1794342436
+    Documents/  68 bytes  mtime=1794342488
+      Welcome to MintOS.txt  183 bytes  mtime=1794342436
+      Notes.txt  53 bytes  mtime=1794342462
+      Projects/  19 bytes  mtime=1794342492
+        proof.txt  16 bytes  mtime=1794342492
+    Downloads/  0 bytes  mtime=1794342436
+    Movies/  0 bytes  mtime=1794342436
+    Music/  0 bytes  mtime=1794342436
+    Pictures/  0 bytes  mtime=1794342436
+    .Trash/  0 bytes  mtime=1794342436

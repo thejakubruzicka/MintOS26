@@ -99,6 +99,8 @@ static AHCI_COMMAND_HEADER command_lists[AHCI_COMMAND_SLOTS][32] __attribute__((
 static uint8_t received_fis[AHCI_COMMAND_SLOTS][256] __attribute__((aligned(256)));
 static AHCI_COMMAND_TABLE command_tables[AHCI_COMMAND_SLOTS] __attribute__((aligned(128)));
 static uint8_t sector_buffers[AHCI_COMMAND_SLOTS][512] __attribute__((aligned(512)));
+/* 4 KiB transfers (MintFS blocks): one PRDT entry per command. */
+static uint8_t block_buffers[AHCI_COMMAND_SLOTS][4096] __attribute__((aligned(4096)));
 static AHCI_PORT_SLOT ports[AHCI_COMMAND_SLOTS];
 static volatile uint8_t *controller_hbas[MINT_STORAGE_MAX_CONTROLLERS];
 static uint32_t dma_slots_used;
@@ -151,11 +153,15 @@ static int start_port(uint32_t slot) {
     return wait_mask(regs, AHCI_PX_CMD, AHCI_CMD_CR, AHCI_CMD_CR);
 }
 
+static int issue_data_command_n(uint32_t slot, uint8_t command, uint64_t lba, int is_write, uint32_t count, uint8_t *buffer);
 static int issue_data_command(uint32_t slot, uint8_t command, uint64_t lba, int is_write) {
-    if (slot >= dma_slots_used || !ports[slot].active) return 0;
+    return issue_data_command_n(slot, command, lba, is_write, 1u, sector_buffers[slot]);
+}
+static int issue_data_command_n(uint32_t slot, uint8_t command, uint64_t lba, int is_write, uint32_t count, uint8_t *buffer) {
+    if (slot >= dma_slots_used || !ports[slot].active || !count || count > 8u) return 0;
     AHCI_PORT_SLOT *p = &ports[slot];
     volatile uint8_t *regs = p->registers;
-    if (lba >= p->sectors && p->sectors) return 0;
+    if (p->sectors && (lba >= p->sectors || count > p->sectors - lba)) return 0;
     int lba28 = command == AHCI_CMD_READ_DMA || command == AHCI_CMD_WRITE_DMA;
     int lba48 = command == AHCI_CMD_READ_DMA_EXT || command == AHCI_CMD_WRITE_DMA_EXT;
     if (lba28 && lba >= ATA_LBA28_LIMIT) return 0;
@@ -179,7 +185,7 @@ static int issue_data_command(uint32_t slot, uint8_t command, uint64_t lba, int 
         table->cfis[5] = (uint8_t)(lba >> 8);
         table->cfis[6] = (uint8_t)(lba >> 16);
         table->cfis[7] = 0x40u | (lba28 ? (uint8_t)((lba >> 24) & 0x0Fu) : 0u);
-        table->cfis[12] = 1u; /* one sector */
+        table->cfis[12] = (uint8_t)count; /* sectors in this transfer (1..8) */
         if (lba48) {
             table->cfis[8] = (uint8_t)(lba >> 24);
             table->cfis[9] = (uint8_t)(lba >> 32);
@@ -187,9 +193,9 @@ static int issue_data_command(uint32_t slot, uint8_t command, uint64_t lba, int 
             table->cfis[13] = 0u; /* sector-count high byte */
         }
     }
-    table->prdt[0].dba = (uint32_t)(uintptr_t)sector_buffers[slot];
-    table->prdt[0].dbau = (uint32_t)((uint64_t)(uintptr_t)sector_buffers[slot] >> 32);
-    table->prdt[0].dbc_i = 511u;
+    table->prdt[0].dba = (uint32_t)(uintptr_t)buffer;
+    table->prdt[0].dbau = (uint32_t)((uint64_t)(uintptr_t)buffer >> 32);
+    table->prdt[0].dbc_i = count * 512u - 1u;
     __asm__ volatile("mfence" ::: "memory");
     mmio_write32(regs, AHCI_PX_IS, 0xFFFFFFFFu);
     mmio_write32(regs, AHCI_PX_CI, 1u);
@@ -225,6 +231,26 @@ static int ahci_write_sector(void *context, uint64_t lba, const uint8_t data[512
     for (uint32_t i = 0; i < 512u; ++i) sector_buffers[slot][i] = data[i];
     __asm__ volatile("mfence" ::: "memory");
     return issue_data_command(slot, command, lba, 1);
+}
+
+/* Up to 8 sectors per command, used for 4 KiB filesystem blocks. */
+static int ahci_read_sectors(void *context, uint64_t lba, uint32_t count, uint8_t *out) {
+    AHCI_PORT_SLOT *p = (AHCI_PORT_SLOT *)context;
+    if (!p || !out || !p->active || !count || count > 8u || lba >= p->sectors || count > p->sectors - lba) return 0;
+    uint32_t slot = (uint32_t)(p - ports);
+    if (!p->lba48_supported && lba + count > ATA_LBA28_LIMIT) return 0;
+    if (!issue_data_command_n(slot, p->lba48_supported ? AHCI_CMD_READ_DMA_EXT : AHCI_CMD_READ_DMA, lba, 0, count, block_buffers[slot])) return 0;
+    for (uint32_t i = 0; i < count * 512u; ++i) out[i] = block_buffers[slot][i];
+    return 1;
+}
+static int ahci_write_sectors(void *context, uint64_t lba, uint32_t count, const uint8_t *data) {
+    AHCI_PORT_SLOT *p = (AHCI_PORT_SLOT *)context;
+    if (!p || !data || !p->active || !count || count > 8u || lba >= p->sectors || count > p->sectors - lba) return 0;
+    uint32_t slot = (uint32_t)(p - ports);
+    if (!p->lba48_supported && lba + count > ATA_LBA28_LIMIT) return 0;
+    for (uint32_t i = 0; i < count * 512u; ++i) block_buffers[slot][i] = data[i];
+    __asm__ volatile("mfence" ::: "memory");
+    return issue_data_command_n(slot, p->lba48_supported ? AHCI_CMD_WRITE_DMA_EXT : AHCI_CMD_WRITE_DMA, lba, 1, count, block_buffers[slot]);
 }
 
 static int ahci_flush_cache(void *context) {
@@ -511,6 +537,8 @@ static void probe_ports(uint32_t controller_index, MINT_STORAGE_SNAPSHOT *snapsh
         /* Kept READONLY in the registry. The only code allowed to invoke this
            callback directly is the confirmed blank-disk formatter. */
         dev.write_sector = ahci_write_sector;
+        dev.read_sectors = ahci_read_sectors;
+        dev.write_sectors = ahci_write_sectors;   /* reachable only through a MintOS-disk write grant */
         dev.flush = ahci_flush_cache;
         di->block_index = mint_block_count();
         if (!mint_block_register(&dev)) {

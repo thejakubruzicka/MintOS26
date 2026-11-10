@@ -20,6 +20,8 @@
 #include <usb.h>
 #define MINT_NET_USERSPACE 1
 #include <net.h>
+#define MINT_MFS_USERSPACE 1
+#include <mintos_fs.h>
 
 /* Tiny freestanding userspace ABI. It is deliberately not a libc or Linux ABI. */
 int64_t mint_write(uint64_t fd, const void *buffer, size_t length);
@@ -74,6 +76,25 @@ int64_t mint_tcp_send(int64_t handle, const void *data, size_t length);
 int64_t mint_tcp_recv(int64_t handle, void *out, size_t capacity);
 int64_t mint_tcp_state(int64_t handle);
 int64_t mint_tcp_close(int64_t handle);
+/* MintOS disk files (see mintos_fs.h). Handles are per process and closed on exit.
+ * Reads may return fewer bytes than asked; mint_file_write writes everything or fails. */
+int64_t mint_file_open(const char *path, uint32_t flags);
+int64_t mint_file_read(int64_t fd, void *out, size_t capacity);
+int64_t mint_file_write(int64_t fd, const void *data, size_t length);
+int64_t mint_file_seek(int64_t fd, int64_t offset, uint32_t whence);
+int64_t mint_file_close(int64_t fd);
+int64_t mint_path_stat(const char *path, MINT_MFS_STAT *out);
+/* out must hold MINT_MFS_LIST_MAX entries; returns how many were stored (0 = end). */
+int64_t mint_dir_list(const char *path, uint32_t start, MINT_MFS_DIRENT *out);
+int64_t mint_dir_create(const char *path);
+int64_t mint_path_rename(const char *from, const char *to);
+int64_t mint_path_remove(const char *path);
+int64_t mint_fs_flush(void);
+int64_t mint_fs_get_volume(MINT_MFS_VOLUME *out);
+int64_t mint_storage_init_mintos(const MINT_STORAGE_FORMAT_REQUEST *request);
+/* Whole-file helpers: read up to capacity bytes / replace the file's contents. */
+int64_t mint_file_load(const char *path, void *out, size_t capacity);
+int64_t mint_file_save(const char *path, const void *data, size_t length);
 int64_t mint_log_read(MINT_LOG_RECORD *out, uint32_t capacity, uint32_t minimum_severity, uint32_t component_filter);
 int64_t mint_ui_frame_begin(void);
 int64_t mint_ui_frame_end(void);

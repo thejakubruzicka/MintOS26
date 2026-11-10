@@ -1,4 +1,4 @@
-# MintOS26 26.5.012.0 / MintDE 2.2.0 — Test Guide
+# MintOS26 26.5.013.0 / MintDE 2.3.0 — Test Guide
 
 ## Host build and test
 
@@ -19,6 +19,25 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 ## QEMU/OVMF quick run (Linux or macOS)
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
+
+### MintOS disk test (26.5.013.0)
+
+On the host, `make check` runs these MintFS tests:
+- `test-mintfs`: random operations against a model, fsck after every commit, 300 power cuts with torn writes, a full disk and checksum damage. Set `MINTFS_SEED=n` for other seeds.
+- `test-mintos-disk`: the real block layer, MintOS-disk module and MintFS on RAM disks.
+- `test_gpt.py` and `test_mintfs_contracts.py`.
+
+In QEMU:
+
+1. `tools/run_qemu.sh --mintos-disk -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0`. This attaches `build/qemu-mintos-disk-1g.img`, a blank 1 GiB disk that is **persistent**, unlike the other disks.
+2. **Disk Utility:** select the 1 GB disk, then **Erase…**, keep **MintOS (MintFS)**, type `FORMAT sdX` as shown, and press Erase. COM1 shows `[mintfs] initialized a MintOS disk`.
+3. **Files** opens at `mintos` (home). Try New Folder (⇧⌘N), Rename (Return), Duplicate (⌘D), Move to Trash (⌘⌫), the Dock Trash and Empty Trash (⇧⌘⌫).
+4. **Notes:** type, wait a second, and `Notes.txt` appears in Documents. Double-click a `.txt` file in Files to open it in Notes.
+5. **Terminal:** `ls -l`, `cd Documents`, `echo hi > a.txt`, `cat a.txt`, `mkdir x`, `mv a.txt x`, `rm -r x`, `df`.
+6. **Persistence:** quit QEMU (even mid-edit) and run the same command again. Everything saved before the cut is there, and COM1 shows `[mintfs] mounted "MintOS HD"`.
+7. **Host check:** `cc -std=c11 -O2 -DMINT_GPT_HOST_TEST tools/mintfs_tool.c kernel/fs/mintfs.c kernel/fs/mintos_disk.c -o build/mintfs-tool`, then `build/mintfs-tool check build/qemu-mintos-disk-1g.img` (should report `fsck: clean`) and `build/mintfs-tool ls build/qemu-mintos-disk-1g.img / -r`.
+
+Delete `build/qemu-mintos-disk-1g.img` to start over with a blank disk.
 
 ### HTTPS test (26.5.012.0)
 

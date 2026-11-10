@@ -52,6 +52,15 @@ checks = {
     "MintDE has a Disk Utility with explicit blank-media confirmation": all(x in app for x in ["Disk Utility", "disk_is_erasable", "Erasing destroys all data on this disk", "disk_confirmation", "mint_storage_format_blank", "device->serial", "FORMAT "]),
     "MintDE System Monitor labels unavailable CPU/process-memory metrics honestly": all(x in app for x in ["System Monitor", "POINTER MOVES", "CPU load and per-process memory are not measured"]),
     "MintDE provides a separate hardware and driver catalog app": all(x in app for x in ["Hardware & Drivers", "mint_driver_catalog_get", "APP_DRIVERS"]),
+    "window sidebars are translucent: blurred backdrop sampled before the shadow, then tinted":
+        "SIDEBAR_BLUR" in shell and "gfx_copy(&gfx_scratch, S, sidebar_clip)" in shell and "T.sidebar_tint" in shell and
+        shell.find("gfx_blur_rounded(S, sidebar, SIDEBAR_BLUR, 0)") < shell.find("gfx_shadow(S, w->x, w->y, w->w, w->h, WIN_R"),
+    "sidebar blur margins are recomposed with the damage (no stale pixels feed back)":
+        "translucent window sidebars sample behind themselves" in shell and "2 * SIDEBAR_BLUR" in shell,
+    "Finder-style sidebars use a gray selection pill and accent line symbols":
+        "void ui_sidebar_row(" in app and "T.sidebar_selection" in app and "SYM_DRIVE" in app,
+    "raising a window repaints the menu bar so it names the active app":
+        "menu bar shows the active app" in shell,
     "MintDE explains network security and limitations": all(x in app for x in ["APP_NETWORK", "TLS 1.3 with certificate checks", "This connection is not private", "This adapter's driver is experimental"]),
     "terminal volume selection avoids a multi-kilobyte stack snapshot": "MINT_STORAGE_SNAPSHOT storage;" not in app and "terminal_select_named_volume" in app,
     "PCI resource inventory includes read-only BAR/IRQ decoding": all(x in pci_header for x in ["MINT_PCI_BAR_SLOTS", "interrupt_line", "interrupt_pin"]) and "populate_device_resources" in pci,
@@ -79,8 +88,8 @@ checks = {
     "MintDE Settings contains dedicated categories including Storage and Privacy": all(x in app for x in ["General", "Appearance", "Displays", "Input", "Storage", "Privacy"]) and "settings_category" in app,
     "About changelog is hidden by default and lists versioned history on demand":
         "show_changelog" in app and "Release Notes" in app and "os_versions[8]" in app and "de_versions[8]" in app and
-        all((root / "changelogs" / n).is_file() for n in ["MintOS26-26.5.012.0.md", "MintOS26-26.5.011.0.md", "MintOS26-26.5.010.0.md", "MintOS26-26.5.009.0.md", "MintOS26-26.5.008.0.md", "MintOS26-26.5.007.0.md", "MintOS26-26.5.006.0.md", "MintOS26-26.5.005.0.md", "MintOS26-26.5.004.0.md", "MintOS26-26.5.003.0.md", "MintOS26-26.5.002.0.md", "MintOS26-26.5.001.0.md", "MintDE-2.2.0.md", "MintDE-2.1.0.md", "MintDE-2.0.0.md", "MintDE-1.0.8.md", "MintDE-1.0.7.md", "MintDE-1.0.6.md", "MintDE-1.0.5.md", "MintDE-1.0.4.md", "MintDE-1.0.3.md", "MintDE-1.0.0.md"]),
-    "Files enumerates mounted FAT16 volumes with explicit per-volume selection": all(x in app for x in ["mint_fat16_get_volumes", "mint_fat16_select_volume", "files_volume", "files_choose_volume"]) and "MINT_FAT16_MAX_VOLUMES 8u" in (root / "kernel/include/fat16.h").read_text(),
+        all((root / "changelogs" / n).is_file() for n in ["MintOS26-26.5.013.0.md", "MintOS26-26.5.012.0.md", "MintOS26-26.5.011.0.md", "MintOS26-26.5.010.0.md", "MintOS26-26.5.009.0.md", "MintOS26-26.5.008.0.md", "MintOS26-26.5.007.0.md", "MintOS26-26.5.006.0.md", "MintOS26-26.5.005.0.md", "MintOS26-26.5.004.0.md", "MintOS26-26.5.003.0.md", "MintOS26-26.5.002.0.md", "MintOS26-26.5.001.0.md", "MintDE-2.3.0.md", "MintDE-2.2.0.md", "MintDE-2.1.0.md", "MintDE-2.0.0.md", "MintDE-1.0.8.md", "MintDE-1.0.7.md", "MintDE-1.0.6.md", "MintDE-1.0.5.md", "MintDE-1.0.4.md", "MintDE-1.0.3.md", "MintDE-1.0.0.md"]),
+    "Files enumerates mounted FAT16 volumes with explicit per-volume selection": all(x in app for x in ["mint_fat16_get_volumes", "mint_fat16_select_volume", "files_volume", "files_choose_place"]) and "MINT_FAT16_MAX_VOLUMES 8u" in (root / "kernel/include/fat16.h").read_text(),
     "standard FAT16 volumes do not require MintOS seed files to mount": "standard FAT16 volume is browseable even without MintOS seed files" in (root / "kernel/fs/fat16.c").read_text() and "MintOS26 seed files are optional" in (root / "kernel/diag/storage_diag.c").read_text(),
     "pointer is a single kernel overlay driven by MintDE, not painted by the PS/2 IRQ path": "mint_display_set_overlay_cursor" in display and "mint_display_cursor(pointer_x, pointer_y, shape)" in shell and "mint_display_cursor_move" not in (root / "kernel/input/ps2.c").read_text(),
     "native windows implement mouse-driven resize from the right/bottom edges and corner": all(x in shell for x in ["resize_edges_at", "resize_w0", "resize_h0", "MINT_CURSOR_SHAPE_RESIZE_NWSE"]),

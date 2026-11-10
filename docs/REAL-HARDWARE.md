@@ -1,7 +1,7 @@
 # Running MintOS26 on real hardware — Dell OptiPlex 7040 guide
 
 Target machine: Dell OptiPlex 7040 (Intel Skylake, Q170 PCH), Core i5/i7-6xxx, NVIDIA GeForce GTX 1050 Ti, UEFI firmware.
-Status: **26.5.012.0 (MintDE 2.2.0) is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
+Status: **26.5.013.0 (MintDE 2.3.0) is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
 
 ## What to expect
 
@@ -36,7 +36,7 @@ The GTX 1050 Ti is driven only through the UEFI GOP framebuffer the card's firmw
 make clean all
 # macOS: find the stick with `diskutil list` (e.g. /dev/disk4), then:
 diskutil unmountDisk /dev/diskN
-sudo dd if=build/mintos26-26.5.012.0-uefi.img of=/dev/rdiskN bs=4m
+sudo dd if=build/mintos26-26.5.013.0-uefi.img of=/dev/rdiskN bs=4m
 diskutil eject /dev/diskN
 ```
 
@@ -53,7 +53,8 @@ balenaEtcher can write the same `.img` file. Boot the stick with **F12** (one-ti
   - If it never gets an address, a USB-to-Ethernet adapter is not an alternative yet (no USB network driver).
 - **Clock and HTTPS:** HTTPS certificate checks use the PC's CMOS clock, read as UTC. If Windows on the same machine keeps local time in the CMOS clock, the error is only a few hours, which is harmless for certificates. A clock that is years off makes sites look "not valid yet" or "expired".
 - Run `power` in Terminal (when input works) to see what the firmware's ACPI tables report, including whether an 8042 controller is advertised.
-- The internal SATA disks are mounted read-only only if they contain FAT16. Nothing is ever written to them. The Disk Utility formatter must never be used on this machine.
+- The internal SATA disks are mounted read-only only if they contain FAT16. Nothing is ever written to them.
+- Do not use Disk Utility's Erase on this machine unless you attach a **spare, completely blank** disk for it. MintOS refuses any disk that is not blank, but this has not been validated on real SATA hardware yet.
 - Return to UEFI Desktop by restarting (leaf menu → Restart…) or with the reset button.
 
 ## Evidence to collect for each hardware run

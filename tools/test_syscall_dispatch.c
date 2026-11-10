@@ -40,6 +40,20 @@ int64_t mint_net_tcp_recv(int64_t h, uint8_t *o, uint32_t n) { (void)h; (void)o;
 int64_t mint_net_tcp_state(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_net_tcp_close(int64_t h) { (void)h; return -MINT_EBADF; }
 int64_t mint_fat16_read_prefix(const char *path, void *buffer, size_t capacity) { (void)path; (void)buffer; (void)capacity; return -MINT_ENODEV; }
+#include "../kernel/include/mintos_fs.h"
+int64_t mint_mfs_open(const char *p, uint32_t f, uint64_t pid) { (void)p; (void)f; (void)pid; return -MINT_ENODEV; }
+int64_t mint_mfs_read(int64_t fd, void *b, uint32_t n, uint64_t pid) { (void)fd; (void)b; (void)n; (void)pid; return -MINT_EBADF; }
+int64_t mint_mfs_write(int64_t fd, const void *b, uint32_t n, uint64_t pid) { (void)fd; (void)b; (void)n; (void)pid; return -MINT_EBADF; }
+int64_t mint_mfs_seek(int64_t fd, int64_t o, uint32_t w, uint64_t pid) { (void)fd; (void)o; (void)w; (void)pid; return -MINT_EBADF; }
+int64_t mint_mfs_close(int64_t fd, uint64_t pid) { (void)fd; (void)pid; return -MINT_EBADF; }
+int64_t mint_mfs_stat(const char *p, MINT_MFS_STAT *o) { (void)p; (void)o; return -MINT_ENODEV; }
+int64_t mint_mfs_list(const char *p, uint32_t s, MINT_MFS_DIRENT *o, uint32_t c) { (void)p; (void)s; (void)o; (void)c; return -MINT_ENODEV; }
+int64_t mint_mfs_mkdir(const char *p) { (void)p; return -MINT_ENODEV; }
+int64_t mint_mfs_rename(const char *a, const char *b) { (void)a; (void)b; return -MINT_ENODEV; }
+int64_t mint_mfs_remove(const char *p) { (void)p; return -MINT_ENODEV; }
+int64_t mint_mfs_sync(void) { return -MINT_ENODEV; }
+int mint_mfs_volume(MINT_MFS_VOLUME *o) { (void)o; return 0; }
+int mint_mintos_disk_initialize(uint32_t i) { (void)i; return -MINT_ENODEV; }
 int mint_address_space_map_shared(MINT_ADDRESS_SPACE *s, uint64_t va, uint64_t pa, uint64_t pages, uint32_t f) {
     (void)s; (void)va; (void)pa; (void)pages; (void)f; return 0;
 }

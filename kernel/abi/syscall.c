@@ -23,6 +23,7 @@
 #include "../include/rtc.h"
 #include "../include/usb.h"
 #include "../include/process.h"
+#include "../include/mintos_fs.h"
 
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
  * ring-3 entry below never passes raw user pointers into this function. */
@@ -90,6 +91,112 @@ static int bounded_text_equal(const char *a, const char *b, size_t capacity) {
     return 0;
 }
 
+/* Validates a destructive disk request from Disk Utility: the device must be
+ * the one the user saw (serial + size) and the confirmation must read
+ * "FORMAT <device>". Returns the block index or a negative error. */
+static int64_t validate_format_request(const MINT_ADDRESS_SPACE *space, uint64_t address,
+                                       const MINT_STORAGE_DEVICE_INFO **out_info) {
+    MINT_STORAGE_FORMAT_REQUEST request;
+    const MINT_STORAGE_SNAPSHOT *snapshot=mint_storage_diag_snapshot();
+    if (!snapshot) return -MINT_ENODEV;
+    if (!mint_address_space_validate_user_range(space,address,sizeof(request),0) ||
+        !mint_address_space_copy_from_user(space,&request,address,sizeof(request))) return -MINT_EFAULT;
+    if (request.version!=MINT_STORAGE_FORMAT_REQUEST_VERSION ||
+        request.device_index>=snapshot->device_count ||
+        request.device_index>=MINT_STORAGE_MAX_DEVICES) return -MINT_EINVAL;
+    const MINT_STORAGE_DEVICE_INFO *info=&snapshot->devices[request.device_index];
+    if (!info->block_registered || info->block_index>=mint_block_count()) return -MINT_ENODEV;
+    const MINT_BLOCK_DEVICE *dev=mint_block_get(info->block_index);
+    if (!dev || !dev->write_sector || !dev->flush) return -MINT_ENODEV;
+    if (request.expected_sector_count!=info->sector_count ||
+        request.expected_sector_count!=dev->sector_count ||
+        !bounded_text_equal(request.expected_serial,info->serial,sizeof(request.expected_serial)))
+        return -MINT_EPERM;
+    char expected[MINT_STORAGE_FORMAT_CONFIRM_LEN];
+    const char prefix[]="FORMAT "; size_t pos=0;
+    for (size_t i=0;i<sizeof(prefix)-1u && pos+1u<sizeof(expected);i++) expected[pos++]=prefix[i];
+    for (size_t i=0;info->name[i] && pos+1u<sizeof(expected);i++) expected[pos++]=info->name[i];
+    expected[pos]='\0';
+    if (!bounded_text_equal(request.confirmation,expected,sizeof(request.confirmation)))
+        return -MINT_EPERM;
+    *out_info=info;
+    return (int64_t)info->block_index;
+}
+
+/* File syscalls for the MintOS disk. Syscalls never interleave on the
+ * cooperative scheduler, so the bounce buffers can be static. */
+static int64_t fs_syscall(const MINT_ADDRESS_SPACE *space, uint64_t number, uint64_t arg0,
+                          uint64_t arg1, uint64_t arg2) {
+    static char path_a[MINT_MFS_PATH_MAX], path_b[MINT_MFS_PATH_MAX];
+    static uint8_t io[MINT_MFS_IO_MAX];
+    static MINT_MFS_DIRENT list[MINT_MFS_LIST_MAX];
+    uint64_t pid=mint_task_current_pid();
+    int rc;
+    switch (number) {
+    case MINT_SYS_MFS_OPEN:
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        if (arg1 & ~(uint64_t)(MINT_O_READ|MINT_O_WRITE|MINT_O_CREATE|MINT_O_TRUNC|MINT_O_APPEND|MINT_O_EXCL)) return -MINT_EINVAL;
+        return mint_mfs_open(path_a,(uint32_t)arg1,pid);
+    case MINT_SYS_MFS_READ: {
+        uint64_t len=arg2>sizeof(io)?sizeof(io):arg2;
+        if (!len) return 0;
+        if (!mint_address_space_validate_user_range(space,arg1,(size_t)len,1)) return -MINT_EFAULT;
+        int64_t got=mint_mfs_read((int64_t)arg0,io,(uint32_t)len,pid);
+        if (got>0 && !mint_address_space_copy_to_user(space,arg1,io,(size_t)got)) return -MINT_EFAULT;
+        return got;
+    }
+    case MINT_SYS_MFS_WRITE: {
+        uint64_t len=arg2>sizeof(io)?sizeof(io):arg2;
+        if (!len) return 0;
+        if (!mint_address_space_validate_user_range(space,arg1,(size_t)len,0) ||
+            !mint_address_space_copy_from_user(space,io,arg1,(size_t)len)) return -MINT_EFAULT;
+        return mint_mfs_write((int64_t)arg0,io,(uint32_t)len,pid);
+    }
+    case MINT_SYS_MFS_SEEK:
+        if (arg2>MINT_SEEK_END) return -MINT_EINVAL;
+        return mint_mfs_seek((int64_t)arg0,(int64_t)arg1,(uint32_t)arg2,pid);
+    case MINT_SYS_MFS_CLOSE:
+        return mint_mfs_close((int64_t)arg0,pid);
+    case MINT_SYS_MFS_STAT: {
+        MINT_MFS_STAT st;
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        if (!mint_address_space_validate_user_range(space,arg1,sizeof(st),1)) return -MINT_EFAULT;
+        int64_t r=mint_mfs_stat(path_a,&st);
+        if (r<0) return r;
+        return mint_address_space_copy_to_user(space,arg1,&st,sizeof(st)) ? 0 : -MINT_EFAULT;
+    }
+    case MINT_SYS_MFS_LIST: {
+        /* arg1 = start index, arg2 = user array; capacity is MINT_MFS_LIST_MAX. */
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        if (arg1>0xFFFFFFFFu) return -MINT_EINVAL;
+        if (!mint_address_space_validate_user_range(space,arg2,sizeof(list),1)) return -MINT_EFAULT;
+        int64_t n=mint_mfs_list(path_a,(uint32_t)arg1,list,MINT_MFS_LIST_MAX);
+        if (n<=0) return n;
+        return mint_address_space_copy_to_user(space,arg2,list,(size_t)n*sizeof(list[0])) ? n : -MINT_EFAULT;
+    }
+    case MINT_SYS_MFS_MKDIR:
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        return mint_mfs_mkdir(path_a);
+    case MINT_SYS_MFS_RENAME:
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        if ((rc=copy_user_cstring(space,arg1,path_b,sizeof(path_b)))<0) return rc;
+        return mint_mfs_rename(path_a,path_b);
+    case MINT_SYS_MFS_REMOVE:
+        if ((rc=copy_user_cstring(space,arg0,path_a,sizeof(path_a)))<0) return rc;
+        return mint_mfs_remove(path_a);
+    case MINT_SYS_MFS_SYNC:
+        return mint_mfs_sync();
+    case MINT_SYS_MFS_VOLUME: {
+        MINT_MFS_VOLUME v;
+        if (!mint_address_space_validate_user_range(space,arg0,sizeof(v),1)) return -MINT_EFAULT;
+        (void)mint_mfs_volume(&v);
+        return mint_address_space_copy_to_user(space,arg0,&v,sizeof(v)) ? 0 : -MINT_EFAULT;
+    }
+    default:
+        return -MINT_ENOSYS;
+    }
+}
+
 int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1,
                                    uint64_t arg2, uint64_t arg3, uint64_t arg4,
                                    uint64_t arg5) {
@@ -115,30 +222,26 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         if (rc < 0) return rc;
         return mint_address_space_copy_to_user(space, arg1, &ts, sizeof(ts)) ? 0 : -MINT_EFAULT;
     }
+    if (number >= MINT_SYS_MFS_OPEN && number <= MINT_SYS_MFS_VOLUME)
+        return fs_syscall(space, number, arg0, arg1, arg2);
+    if (number == MINT_SYS_STORAGE_INIT_MINTOS) {
+        const MINT_STORAGE_DEVICE_INFO *info=0;
+        int64_t index=validate_format_request(space,arg0,&info);
+        if (index<0) return index;
+        mint_log_emit(MINT_LOG_WARN,MINT_LOG_COMPONENT_MINTFS,
+                      "explicitly confirmed MintOS disk initialization requested");
+        int rc=mint_mintos_disk_initialize((uint32_t)index);
+        mint_serial_write(rc==0 ? "[storage] Disk Utility initialized a MintOS disk on block index "
+                                : "[storage] MintOS disk initialization failed for block index ");
+        mint_serial_dec64((uint64_t)index);
+        mint_serial_write("\n");
+        mint_storage_diag_recheck();
+        return rc;
+    }
     if (number == MINT_SYS_STORAGE_FORMAT_BLANK) {
-        MINT_STORAGE_FORMAT_REQUEST request;
-        const MINT_STORAGE_SNAPSHOT *snapshot=mint_storage_diag_snapshot();
-        if (!snapshot) return -MINT_ENODEV;
-        if (!mint_address_space_validate_user_range(space,arg0,sizeof(request),0) ||
-            !mint_address_space_copy_from_user(space,&request,arg0,sizeof(request))) return -MINT_EFAULT;
-        if (request.version!=MINT_STORAGE_FORMAT_REQUEST_VERSION ||
-            request.device_index>=snapshot->device_count ||
-            request.device_index>=MINT_STORAGE_MAX_DEVICES) return -MINT_EINVAL;
-        const MINT_STORAGE_DEVICE_INFO *info=&snapshot->devices[request.device_index];
-        if (!info->block_registered || info->block_index>=mint_block_count()) return -MINT_ENODEV;
-        const MINT_BLOCK_DEVICE *dev=mint_block_get(info->block_index);
-        if (!dev || !dev->write_sector || !dev->flush) return -MINT_ENODEV;
-        if (request.expected_sector_count!=info->sector_count ||
-            request.expected_sector_count!=dev->sector_count ||
-            !bounded_text_equal(request.expected_serial,info->serial,sizeof(request.expected_serial)))
-            return -MINT_EPERM;
-        char expected[MINT_STORAGE_FORMAT_CONFIRM_LEN];
-        const char prefix[]="FORMAT "; size_t pos=0;
-        for (size_t i=0;i<sizeof(prefix)-1u && pos+1u<sizeof(expected);i++) expected[pos++]=prefix[i];
-        for (size_t i=0;info->name[i] && pos+1u<sizeof(expected);i++) expected[pos++]=info->name[i];
-        expected[pos]='\0';
-        if (!bounded_text_equal(request.confirmation,expected,sizeof(request.confirmation)))
-            return -MINT_EPERM;
+        const MINT_STORAGE_DEVICE_INFO *info=0;
+        int64_t index=validate_format_request(space,arg0,&info);
+        if (index<0) return index;
         mint_log_emit(MINT_LOG_WARN,MINT_LOG_COMPONENT_PARTITION,
                       "explicitly confirmed blank developer disk initialization requested");
         int rc=mint_fat16_format_blank(info->block_index);

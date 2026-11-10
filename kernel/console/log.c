@@ -29,6 +29,7 @@ static const char *component_name(uint32_t c) {
     case MINT_LOG_COMPONENT_E1000: return "E1000";
     case MINT_LOG_COMPONENT_USB: return "USB";
     case MINT_LOG_COMPONENT_NET: return "NET";
+    case MINT_LOG_COMPONENT_MINTFS: return "MINTFS";
     default: return "KERNEL";
     }
 }
