@@ -4,6 +4,7 @@
  * (widgets.c) and the applications (apps.c). */
 #include <mintos/runtime.h>
 #include "gfx.h"
+#include "userdata.h"     /* preferences and the computer account (data saving) */
 
 #define MINTDE_VERSION "2.3.0"
 #define MINTOS_VERSION "26.5.013.0"
