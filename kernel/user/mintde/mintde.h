@@ -139,4 +139,38 @@ ICON_DECL(files) ICON_DECL(notes) ICON_DECL(terminal) ICON_DECL(settings) ICON_D
 ICON_DECL(console) ICON_DECL(system_info) ICON_DECL(network) ICON_DECL(disk_utility)
 ICON_DECL(about_mintos) ICON_DECL(mintde) ICON_DECL(launchpad) ICON_DECL(calculator) ICON_DECL(trash) ICON_DECL(web)
 extern const uint8_t mint_icon_mint_leaf_a8[];
+
+/* ---- data saving (26.5.014.0). Preferences and the account: userdata.h. */
+/* Notes with many notes in ~/Documents/Notes (notes.c) */
+enum { NOTES_CMD_NEW = 1, NOTES_CMD_DELETE, NOTES_CMD_COUNT };
+void notes_paint(const mde_layout *l);
+int notes_click(const mde_layout *l, int32_t x, int32_t y, uint32_t clicks);
+int notes_key(const MINT_DESKTOP_KEY_EVENT *k);
+int notes_scroll(const mde_layout *l, int32_t x, int32_t y, int32_t delta);
+uint32_t notes_cursor(const mde_layout *l, int32_t x, int32_t y);
+void notes_opened(void);
+void notes_open_file(const char *path);        /* Files: open a text file in Notes */
+int notes_background(uint64_t now_ms);         /* debounced save; 1 = repaint */
+int notes_flush(void);                         /* save the open note now */
+void notes_home_changed(void);
+int notes_command(uint32_t command);
+int notes_command_enabled(uint32_t command);
+/* Setup Assistant, appearance restore and Users & Groups (setup.c) */
+void userdata_start(void);                     /* MintDE start: preferences, account, saved appearance */
+void userdata_store_appearance(void);          /* called by shell_apply_settings */
+int setup_active(void);
+void setup_begin(int rerun);
+void setup_boot_check(void);                   /* first boot: no account yet */
+void setup_paint(gfx_rect damage);
+void setup_click(int32_t x, int32_t y);
+void setup_key(const MINT_DESKTOP_KEY_EVENT *k);
+int setup_tick(void);
+uint32_t setup_cursor(int32_t x, int32_t y);
+void account_avatar(int32_t cx, int32_t cy, int32_t r, const char *full_name, int font);
+void users_card_paint(gfx_rect r, int selected, int focused);
+void users_pane_paint(gfx_rect body);
+int users_pane_click(gfx_rect body, int32_t x, int32_t y);
+/* apps.c */
+void app_save_all(void);                       /* Notes, Terminal history, preferences, MintFS commit */
+void app_home_changed(void);                   /* the home moved: Files, Notes and Terminal follow */
 #endif
