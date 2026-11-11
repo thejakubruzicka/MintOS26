@@ -1,6 +1,8 @@
 /* Host harness for the MintOS Web engine core (kernel/user/web).
  *   test-web-core unit                        built-in URL, cookie, form, date, request and heap tests
  *   test-web-core inflate FORMAT IN OUT        decode raw|zlib|gzip|auto into OUT, prints the length or ERR
+ *   test-web-core image IN OUT                 decode an image, write "W H\n" + RGBA to OUT
+ *   test-web-core scale IN DW DH OUT           decode + resample, write "W H\n" + premultiplied ARGB (BGRA bytes)
  *   test-web-core http IN OUT [SEED]           parse an HTTP response fed in random pieces, decode
  *                                              Content-Encoding, write the body to OUT
  * Prints PASS/FAIL lines; exits non-zero on failure. */
@@ -10,6 +12,7 @@
 #include "../kernel/user/web/wmem.h"
 #include "../kernel/user/web/inflate.h"
 #include "../kernel/user/web/whttp.h"
+#include "../kernel/user/web/wimage.h"
 
 static int failures;
 static void check(int ok, const char *name, const char *detail) {
@@ -244,6 +247,29 @@ int main(int argc, char **argv) {
         for (uint32_t i = 0; whttp_header(&r, "set-cookie", i, sc, sizeof(sc)); ++i) printf("%s[%s]", i ? "," : "", sc);
         printf("\n");
         whttp_resp_free(&r);
+        return wmem_check() && wmem_used() == 0 ? 0 : 1;
+    }
+    if (argc >= 4 && !strcmp(argv[1], "image")) {
+        size_t n; uint8_t *in = read_file(argv[2], &n);
+        if (!in) { printf("ERR read\n"); return 1; }
+        int w = 0, h = 0;
+        uint8_t *px = wimage_decode(in, n, &w, &h, 4u << 20);
+        if (!px) { printf("ERR %s (%s)\n", wimage_failure(), wimage_format_name(wimage_sniff(in, n))); return wmem_used() == 0 ? 0 : 1; }
+        FILE *f = fopen(argv[3], "wb"); fprintf(f, "%d %d\n", w, h); fwrite(px, 1, (size_t)w * h * 4, f); fclose(f);
+        wmem_free(px);
+        printf("OK %s %dx%d\n", wimage_format_name(wimage_sniff(in, n)), w, h);
+        return wmem_check() && wmem_used() == 0 ? 0 : 1;
+    }
+    if (argc >= 6 && !strcmp(argv[1], "scale")) {
+        size_t n; uint8_t *in = read_file(argv[2], &n);
+        int w = 0, h = 0, dw = atoi(argv[3]), dh = atoi(argv[4]);
+        uint8_t *px = in ? wimage_decode(in, n, &w, &h, 4u << 20) : 0;
+        if (!px) { printf("ERR decode\n"); return 1; }
+        uint32_t *o = wimage_scale(px, w, h, dw, dh);
+        if (!o) { printf("ERR scale\n"); return 1; }
+        FILE *f = fopen(argv[5], "wb"); fprintf(f, "%d %d\n", dw, dh); fwrite(o, 4, (size_t)dw * dh, f); fclose(f);
+        wmem_free(o); wmem_free(px);
+        printf("OK %dx%d\n", dw, dh);
         return wmem_check() && wmem_used() == 0 ? 0 : 1;
     }
     fprintf(stderr, "usage: test-web-core unit | inflate FMT IN OUT | http IN OUT [SEED]\n");

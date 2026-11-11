@@ -50,11 +50,195 @@ def sample_texts(rng):
     yield html
 
 
+def png(w, h, rgba, color_type=6, bit_depth=8, palette=None, interlace=0):
+    def chunk(t, d):
+        return len(d).to_bytes(4, "big") + t + d + zlib.crc32(t + d).to_bytes(4, "big")
+    raw = bytearray()
+    bpp = {6: 4, 2: 3, 0: 1, 3: 1, 4: 2}[color_type]
+    rows = [rgba[y * w * bpp:(y + 1) * w * bpp] for y in range(h)]
+    prev = bytes(w * bpp)
+    for y, row in enumerate(rows):
+        f = y % 5                                   # exercise every PNG filter
+        out = bytearray()
+        for i, v in enumerate(row):
+            a = row[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if f == 0: pred = 0
+            elif f == 1: pred = a
+            elif f == 2: pred = b
+            elif f == 3: pred = (a + b) // 2
+            else:
+                p = a + b - c; pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+            out.append((v - pred) & 255)
+        raw += bytes([f]) + out
+        prev = row
+    ihdr = w.to_bytes(4, "big") + h.to_bytes(4, "big") + bytes([bit_depth, color_type, 0, 0, interlace])
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    if palette:
+        data += chunk(b"PLTE", palette)
+    return data + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+
+
+def gif(w, h, indices, palette):
+    """GIF with 'uncompressed' LZW: a clear code before the table grows, so every code is a literal."""
+    bits = 8
+    clear, end = 1 << bits, (1 << bits) + 1
+    codes, out = [], bytearray()
+    for i, v in enumerate(indices):
+        if i % 250 == 0:
+            codes.append(clear)
+        codes.append(v)
+    codes.append(end)
+    acc = nbits = 0
+    for c in codes:
+        acc |= c << nbits; nbits += bits + 1
+        while nbits >= 8:
+            out.append(acc & 255); acc >>= 8; nbits -= 8
+    if nbits:
+        out.append(acc & 255)
+    blocks = b"".join(bytes([len(out[i:i + 255])]) + out[i:i + 255] for i in range(0, len(out), 255))
+    hdr = b"GIF89a" + w.to_bytes(2, "little") + h.to_bytes(2, "little") + bytes([0xF7, 0, 0]) + palette
+    img = b"\x2c" + bytes(4) + w.to_bytes(2, "little") + h.to_bytes(2, "little") + b"\x00" + bytes([bits])
+    return hdr + img + blocks + b"\x00\x3b"
+
+
+def bmp(w, h, rgb, bits=24):
+    stride = (w * bits // 8 + 3) & ~3
+    pix = bytearray()
+    for y in range(h - 1, -1, -1):
+        row = bytearray()
+        for x in range(w):
+            r, g, b = rgb[(y * w + x) * 3:(y * w + x) * 3 + 3]
+            row += bytes([b, g, r]) + (b"\xff" if bits == 32 else b"")
+        pix += row + bytes(stride - len(row))
+    info = (40).to_bytes(4, "little") + w.to_bytes(4, "little") + h.to_bytes(4, "little", signed=True) + (1).to_bytes(2, "little") + \
+        bits.to_bytes(2, "little") + bytes(4) + len(pix).to_bytes(4, "little") + bytes(16)
+    return b"BM" + (54 + len(pix)).to_bytes(4, "little") + bytes(4) + (54).to_bytes(4, "little") + info + bytes(pix)
+
+
+def read_ppm(path):
+    data = Path(path).read_bytes()
+    parts, i = [], 0
+    while len(parts) < 4:
+        while data[i:i + 1].isspace():
+            i += 1
+        j = i
+        while not data[j:j + 1].isspace():
+            j += 1
+        parts.append(data[i:j]); i = j
+    w, h = int(parts[1]), int(parts[2])
+    pix = data[i + 1:]
+    ch = 3 if parts[0] == b"P6" else 1
+    return w, h, [tuple(pix[k * ch:(k + 1) * ch]) * (3 if ch == 1 else 1) for k in range(w * h)]
+
+
+def images(tmp, core, rng):
+    def decode(blob):
+        src, dst = tmp / "img.bin", tmp / "img.out"
+        src.write_bytes(blob)
+        if dst.exists():
+            dst.unlink()
+        r = subprocess.run([str(core), "image", str(src), str(dst)], capture_output=True, text=True)
+        if not dst.exists():
+            return r.stdout.strip(), None, None, None, r.returncode
+        raw = dst.read_bytes()
+        nl = raw.index(b"\n")
+        w, h = map(int, raw[:nl].split())
+        return r.stdout.strip(), w, h, raw[nl + 1:], r.returncode
+
+    w, h = 37, 23
+    rgba = bytes(rng.getrandbits(8) for _ in range(w * h * 4))
+    st, dw, dh, px, rc = decode(png(w, h, rgba))
+    check(st == f"OK PNG {w}x{h}" and px == rgba and rc == 0, "PNG RGBA (all five filters) decodes pixel-exact", st)
+    rgb = bytes(rng.getrandbits(8) for _ in range(w * h * 3))
+    st, _, _, px, _ = decode(png(w, h, rgb, color_type=2))
+    want = b"".join(rgb[i * 3:i * 3 + 3] + b"\xff" for i in range(w * h))
+    check(px == want, "PNG RGB decodes pixel-exact with opaque alpha", st)
+    pal = bytes(rng.getrandbits(8) for _ in range(256 * 3))
+    idx = bytes(rng.randrange(256) for _ in range(w * h))
+    st, _, _, px, _ = decode(png(w, h, idx, color_type=3, palette=pal))
+    want = b"".join(pal[i * 3:i * 3 + 3] + b"\xff" for i in idx)
+    check(px == want, "PNG palette image decodes pixel-exact", st)
+    gray = bytes(rng.getrandbits(8) for _ in range(w * h))
+    st, _, _, px, _ = decode(png(w, h, gray, color_type=0))
+    check(px == b"".join(bytes([g, g, g, 255]) for g in gray), "PNG greyscale decodes pixel-exact", st)
+    st, _, _, px, _ = decode(gif(w, h, list(idx), pal))
+    check(st == f"OK GIF {w}x{h}" and px == want, "GIF (first frame, LZW) decodes pixel-exact", st)
+    st, _, _, px, _ = decode(bmp(w, h, rgb))
+    want = b"".join(rgb[i * 3:i * 3 + 3] + b"\xff" for i in range(w * h))
+    check(st == f"OK BMP {w}x{h}" and px == want, "BMP 24-bit decodes pixel-exact", st)
+    st, _, _, px, _ = decode(bmp(w, h, rgb, 32))
+    check(st == f"OK BMP {w}x{h}" and px is not None and all(px[i * 4:i * 4 + 3] == rgb[i * 3:i * 3 + 3] for i in range(w * h)),
+          "BMP 32-bit decodes with the right colours", st)
+    fx = ROOT / "tools/fixtures/web"
+    for name, ref in (("baseline.jpg", "baseline.ref.ppm"), ("progressive.jpg", "progressive.ref.ppm"), ("gray.jpg", "gray.ref.pgm")):
+        st, jw, jh, px, _ = decode((fx / name).read_bytes())
+        rw, rh, refpx = read_ppm(fx / ref)
+        if px is None or (jw, jh) != (rw, rh):
+            check(False, f"JPEG {name} decodes", st)
+            continue
+        diffs = [abs(px[k * 4 + c] - refpx[k][c]) for k in range(rw * rh) for c in range(3)]
+        mean = sum(diffs) / len(diffs)
+        check(mean < 1.0 and max(diffs) <= 8, f"JPEG {name} matches libjpeg-turbo within rounding (mean {mean:.2f}, max {max(diffs)})")
+    st, *_ = decode(b"RIFF\x10\x00\x00\x00WEBPVP8 ")
+    check(st == "ERR image format not supported (WebP)", "WebP is recognised and reported as unsupported", st)
+    st, *_ = decode(b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>')
+    check(st == "ERR image format not supported (SVG)", "SVG is recognised and reported as unsupported", st)
+    hdr = b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (5000).to_bytes(4, "big") + (5000).to_bytes(4, "big") + bytes([8, 6, 0, 0, 0])
+    hdr += zlib.crc32(hdr[12:29]).to_bytes(4, "big")
+    st, *_ = decode(hdr + (100).to_bytes(4, "big") + b"IDAT" + bytes(104))
+    check(st.startswith("ERR image too large"), "images over the pixel budget are refused before decoding", st)
+    fuzz_ok = True
+    base = png(w, h, rgba)
+    for k in range(200):
+        blob = bytearray(rng.choice([base, (fx / "baseline.jpg").read_bytes(), (fx / "progressive.jpg").read_bytes(), gif(w, h, list(idx), pal)]))
+        for _ in range(rng.randint(1, 6)):
+            blob[rng.randrange(len(blob))] = rng.getrandbits(8)
+        st, *_rest, rc = decode(bytes(blob))
+        if rc != 0:
+            fuzz_ok = False
+            break
+    check(fuzz_ok, "200 corrupted PNG/JPEG/GIF files decode or fail without crashing or leaking heap", st)
+    # resampling: a 2x2 checker shrunk to 1x1 averages; a solid image enlarged stays solid
+    src, dst = tmp / "s.png", tmp / "s.out"
+    src.write_bytes(png(2, 2, bytes([255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255])))
+    subprocess.run([str(core), "scale", str(src), "1", "1", str(dst)], check=True, capture_output=True)
+    raw = dst.read_bytes(); px = raw[raw.index(b"\n") + 1:]
+    check(abs(px[2] - 128) <= 1 and px[1] == 0 and abs(px[0] - 128) <= 1 and px[3] == 255, "area averaging when shrinking", px.hex())
+    src.write_bytes(png(3, 3, bytes([10, 200, 30, 128] * 9)))
+    subprocess.run([str(core), "scale", str(src), "17", "11", str(dst)], check=True, capture_output=True)
+    raw = dst.read_bytes(); px = raw[raw.index(b"\n") + 1:]
+    check(len(px) == 17 * 11 * 4 and all(px[i:i + 4] == px[0:4] for i in range(0, len(px), 4)) and px[3] == 128 and abs(px[1] - 100) <= 1,
+          "bilinear enlarging keeps a flat colour flat, output premultiplied", px[:4].hex())
+
+
+def freestanding(tmp):
+    flags = "-target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -mno-red-zone " \
+            "-mno-sse -mno-mmx -mgeneral-regs-only -mcmodel=large -Wall -Wextra -Werror -O2".split()
+    objdump = next((p for p in ("llvm-objdump", "/opt/homebrew/opt/llvm/bin/llvm-objdump", "objdump") if subprocess.run(["which", p], capture_output=True).returncode == 0 or Path(p).exists()), None)
+    bad = []
+    for src in sorted(WEB.glob("*.c")):
+        obj = tmp / (src.stem + ".o")
+        r = subprocess.run([os.environ.get("CC", "clang"), *flags, f"-I{ROOT}/kernel/include", f"-I{ROOT}/kernel/user/include",
+                            f"-I{WEB}/shim", "-c", str(src), "-o", str(obj)], capture_output=True, text=True)
+        if r.returncode:
+            bad.append(f"{src.name}: {r.stderr.strip()[:200]}")
+            continue
+        if objdump:
+            dis = subprocess.run([objdump, "-d", str(obj)], capture_output=True, text=True).stdout
+            fp = [l for l in dis.splitlines() if any(k in l for k in ("xmm", "ymm", "%st", "cvtsi", "fld", "fstp", "mulss", "addsd"))]
+            if fp:
+                bad.append(f"{src.name}: FP instruction {fp[0].strip()}")
+    check(not bad, f"every Web engine file (incl. stb_image) builds for ring 3 with -mgeneral-regs-only and has no SSE/x87 code", "; ".join(bad))
+
+
 def main():
     rng = random.Random(26514)
     with tempfile.TemporaryDirectory(prefix="mint-web-") as tmpd:
         tmp = Path(tmpd)
-        core = build(tmpd, "tools/test_web_core.c", ["kernel/user/web/wmem.c", "kernel/user/web/inflate.c", "kernel/user/web/whttp.c"])
+        core = build(tmpd, "tools/test_web_core.c", ["kernel/user/web/wmem.c", "kernel/user/web/inflate.c", "kernel/user/web/whttp.c", "kernel/user/web/wimage.c"])
         out = subprocess.run([str(core), "unit"], capture_output=True, text=True)
         for line in out.stdout.splitlines():
             if line.startswith("PASS: ") or line.startswith("FAIL: "):
@@ -166,6 +350,9 @@ def main():
         check(s.startswith("ERR"), "header blocks over 64 KiB are refused", s)
         s, b, _ = http(b"HTTP/1.1 304 Not Modified\r\nETag: x\r\n\r\n")
         check(s.startswith("OK status=304 len=0"), "304 has no body", s)
+
+        images(tmp, core, rng)
+        freestanding(tmp)
 
     if failures:
         raise SystemExit(1)
