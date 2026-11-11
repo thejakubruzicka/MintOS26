@@ -281,6 +281,7 @@ int64_t mint_path_rename(const char *from, const char *to) {
 int64_t mint_path_remove(const char *path) { return mint_syscall3(MINT_SYS_MFS_REMOVE, (uint64_t)(uintptr_t)path, 0, 0); }
 int64_t mint_fs_flush(void) { return mint_syscall3(MINT_SYS_MFS_SYNC, 0, 0, 0); }
 int64_t mint_fs_get_volume(MINT_MFS_VOLUME *out) { return mint_syscall3(MINT_SYS_MFS_VOLUME, (uint64_t)(uintptr_t)out, 0, 0); }
+int64_t mint_fs_set_home(const char *path) { return mint_syscall3(MINT_SYS_MFS_SET_HOME, (uint64_t)(uintptr_t)path, 0, 0); }
 int64_t mint_storage_init_mintos(const MINT_STORAGE_FORMAT_REQUEST *request) {
     return mint_syscall3(MINT_SYS_STORAGE_INIT_MINTOS, (uint64_t)(uintptr_t)request, 0, 0);
 }

@@ -224,6 +224,13 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
     }
     if (number >= MINT_SYS_MFS_OPEN && number <= MINT_SYS_MFS_VOLUME)
         return fs_syscall(space, number, arg0, arg1, arg2);
+    if (number == MINT_SYS_MFS_SET_HOME) {
+        /* Setup Assistant: arg0 = "/Users/<account>" (validated by the kernel). */
+        static char home_path[MINT_MFS_PATH_MAX];
+        int rc = copy_user_cstring(space, arg0, home_path, sizeof(home_path));
+        if (rc < 0) return rc;
+        return mint_mfs_set_home(home_path);
+    }
     if (number == MINT_SYS_STORAGE_INIT_MINTOS) {
         const MINT_STORAGE_DEVICE_INFO *info=0;
         int64_t index=validate_format_request(space,arg0,&info);

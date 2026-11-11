@@ -110,6 +110,8 @@ int64_t mint_mfs_rename(const char *a, const char *b) { snprintf(mfs_last_path,s
 int64_t mint_mfs_remove(const char *path) { snprintf(mfs_last_path,sizeof(mfs_last_path),"%s",path); return 0; }
 int64_t mint_mfs_sync(void) { return 0; }
 int mint_mfs_volume(MINT_MFS_VOLUME *out) { memset(out,0,sizeof(*out)); out->version=MINT_MFS_ABI_VERSION; out->state=MINT_MFS_VOLUME_READY; memcpy(out->label,"MintOS HD",10); return 1; }
+static char mfs_home_path[MINT_MFS_PATH_MAX];
+int64_t mint_mfs_set_home(const char *path) { snprintf(mfs_home_path,sizeof(mfs_home_path),"%s",path); return strncmp(path,"/Users/",7) ? -MINT_EINVAL : 0; }
 int mint_mintos_disk_initialize(uint32_t index) { if(index!=0u)return -MINT_EINVAL; mfs_init_calls++; return 0; }
 
 int mint_fat16_volume_list(MINT_FAT16_VOLUME_LIST *out) { if(!out)return 0; memset(out,0,sizeof(*out)); return 1; }
@@ -362,6 +364,12 @@ int main(void){
               vol.state==MINT_MFS_VOLUME_READY && !strcmp(vol.label,"MintOS HD"),
               "MintFS volume status is copied to the user");
         CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_CLOSE,3,0,0,0,0,0)==0,"MintFS close passes the handle through");
+        static const char home[]="/Users/jakub";
+        CHECK(mint_address_space_copy_to_user(&space,USER_DATA_VA,home,sizeof(home)) &&
+              mint_syscall_dispatch_user(MINT_SYS_MFS_SET_HOME,USER_DATA_VA,0,0,0,0,0)==0 && !strcmp(mfs_home_path,home),
+              "set-home copies the account's home path to the kernel");
+        CHECK(mint_syscall_dispatch_user(MINT_SYS_MFS_SET_HOME,USER_CODE_VA+MINT_PAGING_PAGE_SIZE*64u,0,0,0,0,0)==-MINT_EFAULT,
+              "set-home rejects an unmapped path pointer");
     }
     CHECK(mint_syscall_dispatch_user(MINT_SYS_LOG_READ,USER_DATA_VA,MINT_LOG_READ_MAX+1u,MINT_LOG_WARN,0,0,0)==-MINT_EINVAL,
           "log read rejects requests beyond its fixed maximum");

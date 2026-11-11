@@ -91,6 +91,8 @@ int64_t mint_path_rename(const char *from, const char *to);
 int64_t mint_path_remove(const char *path);
 int64_t mint_fs_flush(void);
 int64_t mint_fs_get_volume(MINT_MFS_VOLUME *out);
+/* Makes "/Users/<account>" (an existing folder) the MintOS HD home folder. */
+int64_t mint_fs_set_home(const char *path);
 int64_t mint_storage_init_mintos(const MINT_STORAGE_FORMAT_REQUEST *request);
 /* Whole-file helpers: read up to capacity bytes / replace the file's contents. */
 int64_t mint_file_load(const char *path, void *out, size_t capacity);

@@ -53,6 +53,7 @@ int64_t mint_mfs_rename(const char *a, const char *b) { (void)a; (void)b; return
 int64_t mint_mfs_remove(const char *p) { (void)p; return -MINT_ENODEV; }
 int64_t mint_mfs_sync(void) { return -MINT_ENODEV; }
 int mint_mfs_volume(MINT_MFS_VOLUME *o) { (void)o; return 0; }
+int64_t mint_mfs_set_home(const char *p) { (void)p; return -MINT_ENODEV; }
 int mint_mintos_disk_initialize(uint32_t i) { (void)i; return -MINT_ENODEV; }
 int mint_address_space_map_shared(MINT_ADDRESS_SPACE *s, uint64_t va, uint64_t pa, uint64_t pages, uint32_t f) {
     (void)s; (void)va; (void)pa; (void)pages; (void)f; return 0;

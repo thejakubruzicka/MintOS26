@@ -58,6 +58,8 @@ int mint_power_get_info(MINT_POWER_INFO *out);
 /* Return only on failure (negative MintOS errno). */
 int mint_power_shutdown(void);
 int mint_power_restart(void);
+/* Runs before shutdown/restart touch any power register (MintFS final commit). */
+void mint_power_set_flush_hook(int (*hook)(void));
 
 /* Pure parser entry point for host tests. map(physical, length) returns a
  * readable pointer for [physical, physical+length) or 0. */
