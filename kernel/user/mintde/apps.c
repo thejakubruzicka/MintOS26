@@ -4,6 +4,7 @@
  * redrawn in a macOS-style layout on top of the gfx/widgets layer. */
 #include "mintde.h"
 #include "tls.h"
+#include "procterm.h"
 
 #define TERM_LINES 240u
 #define TERM_COLS 96u
@@ -86,6 +87,7 @@ static int term_mfs_active(void);
 static int terminal_mfs_mode;
 static int terminal_job_active(void);
 static const char *terminal_job_hint(void);
+static int terminal_program_command(const char *cmd);
 
 /* ====================================================================== */
 /*  Carried-over MintDE 1.0.8 logic                                       */
@@ -360,7 +362,8 @@ static void terminal_run_command(void) {
         terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
         terminal_push("power, shutdown, restart (asks for confirmation)");
         terminal_push("MintOS HD: ls [-l], cd, pwd, cat, open, mkdir, touch, rm [-r], rmdir, mv, cp, echo txt > file, df, sync");
-        terminal_push("use hd switches to MintOS HD; use sda/sdb to a read-only FAT16 volume"); return;
+        terminal_push("use hd switches to MintOS HD; use sda/sdb to a read-only FAT16 volume");
+        terminal_push("Programs (/System/Programs): lua [script.lua], hello, wc, grep, sysinfo; ./prog; prog & runs in background; ps, kill <pid>, which"); return;
     }
     if(terminal_equals(cmd,"shutdown") || terminal_equals(cmd,"poweroff")) {
         shell_request_power(MINT_POWER_ACTION_SHUTDOWN); terminal_push("Confirm shutdown in the dialog (Enter) or press Esc"); return;
@@ -694,6 +697,7 @@ static void terminal_run_command(void) {
         }
         terminal_push("File not found in session RAM or mounted volume"); return;
     }
+    if(terminal_program_command(cmd)) return;
     terminal_push("Unknown command; type help");
 }
 
@@ -1900,6 +1904,12 @@ static void term_ls(const char *path, int longform) {
     }
 }
 
+/* 26.5.014.0: programs on MintOS HD (procterm.c), plus ps/kill/which. */
+static int terminal_program_command(const char *cmd) {
+    const char *cwd = term_mfs_active() ? term_cwd : (mfs_ready ? mfs_volume.home : "/");
+    return procterm_command(cmd, cwd, mfs_ready ? mfs_volume.home : "/", terminal_push);
+}
+
 static int terminal_mfs_command(const char *cmd) {
     if (terminal_equals(cmd, "use hd") || terminal_equals(cmd, "use mintos")) {
         mfs_refresh_volume();
@@ -2608,6 +2618,12 @@ static void terminal_paint(const mde_layout *l) {
         ui_label_right(c.x1 - 12, c.y1 - 10, FONT_CAPTION, note, T.text2);
         return;
     }
+    if (procterm_active()) {   /* program prompt + what the user is typing for it */
+        int32_t ppx = gfx_text_cells(S, FONT_SMALL, x, y, procterm_partial(), TERM_CELL, OPAQUE(fg));
+        int32_t pix = gfx_text_cells(S, FONT_SMALL, x + ppx, y, terminal_input, TERM_CELL, OPAQUE(fg));
+        if (l->focused && ((ui_ticks / 50u) & 1u) == 0u) gfx_fill(S, x + ppx + pix, y - 12, TERM_CELL, 16, WITH_ALPHA(fg, 0xB0));
+        return;
+    }
     if (terminal_job_active()) {
         ui_label(x, y, FONT_SMALL, terminal_job_hint(), T.text3);
         return;
@@ -2619,6 +2635,16 @@ static void terminal_paint(const mde_layout *l) {
 }
 static int terminal_key(const MINT_DESKTOP_KEY_EVENT *k) {
     uint32_t ch = k->codepoint;
+    if (procterm_active()) {   /* a running program owns the input line */
+        if (ch == '\n') {
+            terminal_input[terminal_input_length] = '\0';
+            procterm_submit(terminal_input, terminal_push);
+            terminal_input_length = 0; terminal_input[0] = '\0';
+            return 1;
+        }
+        if (ch == 3u || ((k->modifiers & MINT_KEYMOD_CTRL) && (ch == 'c' || ch == 'C'))) { procterm_interrupt(terminal_push); return 1; }
+        if (ch == 4u || ((k->modifiers & MINT_KEYMOD_CTRL) && (ch == 'd' || ch == 'D'))) { procterm_end_input(terminal_push); return 1; }
+    }
     if (ch == '\n') {
         terminal_input[terminal_input_length] = '\0';
         if (terminal_input_length) copy_text(terminal_last_command, sizeof(terminal_last_command), terminal_input);
@@ -3759,6 +3785,7 @@ int app_scroll(uint32_t app, const mde_layout *l, int32_t x, int32_t y, int32_t 
 uint32_t app_background(void) {
     uint32_t dirty = 0;
     if (job.kind != JOB_NONE && terminal_job_step()) dirty |= 1u << APP_TERMINAL;
+    if (procterm_step(terminal_push)) dirty |= 1u << APP_TERMINAL;
     if (web_background()) dirty |= 1u << APP_WEB;
     /* Network views follow the live link/DHCP state twice a second. */
     static uint64_t last_poll;

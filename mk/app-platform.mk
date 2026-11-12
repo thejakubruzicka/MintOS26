@@ -46,3 +46,11 @@ $(BUILD)/program-bundle.S: tools/mkprograms.py $(PROGRAM_BUNDLE_FILES) | $(BUILD
 	$(PYTHON) tools/mkprograms.py $@ $(PROGRAM_BUNDLE_ARGS)
 $(BUILD)/program-bundle.obj: $(BUILD)/program-bundle.S
 	$(CC) -target x86_64-unknown-none-elf -c $< -o $@
+
+# MintDE: Terminal program runner + process API wrappers (int 0x80).
+MINTDE_OBJS += $(BUILD)/mintde-procterm.obj $(BUILD)/mintde-proc-runtime.obj
+MINTDE_HEADERS += kernel/user/mintde/procterm.h kernel/user/include/mintos/proc.h kernel/include/uapi/mintos/process.h
+$(BUILD)/mintde-procterm.obj: kernel/user/mintde/procterm.c $(MINTDE_HEADERS) | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/mintde-proc-runtime.obj: kernel/user/proc_runtime.c kernel/user/include/mintos/proc.h kernel/include/uapi/mintos/process.h | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
