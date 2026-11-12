@@ -423,3 +423,78 @@ int mint_signature_verify(const MINT_PUBKEY *key, uint32_t scheme, const uint8_t
     default: return 0;
     }
 }
+
+/* ------------------------------------------------------------------ P-256 ECDH */
+/* Ephemeral key exchange for TLS (secp256r1). The private scalar is secret, so
+ * the ladder always performs both the doubling and the addition and selects
+ * the result; the field arithmetic itself is not constant time. */
+static CURVE *p256(void) {
+    static CURVE c;
+    static int loaded;
+    if (!loaded) { if (!curve_load(&c, &P256)) return 0; loaded = 1; }
+    return &c;
+}
+static void jselect(JPOINT *r, const JPOINT *a, const JPOINT *b, uint32_t pick_b) {
+    uint32_t mask = (uint32_t)0 - (pick_b & 1u);
+    for (uint32_t i = 0; i < BN_LIMBS; ++i) {
+        r->x.v[i] = (a->x.v[i] & ~mask) | (b->x.v[i] & mask);
+        r->y.v[i] = (a->y.v[i] & ~mask) | (b->y.v[i] & mask);
+        r->z.v[i] = (a->z.v[i] & ~mask) | (b->z.v[i] & mask);
+    }
+    r->inf = (int)(((uint32_t)a->inf & ~mask) | ((uint32_t)b->inf & mask));
+}
+/* out = affine X (and Y) of k * (px, py); inputs in Montgomery form. */
+static int p256_mul(const CURVE *c, const BN *k, const BN *px, const BN *py, uint8_t x_out[32], uint8_t y_out[32]) {
+    static JPOINT R, P, D, A;
+    P.x = *px; P.y = *py; P.z = c->fp.one; P.inf = 0;
+    R.inf = 1; bn_zero(&R.x); bn_zero(&R.y); R.z = c->fp.one;
+    for (uint32_t i = 256; i-- > 0;) {
+        jdouble(&D, &R, c);
+        jadd(&A, &D, &P, c);
+        jselect(&R, &D, &A, (uint32_t)bn_bit(k, i));
+    }
+    if (R.inf) return 0;
+    static BN zi, z2, z3, x, y, pm2, two;
+    bn_zero(&two); two.v[0] = 2;
+    (void)bn_sub(&pm2, &c->fp.m, &two, c->fp.n);
+    mont_pow(&zi, &R.z, &pm2, &c->fp);
+    fmul(&z2, &zi, &zi, c); fmul(&z3, &z2, &zi, c);
+    fmul(&x, &R.x, &z2, c); fmul(&y, &R.y, &z3, c);
+    from_mont(&x, &x, &c->fp); from_mont(&y, &y, &c->fp);
+    bn_to_bytes(&x, x_out, 32);
+    if (y_out) bn_to_bytes(&y, y_out, 32);
+    return 1;
+}
+
+int mint_p256_keygen(uint8_t priv[32], uint8_t pub[65]) {
+    CURVE *c = p256();
+    if (!c) return 0;
+    static BN k;
+    for (int tries = 0; tries < 64; ++tries) {
+        mint_random_bytes(priv, 32);
+        bn_from_bytes(&k, priv, 32, 8);
+        if (bn_is_zero(&k, c->fn.n) || bn_cmp(&k, &c->fn.m, c->fn.n) >= 0) continue;
+        pub[0] = 4;
+        if (!p256_mul(c, &k, &c->gx, &c->gy, pub + 1, pub + 33)) return 0;
+        bn_zero(&k);
+        return 1;
+    }
+    return 0;
+}
+
+int mint_p256_ecdh(uint8_t out[32], const uint8_t priv[32], const uint8_t *peer, size_t peer_len) {
+    CURVE *c = p256();
+    if (!c || peer_len != 65 || peer[0] != 4) return 0;
+    static BN k, qx, qy, t;
+    bn_from_bytes(&t, peer + 1, 32, c->fp.n);
+    if (bn_cmp(&t, &c->fp.m, c->fp.n) >= 0) return 0;
+    to_mont(&qx, &t, &c->fp);
+    bn_from_bytes(&t, peer + 33, 32, c->fp.n);
+    if (bn_cmp(&t, &c->fp.m, c->fp.n) >= 0) return 0;
+    to_mont(&qy, &t, &c->fp);
+    if (!on_curve(&qx, &qy, c)) return 0;                 /* invalid-curve points are refused */
+    bn_from_bytes(&k, priv, 32, 8);
+    int ok = p256_mul(c, &k, &qx, &qy, out, 0);
+    bn_zero(&k);
+    return ok;
+}

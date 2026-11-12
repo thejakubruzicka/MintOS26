@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Tests the MintOS TLS 1.3 client on the build host.
+"""Tests the MintOS TLS 1.3 / 1.2 client on the build host.
 
 Local (always, needs an OpenSSL 3 command line): `openssl s_server` with a
 private test PKI exercises ECDSA P-256/P-384 and RSA-PSS CertificateVerify, all
 three cipher suites, a server that demands a different key-exchange group
 (HelloRetryRequest, reported as unsupported), a certificate for another
-host, an untrusted root, and KeyUpdate during the transfer.
+host, an untrusted root, and KeyUpdate during the transfer. TLS 1.2 (s_server
+-tls1_2): all six ECDHE AEAD suites with ECDSA and RSA certificates over X25519
+and P-256, with and without extended master secret; CBC-only and wrong-host
+servers fail cleanly. TLS 1.3 over P-256 via HelloRetryRequest.
 Live (--live or MINT_TEST_LIVE=1): real HTTPS sites with every suite forced.
 """
 import os
@@ -77,9 +80,9 @@ def main():
             subj, spki = subject_and_spki(ca_der)
             root = f"{subj.hex()}:{spki.hex()}"
 
-            def serve(k, cert, *extra):
+            def serve(k, cert, *extra, version="-tls1_3"):
                 port = free_port()
-                proc = subprocess.Popen([OPENSSL, "s_server", "-accept", str(port), "-key", str(k), "-cert", str(cert), "-tls1_3",
+                proc = subprocess.Popen([OPENSSL, "s_server", "-accept", str(port), "-key", str(k), "-cert", str(cert), version,
                                          "-www", "-quiet", *extra], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 for _ in range(50):
                     try: socket.create_connection(("127.0.0.1", port), timeout=0.2).close(); break
@@ -102,8 +105,40 @@ def main():
             proc, port = serve(k, cert, "-groups", "P-256")
             try:
                 out = run("mint.test", port, "--connect", "127.0.0.1", "--root", root)
-                check(out.startswith("ERR -4") and "X25519" in out,
-                      "a server that only accepts P-256 key exchange fails cleanly with an explanation", out)
+                check(out.startswith("OK ") and "TLS 1.3" in out and "200 ok" in out.lower(),
+                      "TLS 1.3 server that only accepts P-256: HelloRetryRequest, then P-256 ECDHE", out)
+            finally:
+                proc.terminate(); proc.wait()
+            # TLS 1.2
+            suites12 = {"ecdsa": ["ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305"],
+                        "rsa": ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-CHACHA20-POLY1305"]}
+            for name, (k, cert) in leaves.items():
+                kind = "rsa" if name.startswith("rsa") else "ecdsa"
+                for cipher in suites12[kind]:
+                    for group in ("X25519", "P-256"):
+                        proc, port = serve(k, cert, "-cipher", cipher, "-groups", group, version="-tls1_2")
+                        try:
+                            out = run("mint.test", port, "--connect", "127.0.0.1", "--root", root)
+                            check(out.startswith("OK " + cipher + " TLS 1.2") and "200 ok" in out.lower(),
+                                  f"TLS 1.2 {name} certificate, {cipher}, {group}", out)
+                        finally:
+                            proc.terminate(); proc.wait()
+            k, cert = leaves["ecdsa-p256"]
+            proc, port = serve(k, cert, "-no_ems", version="-tls1_2")
+            try:
+                out = run("mint.test", port, "--connect", "127.0.0.1", "--root", root)
+                check(out.startswith("OK ") and "TLS 1.2" in out, "TLS 1.2 without extended master secret (classic PRF)", out)
+                out = run("other.test", port, "--connect", "127.0.0.1", "--root", root)
+                check(out.startswith("ERR -3") and "different site" in out, "TLS 1.2: certificate for another host is refused", out)
+                out = run("mint.test", port, "--connect", "127.0.0.1")
+                check(out.startswith("ERR -3") and "trusted authority" in out, "TLS 1.2: untrusted root is refused", out)
+            finally:
+                proc.terminate(); proc.wait()
+            k, cert = leaves["rsa-pss"]
+            proc, port = serve(k, cert, "-cipher", "ECDHE-RSA-AES128-SHA256", version="-tls1_2")
+            try:
+                out = run("mint.test", port, "--connect", "127.0.0.1", "--root", root)
+                check(out.startswith("ERR -4") and "cipher" in out, "a CBC-only TLS 1.2 server fails cleanly (no CBC/RSA key exchange)", out)
             finally:
                 proc.terminate(); proc.wait()
             # KeyUpdate: a 300 KB response from s_server -WWW with key updates requested by the server
@@ -128,6 +163,14 @@ def main():
                 results = [run(host, "--suite", s) for s in ("1303", "1301", "1302")]
                 ok = all(r.startswith("OK ") for r in results) or (results[0].startswith("OK ") and results[1].startswith("OK "))
                 check(ok, f"live https://{host}/ with ChaCha20-Poly1305, AES-128-GCM and AES-256-GCM", " / ".join(results))
+            out = run("tls-v1-2.badssl.com", "1012")
+            check(out.startswith("OK ") and "TLS 1.2" in out, "live TLS-1.2-only server (tls-v1-2.badssl.com:1012)", out)
+            for host in ("ecc256.badssl.com", "rsa2048.badssl.com"):
+                out = run(host)
+                check(out.startswith("OK ") and "TLS 1.2" in out, f"live TLS 1.2 https://{host}/", out)
+            for host, why in (("expired.badssl.com", "expired"), ("wrong.host.badssl.com", "different site"), ("untrusted-root.badssl.com", "trusted")):
+                out = run(host)
+                check(out.startswith("ERR -3") and why in out, f"live {host} is refused", out)
     if failures:
         raise SystemExit(1)
 
