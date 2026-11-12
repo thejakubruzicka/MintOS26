@@ -341,6 +341,7 @@ typedef struct tok { const char *s; size_t n; } tok;
 static uint32_t split_tokens(const char *s, size_t n, tok *out, uint32_t max, char sep) {
     uint32_t count = 0;
     size_t i = 0;
+    int ws_split = sep != ',';                      /* comma lists keep their inner spaces */
     while (i < n && count < max) {
         while (i < n && (is_ws(s[i]) || s[i] == sep)) ++i;
         if (i >= n) break;
@@ -351,12 +352,14 @@ static uint32_t split_tokens(const char *s, size_t n, tok *out, uint32_t max, ch
             char c = s[i];
             if (q) { if (c == q) q = 0; ++i; continue; }
             if (c == '"' || c == '\'') { q = c; ++i; continue; }
-            if (c == '(') ++depth;
-            else if (c == ')') { if (depth) --depth; }
-            else if (!depth && (is_ws(c) || c == sep)) break;
+            if (c == '(' || c == '[') ++depth;
+            else if (c == ')' || c == ']') { if (depth) --depth; }
+            else if (!depth && ((ws_split && is_ws(c)) || c == sep)) break;
             ++i;
         }
-        out[count].s = s + st; out[count].n = i - st;
+        size_t e = i;
+        while (e > st && is_ws(s[e - 1])) --e;
+        out[count].s = s + st; out[count].n = e - st;
         ++count;
     }
     return count;
