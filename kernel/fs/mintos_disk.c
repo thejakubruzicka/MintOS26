@@ -450,6 +450,18 @@ int mint_mfs_volume(MINT_MFS_VOLUME *out) {
     *out = volume;
     return 1;
 }
+/* 26.5.014.0: stat an open handle (fstat for the Linux-compat layer). */
+int64_t mint_mfs_fstat(int64_t fd, uint64_t pid, MINT_MFS_STAT *out) {
+    FDESC *f = get_fd(fd, pid);
+    if (!f || !out) return -MINT_EBADF;
+    if (!ready()) return -MINT_EIO;
+    MINTFS_STAT st;
+    int rc = mintfs_stat(&fs, f->ino, &st);
+    if (rc) return to_errno(rc);
+    out->ino = st.ino; out->size = st.size; out->type = st.type; out->mode = st.mode;
+    out->btime = st.btime; out->mtime = st.mtime; out->ctime = st.ctime;
+    return 0;
+}
 /* Background commits: file data written without close/sync becomes durable within ~2 s. */
 void mint_mfs_task(void *argument) {
     (void)argument;

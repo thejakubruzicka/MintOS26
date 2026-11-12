@@ -29,6 +29,7 @@ USER_BLOB_ASM := $(BUILD)/user-elf-blob.S
 USER_BLOB_OBJ := $(BUILD)/user-elf-blob.obj
 KERNEL_OBJS := $(BUILD)/kernel.obj $(BUILD)/arch.obj $(BUILD)/arch-core.obj $(BUILD)/physmem.obj $(BUILD)/serial.obj $(BUILD)/scheduler.obj $(BUILD)/syscall.obj $(BUILD)/paging.obj $(BUILD)/heap.obj $(BUILD)/vmalloc.obj $(BUILD)/address_space.obj $(BUILD)/elf-loader.obj $(BUILD)/process.obj $(BUILD)/user-elf-blob.obj $(USER_DESKTOP_BLOB_OBJ) $(BUILD)/desktop-event.obj $(BUILD)/display-surface.obj $(BUILD)/desktop-services.obj $(BUILD)/ramfs.obj $(BUILD)/ps2-input.obj $(BUILD)/pci.obj $(BUILD)/e1000.obj $(BUILD)/storage-block.obj $(BUILD)/ahci.obj $(BUILD)/storage-diag.obj $(BUILD)/fat16-ro.obj $(BUILD)/driver-catalog.obj $(BUILD)/storage-probe.obj $(BUILD)/ata-identify.obj $(BUILD)/vfs.obj $(BUILD)/log.obj $(BUILD)/acpi-power.obj $(BUILD)/rtc.obj $(BUILD)/xhci.obj $(BUILD)/kmem.obj $(BUILD)/net.obj $(BUILD)/netcore.obj $(BUILD)/mintfs.obj $(BUILD)/mintos-disk.obj $(BUILD)/wallpaper.obj
 KERNEL_FLAGS := -target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mno-sse -mno-mmx -mgeneral-regs-only -mcmodel=small -Wall -Wextra -O2
+include mk/app-platform.mk
 ISO := $(BUILD)/mintos26-$(VERSION)-uefi.iso
 WALL := assets/wallpaper-1920x1080.rgb
 ICON_PNG_FILES := $(wildcard assets/icons/*.png)

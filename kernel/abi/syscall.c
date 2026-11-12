@@ -24,6 +24,7 @@
 #include "../include/usb.h"
 #include "../include/process.h"
 #include "../include/mintos_fs.h"
+#include "../include/proc_syscalls.h"
 
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
  * ring-3 entry below never passes raw user pointers into this function. */
@@ -203,6 +204,9 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
     const MINT_ADDRESS_SPACE *space = mint_address_space_current();
     if (!space || !space->active) return -MINT_EPERM;
     (void)arg3; (void)arg4; (void)arg5;
+    /* 26.5.014.0: processes, pipes and memory (app platform). */
+    if (number >= MINT_SYS_APP_PLATFORM_FIRST && number <= MINT_SYS_APP_PLATFORM_LAST)
+        return mint_proc_syscall(number, arg0, arg1, arg2, arg3, arg4, arg5);
 
     if (number == MINT_SYS_WRITE) {
         if (arg0 != 1u && arg0 != 2u) return -MINT_EBADF;
@@ -667,6 +671,14 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
 int64_t mint_syscall_trap_dispatch(MINT_SYSCALL_FRAME *frame) {
     if (!frame || frame->vector != 0x80u || (frame->cs & 3u) != 3u)
         return -MINT_EPERM;
-    return mint_syscall_dispatch_user(frame->rax, frame->rdi, frame->rsi, frame->rdx,
-                                      frame->r10, frame->r8, frame->r9);
+    int64_t rc = mint_syscall_dispatch_user(frame->rax, frame->rdi, frame->rsi, frame->rdx,
+                                            frame->r10, frame->r8, frame->r9);
+    /* 26.5.014.0: a process killed while this syscall slept leaves here. */
+    if (rc != (int64_t)MINT_SYSCALL_EXIT_SENTINEL && mint_process_current_killed() &&
+        mint_address_space_activate_kernel()) {
+        MINT_PROCESS *p = mint_process_current();
+        mint_task_user_exit_record(MINT_EXIT_KILLED_BIT | (p ? p->kill_signal : 9u));
+        return (int64_t)MINT_SYSCALL_EXIT_SENTINEL;
+    }
+    return rc;
 }
