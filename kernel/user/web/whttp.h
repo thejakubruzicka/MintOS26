@@ -64,6 +64,8 @@ typedef struct whttp_resp {
     int truncated;                 /* more than body_max bytes arrived (rest discarded) */
     uint64_t body_total;
     whttp_sink sink; void *sink_ctx;          /* if set, body bytes go here instead */
+    int pause_after_headers;       /* whttp_feed returns right after the header block (once) */
+    int headers_ready;             /* set when the header block has been parsed */
 } whttp_resp;
 
 void whttp_resp_init(whttp_resp *r, size_t body_max);

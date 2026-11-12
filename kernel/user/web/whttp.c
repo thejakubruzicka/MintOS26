@@ -405,6 +405,8 @@ size_t whttp_feed(whttp_resp *r, const uint8_t *data, size_t len) {
                     r->head_len = 0; r->head[0] = '\0'; r->state = WH_STATUS; continue;
                 }
                 headers_parsed(r);
+                r->headers_ready = 1;
+                if (r->pause_after_headers) { r->pause_after_headers = 0; return i; }
             }
             continue;
         }
