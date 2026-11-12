@@ -1,0 +1,97 @@
+$ mintfs_tool check build/qemu-mintos-disk-1g.img
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+fsck: clean
+  inodes=29 dirs=20 files=9 reachable=43 marked=43
+  bad_checksums=0 bad_pointers=0 double_refs=0 leaked=0 missing=0 bad_dirs=0 bad_links=0
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+volume "MintOS HD" generation 77, 261840 of 261883 blocks free
+
+$ mintfs_tool ls build/qemu-mintos-disk-1g.img / -r
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+Applications/  0 bytes  mtime=1794499909
+Library/  21 bytes  mtime=1794499910
+  Preferences/  62 bytes  mtime=1794499942
+    com.mintos.accounts  207 bytes  mtime=1794499941
+    com.mintos.system.prefs  121 bytes  mtime=1794499942
+System/  0 bytes  mtime=1794499909
+Volumes/  0 bytes  mtime=1794499909
+Users/  31 bytes  mtime=1794499941
+  Shared/  0 bytes  mtime=1794499909
+  jakub/  178 bytes  mtime=1794500103
+    Desktop/  0 bytes  mtime=1794499909
+    Documents/  46 bytes  mtime=1794500010
+      Welcome to MintOS.txt  183 bytes  mtime=1794499909
+      Notes/  57 bytes  mtime=1794500055
+        Shopping list.txt  47 bytes  mtime=1794500028
+        Ideas for MintOS.txt  76 bytes  mtime=1794500055
+    Downloads/  0 bytes  mtime=1794499909
+    Movies/  0 bytes  mtime=1794499909
+    Music/  0 bytes  mtime=1794499909
+    Pictures/  0 bytes  mtime=1794499909
+    .Trash/  0 bytes  mtime=1794499909
+    Library/  21 bytes  mtime=1794499910
+      Preferences/  98 bytes  mtime=1794500174
+        com.mintos.notes.prefs  154 bytes  mtime=1794500057
+        com.mintos.desktop.prefs  188 bytes  mtime=1794500132
+        com.mintos.files.prefs  159 bytes  mtime=1794500174
+    Public/  0 bytes  mtime=1794499941
+    .mintsh_history  99 bytes  mtime=1794500103
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Library/Preferences/com.mintos.accounts"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# MintOS accounts — written by the Setup Assistant.
+# The kernel reads "home" when it mounts MintOS HD.
+version = 1
+account = "jakub"
+full_name = "Jakub Ruzicka"
+home = "/Users/jakub"
+created = 1794499941
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Library/Preferences/com.mintos.system.prefs"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# com.mintos.system — MintOS preferences, written by MintDE.
+# One "name = value" per line; text values are in quotes.
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Users/jakub/Library/Preferences/com.mintos.desktop.prefs"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# com.mintos.desktop — MintOS preferences, written by MintDE.
+# One "name = value" per line; text values are in quotes.
+accent = 2
+reduce_motion = 0
+theme = 1
+ui_scale = 1
+wallpaper = 1
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Users/jakub/Library/Preferences/com.mintos.files.prefs"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# com.mintos.files — MintOS preferences, written by MintDE.
+# One "name = value" per line; text values are in quotes.
+last_folder = "/Users/jakub/Documents"
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Users/jakub/Library/Preferences/com.mintos.notes.prefs"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# com.mintos.notes — MintOS preferences, written by MintDE.
+# One "name = value" per line; text values are in quotes.
+selected = "Ideas for MintOS.txt"
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Users/jakub/.mintsh_history"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+pwd
+ls Documents/Notes
+cat Library/Preferences/com.mintos.desktop.prefs
+ls -l /Library/Preferences
+
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img "/Users/jakub/Documents/Notes/Shopping list.txt"
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+Shopping list
+Milk, bread, apples and mint tea.
+
+
+# After the second boot (restored state) and Shut Down from the MintDE dialog:
+$ mintfs_tool check build/qemu-mintos-disk-1g.img
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+fsck: clean
+  inodes=29 dirs=20 files=9 reachable=43 marked=43
+  bad_checksums=0 bad_pointers=0 double_refs=0 leaked=0 missing=0 bad_dirs=0 bad_links=0
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+volume "MintOS HD" generation 80, 261840 of 261883 blocks free

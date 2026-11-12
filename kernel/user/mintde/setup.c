@@ -84,8 +84,8 @@ void userdata_store_appearance(void) {
 
 /* ------------------------------------------------------------ smooth large text */
 /* Bilinear upscale of a glyph (or any A8 mask) into an A8 buffer. */
-#define BIG_W 1100
-#define BIG_H 220
+#define BIG_W 760
+#define BIG_H 200
 static uint8_t big_cur[BIG_W * BIG_H], big_old[BIG_W * BIG_H];
 static int32_t big_cur_w, big_old_w, big_h, big_base;
 static uint32_t a8_at(const uint8_t *src, int32_t sw, int32_t sh, int32_t x, int32_t y) {
