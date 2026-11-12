@@ -24,11 +24,11 @@ enum {
     P_BORDER_TOP_STYLE, P_BORDER_RIGHT_STYLE, P_BORDER_BOTTOM_STYLE, P_BORDER_LEFT_STYLE,
     P_BORDER_TOP_COLOR, P_BORDER_RIGHT_COLOR, P_BORDER_BOTTOM_COLOR, P_BORDER_LEFT_COLOR,
     P_TEXT_INDENT, P_BORDER_SPACING, P_BORDER_COLLAPSE, P_BORDER_RADIUS, P_FLEX_DIRECTION, P_FLEX_WRAP, P_JUSTIFY_CONTENT,
-    P_GAP, P_LEFT, P_TOP, P_CLIP, P_TABLE_LAYOUT, P_OPACITY, P_FONT_SHORT_SIZE_ONLY,
+    P_GAP, P_LEFT, P_TOP, P_CLIP, P_TABLE_LAYOUT, P_OPACITY, P_FONT_SHORT_SIZE_ONLY, P_MASK, P_FLEX_GROW,
     /* shorthands (expanded while parsing) */
     S_MARGIN, S_PADDING, S_BORDER, S_BORDER_TOP, S_BORDER_RIGHT, S_BORDER_BOTTOM, S_BORDER_LEFT, S_BORDER_WIDTH,
     S_BORDER_STYLE, S_BORDER_COLOR, S_BACKGROUND, S_FONT, S_LIST_STYLE, S_TEXT_DECORATION, S_FLEX_FLOW, S_INSET, S_OVERFLOW_X,
-    S_MARGIN_INLINE, S_MARGIN_BLOCK, S_PADDING_INLINE, S_PADDING_BLOCK, S_CLIP_PATH, S_INSET_BLOCK_START, S_INSET_INLINE_START,
+    S_MARGIN_INLINE, S_MARGIN_BLOCK, S_PADDING_INLINE, S_PADDING_BLOCK, S_CLIP_PATH, S_INSET_BLOCK_START, S_INSET_INLINE_START, S_FLEX,
     P_COUNT
 };
 static const struct { const char *name; uint16_t id; } PROPS[] = {
@@ -56,7 +56,7 @@ static const struct { const char *name; uint16_t id; } PROPS[] = {
     {"text-indent", P_TEXT_INDENT}, {"border-spacing", P_BORDER_SPACING}, {"border-collapse", P_BORDER_COLLAPSE},
     {"border-radius", P_BORDER_RADIUS}, {"flex-direction", P_FLEX_DIRECTION}, {"flex-wrap", P_FLEX_WRAP},
     {"justify-content", P_JUSTIFY_CONTENT}, {"gap", P_GAP}, {"column-gap", P_GAP}, {"grid-gap", P_GAP}, {"left", P_LEFT},
-    {"top", P_TOP}, {"clip", P_CLIP}, {"table-layout", P_TABLE_LAYOUT}, {"opacity", P_OPACITY},
+    {"top", P_TOP}, {"clip", P_CLIP}, {"mask-image", P_MASK}, {"mask", P_MASK}, {"flex-grow", P_FLEX_GROW}, {"flex", S_FLEX}, {"table-layout", P_TABLE_LAYOUT}, {"opacity", P_OPACITY},
     {"margin", S_MARGIN}, {"padding", S_PADDING}, {"border", S_BORDER}, {"border-top", S_BORDER_TOP},
     {"border-right", S_BORDER_RIGHT}, {"border-bottom", S_BORDER_BOTTOM}, {"border-left", S_BORDER_LEFT},
     {"border-block-start", S_BORDER_TOP}, {"border-block-end", S_BORDER_BOTTOM}, {"border-inline-start", S_BORDER_LEFT},
@@ -604,6 +604,8 @@ static int parse_longhand(dbuf *b, uint16_t prop, const char *s, size_t n, int i
         return 1;
     }
     case P_CLIP: emit(b, prop, V_NUM, k == K_AUTO ? 0 : 1, 0, 0, imp); return 1;
+    case P_MASK: emit(b, prop, V_NUM, k == K_NONE ? 0 : 1, 0, 0, imp); return 1;
+    case P_FLEX_GROW: { int64_t num; if (parse_num(s, n, &num) != n) return 0; emit(b, prop, V_NUM, num > 0 ? 1 : 0, 0, 0, imp); return 1; }
     case P_BORDER_TOP_WIDTH: case P_BORDER_RIGHT_WIDTH: case P_BORDER_BOTTOM_WIDTH: case P_BORDER_LEFT_WIDTH:
         if (width_kw(s, n, &v)) { emit(b, prop, V_LEN, v, U_PX, 0, imp); return 1; }
         if (!parse_len(s, n, &v, &u) || u == U_AUTO || u == U_PCT) return 0;
@@ -815,6 +817,15 @@ static void parse_property(dbuf *b, uint16_t prop, const char *v, size_t vn, int
     }
     case S_INSET_BLOCK_START: (void)parse_longhand(b, P_TOP, v, vn, imp); return;
     case S_INSET_INLINE_START: (void)parse_longhand(b, P_LEFT, v, vn, imp); return;
+    case S_FLEX: {
+        tok t[3]; uint32_t nt = split_tokens(v, vn, t, 3, 0);
+        if (!nt) return;
+        int k = keyword(t[0].s, t[0].n);
+        int64_t num = 0;
+        int grow = k == K_AUTO ? 1 : k == K_NONE ? 0 : (parse_num(t[0].s, t[0].n, &num) == t[0].n && num > 0);
+        emit(b, P_FLEX_GROW, V_NUM, grow, 0, 0, imp);
+        return;
+    }
     case S_OVERFLOW_X: return;                                 /* horizontal overflow never hides content here */
     case S_MARGIN_INLINE: case S_MARGIN_BLOCK: case S_PADDING_INLINE: case S_PADDING_BLOCK: {
         tok t[2]; uint32_t nt = split_tokens(v, vn, t, 2, 0);
@@ -1088,6 +1099,18 @@ static int parse_compound(const char *s, size_t n, size_t *pos, wcomp *c) {
             } else if ((ieq_n(p, pl, "not") || ieq_n(p, pl, "is") || ieq_n(p, pl, "where") || ieq_n(p, pl, "matches") ||
                         ieq_n(p, pl, "-webkit-any")) && arg) {
                 q->kind = ieq_n(p, pl, "not") ? PS_NOT : PS_IS;
+                if (q->kind == PS_NOT) {
+                    /* :not(:hover), :not(:focus)...: the dynamic state never applies, so the negation always does */
+                    size_t z = 0;
+                    while (z < al && is_ws(arg[z])) ++z;
+                    if (z < al && arg[z] == ':') {
+                        const char *dn = arg + z + 1; size_t dl = al - z - 1;
+                        while (dl && is_ws(dn[dl - 1])) --dl;
+                        if (ieq_n(dn, dl, "hover") || ieq_n(dn, dl, "focus") || ieq_n(dn, dl, "active") || ieq_n(dn, dl, "focus-visible") ||
+                            ieq_n(dn, dl, "focus-within") || ieq_n(dn, dl, "target") || ieq_n(dn, dl, "visited") || ieq_n(dn, dl, "checked") ||
+                            ieq_n(dn, dl, "placeholder-shown") || ieq_n(dn, dl, "defined")) continue;
+                    }
+                }
                 tok parts[8]; uint32_t np = split_tokens(arg, al, parts, 8, ',');
                 q->inner = (wcomp *)warena_alloc(&C->arena, np * sizeof(wcomp) + 1);
                 if (!q->inner) return 0;
@@ -1478,6 +1501,12 @@ wcss *wcss_create(wdoc *doc, int32_t viewport_w, int dark) {
     size_t n;
     const char *ua = strip_comments(UA_SHEET, sizeof(UA_SHEET) - 1u, &n);
     if (ua) parse_sheet(ua, n, 0, 0, 0);
+    if (!doc->has_doctype && !doc->is_plain_text) {
+        /* quirks mode: tables do not inherit text alignment or font settings */
+        static const char QUIRKS[] = "table{text-align:left;white-space:normal;font-size:medium;font-weight:normal;font-style:normal}";
+        const char *q = strip_comments(QUIRKS, sizeof(QUIRKS) - 1u, &n);
+        if (q) parse_sheet(q, n, 0, 0, 0);
+    }
     for (uint32_t i = 0; i < doc->sheet_count; ++i) {
         wsheet_src *sh = &doc->sheets[i];
         if (!sh->text || !sh->len) continue;
@@ -1603,7 +1632,7 @@ static int match_from(const wnode *n, const wcomp *c, int last) {
 }
 
 /* ------------------------------------------------------------------ computing */
-typedef struct extras { int32_t left, top; uint8_t left_set, top_set, clip, opacity0; int32_t opacity; } extras;
+typedef struct extras { int32_t left, top; uint8_t left_set, top_set, clip, opacity0, mask; int32_t opacity; } extras;
 
 static int32_t px_of(const wdecl *d, int32_t font_px, int32_t root_px, int32_t vw, int32_t vh) {
     int64_t v = d->n;
@@ -1626,7 +1655,7 @@ static wlen to_wlen(const wdecl *d, int32_t font_px, int32_t root_px, int32_t vw
 static void initial_noninherited(wstyle *s) {
     s->display = WD_INLINE; s->position = WP_STATIC; s->float_ = WF_NONE; s->clear = WC_NONE;
     s->decoration = 0; s->valign = WV_BASELINE; s->overflow_hidden = 0; s->border_box = 0;
-    s->flex_column = 0; s->flex_wrap = 0; s->justify = WJ_START; s->table_fixed = 0; s->centered_auto = 0;
+    s->flex_column = 0; s->flex_wrap = 0; s->justify = WJ_START; s->grow = 0; s->table_fixed = 0; s->centered_auto = 0;
     s->bg = 0; s->bg_image = 0; s->radius = 0; s->gap = 0;
     s->width.u = s->height.u = WU_AUTO; s->width.v = s->height.v = 0;
     s->min_w.u = s->min_h.u = WU_PX; s->min_w.v = s->min_h.v = 0;
@@ -1839,6 +1868,8 @@ static void apply_decl(wstyle *s, const wdecl *d, ctx *x, int font_pass) {
     case P_TOP: x->ex->top = d->unit == U_PCT ? 0 : px_of(d, fpx, x->root_px, vw, vh) / 64; x->ex->top_set = d->unit != U_AUTO; break;
     case P_CLIP: x->ex->clip = (uint8_t)d->n; break;
     case P_OPACITY: x->ex->opacity0 = d->n <= 0; break;
+    case P_MASK: x->ex->mask = (uint8_t)d->n; break;
+    case P_FLEX_GROW: s->grow = (uint8_t)d->n; break;
     default: break;
     }
 }
@@ -2118,6 +2149,7 @@ int wcss_apply(wcss *c, wdoc *doc) {
                     s.display = WD_NONE;
             }
             if (ex.clip && s.overflow_hidden) s.display = WD_NONE;
+            if (ex.mask) { s.bg = 0; s.bg_image = 0; }          /* mask-image icons: the mask shape cannot be drawn */
             if (s.text_indent < -999) { s.hide_text = 1; s.text_indent = 0; }
             if (s.font_px == 0) s.hide_text = 1;
             if (s.overflow_hidden && ((s.height.u == WU_PX && s.height.v == 0) || (s.max_h.u == WU_PX && s.max_h.v == 0))) s.display = WD_NONE;

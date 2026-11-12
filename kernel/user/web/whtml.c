@@ -733,6 +733,7 @@ int whtml_parse(wdoc *d, const char *s, size_t len, int as_text) {
                     while (j + 2 < len && !(s[j] == ']' && s[j + 1] == ']' && s[j + 2] == '>')) ++j;
                     i = j + 2 < len ? j + 3 : len;
                 } else {
+                    if (i + 9 < len && wstr_iprefix(s + i + 2, "doctype")) d->has_doctype = 1;
                     while (i < len && s[i] != '>') ++i;
                     ++i;
                 }
@@ -776,6 +777,19 @@ int whtml_parse(wdoc *d, const char *s, size_t len, int as_text) {
                     }
                 }
                 if (closing || na >= MAX_ATTRS || ae == an) continue;
+                /* attributes nothing in the engine reads: scripts, data blobs, RDFa, most ARIA */
+                {
+                    const char *an0 = s + an; size_t al = ae - an;
+                    #define APFX(p) (al >= sizeof(p) - 1 && wstr_iprefix(an0, p))
+                    int keep_data = APFX("data-src") || APFX("data-lazy") || APFX("data-original") || APFX("data-srcset");
+                    if ((al > 2 && (an0[0] == 'o' || an0[0] == 'O') && (an0[1] == 'n' || an0[1] == 'N')) ||
+                        (APFX("data-") && !keep_data) || APFX("typeof") || APFX("about") || APFX("resource") || APFX("property") ||
+                        APFX("prefix") || APFX("integrity") || APFX("crossorigin") || APFX("nonce") || APFX("srcdoc") || APFX("jsaction") ||
+                        APFX("jsname") || APFX("jscontroller") || APFX("jsmodel") || APFX("ping") ||
+                        (APFX("aria-") && !APFX("aria-hidden") && !APFX("aria-label") && !APFX("aria-current") && !APFX("aria-expanded")))
+                        continue;
+                    #undef APFX
+                }
                 char *aname = (char *)warena_alloc(&d->arena, ae - an + 1u);
                 if (!aname) { b.oom = 1; break; }
                 for (size_t k = 0; k < ae - an; ++k) aname[k] = lc(s[an + k]);

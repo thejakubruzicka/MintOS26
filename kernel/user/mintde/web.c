@@ -102,7 +102,7 @@ static MINT_TLS tls_ctx[WEB_CONNS];
 static uint32_t page_gen;
 
 /* ------------------------------------------------------------------ images */
-enum { IS_FREE = 0, IS_QUEUED, IS_LOADING, IS_DATA, IS_READY, IS_FAILED };
+enum { IS_FREE = 0, IS_QUEUED, IS_LOADING, IS_DATA, IS_READY, IS_FAILED, IS_SKIPPED };
 typedef struct imgent {
     int state;
     char url[WURL_MAX];
@@ -124,6 +124,7 @@ static struct page {
     int laid_out, need_layout, need_style;
     int32_t lay_width;
     int16_t *img_slot;            /* doc image -> images[] index (-1) */
+    const char **img_url;         /* doc image -> absolute URL (fetched when near the viewport) */
     uint32_t sheets_pending;
     uint64_t css_deadline, refresh_at;
     wurl url;
@@ -729,6 +730,7 @@ static int image_state_cb(void *ctx, int32_t img) {
 
 static void image_drop(int i) {
     imgent *e = &images[i];
+    for (uint32_t k = 0; P.img_slot && k < P.doc.img_count; ++k) if (P.img_slot[k] == i) P.img_slot[k] = -1;
     wmem_free(e->data); wmem_free(e->px); wmem_free(e->rgba);
     wb_set(e, 0, sizeof(*e));
 }
@@ -802,6 +804,18 @@ static int decode_one(void) {
         imgent *e = &images[i];
         if (e->state == IS_QUEUED) { if (req_new(RK_IMG, e->url, WHTTP_GET, 0, 0, (int)i) >= 0) e->state = IS_LOADING; continue; }
         if (e->state != IS_DATA) continue;
+        /* memory budget: keep 1 MiB free for re-laying out the page; otherwise the image stays a placeholder */
+        size_t need = (size_t)(e->w > 0 ? e->w : 256) * (size_t)(e->h > 0 ? e->h : 256) * 4u + 65536u;
+        const size_t budget = WEB_HEAP_BYTES - 1024u * 1024u;
+        if (wmem_used() + need > budget) {
+            for (uint32_t k = 0; k < WEB_IMAGES; ++k) if (images[k].gen != page_gen && images[k].state != IS_FREE && images[k].state != IS_LOADING) image_drop((int)k);
+            uint64_t now = web_ms();
+            for (uint32_t k = 0; k < WEB_IMAGES && wmem_used() + need > budget; ++k)      /* decoded images not drawn lately */
+                if (k != i && images[k].state == IS_READY && now - images[k].used_at > 4000u) {
+                    wmem_free(images[k].px); images[k].px = 0; images[k].state = IS_SKIPPED;
+                }
+            if (wmem_used() + need > budget) { wmem_free(e->data); e->data = 0; e->len = 0; e->state = IS_SKIPPED; return 0; }
+        }
         int w = 0, h = 0;
         uint8_t *rgba = wimage_decode(e->data, e->len, &w, &h, IMG_PIXELS_MAX);
         if (!rgba) { e->state = IS_FAILED; wmem_free(e->data); e->data = 0; P.need_layout = 1; return 1; }
@@ -852,6 +866,7 @@ static void page_free(void) {
     wlayout_free(&P.lay);
     if (P.css) wcss_free(P.css);
     wmem_free(P.img_slot);
+    wmem_free((void *)P.img_url);
     if (P.have) wdoc_free(&P.doc);
     wmem_free(P.source);
     wb_set(&P, 0, sizeof(P));
@@ -863,9 +878,8 @@ static void page_set_html(const char *utf8, size_t len, int as_text, const wurl 
     ++page_gen;
     P.internal = internal;
     if (u) P.url = *u;
-    P.source = (char *)wmem_alloc(len + 1u);
-    if (P.source) { wb_copy(P.source, utf8, len); P.source[len] = '\0'; }
-    if (!P.source || whtml_parse(&P.doc, P.source, len, as_text) != 0) {
+    /* the DOM copies everything it keeps, so the source text is not retained */
+    if (whtml_parse(&P.doc, utf8, len, as_text) != 0) {
         set_status("Not enough memory to show this page", 0);
         return;
     }
@@ -890,7 +904,8 @@ static void page_set_html(const char *utf8, size_t len, int as_text, const wurl 
     /* images */
     if (P.doc.img_count) {
         P.img_slot = (int16_t *)wmem_alloc(P.doc.img_count * sizeof(int16_t));
-        for (uint32_t i = 0; P.img_slot && i < P.doc.img_count; ++i) {
+        P.img_url = (const char **)wmem_calloc(P.doc.img_count * sizeof(char *));
+        for (uint32_t i = 0; P.img_slot && P.img_url && i < P.doc.img_count; ++i) {
             P.img_slot[i] = -1;
             const char *src = img_source(P.doc.imgs[i]);
             if (!src || !src[0]) continue;
@@ -901,7 +916,10 @@ static void page_set_html(const char *utf8, size_t len, int as_text, const wurl 
             first[k] = '\0';
             if (wstr_iprefix(src, "data:")) copy_text(abs, sizeof(abs), src);
             else if (!wurl_resolve(&P.url, first, abs, sizeof(abs))) continue;
-            P.img_slot[i] = (int16_t)image_request(abs);
+            P.img_url[i] = warena_strndup(&P.doc.arena, abs, text_length(abs));
+            /* images without a declared size are fetched now (the layout needs them); the rest when they come near the viewport */
+            const wnode *im = P.doc.imgs[i];
+            if (!wnode_attr(im, "width") && !wnode_attr(im, "height") && i < 24u) P.img_slot[i] = (int16_t)image_request(abs);
         }
     }
     /* meta refresh */
@@ -922,6 +940,21 @@ static void page_set_html(const char *utf8, size_t len, int as_text, const wurl 
     P.need_style = 1;
     scroll_y = 0;
     web_dirty = 1;
+}
+
+/* Fetches the images whose boxes are within a few screens of the visible part of the page. */
+static void request_near_images(int32_t top, int32_t bottom) {
+    if (!P.laid_out || !P.img_url) return;
+    uint32_t started = 0;
+    for (uint32_t i = 0; i < P.lay.count && started < 8u; ++i) {
+        const witem *it = &P.lay.items[i];
+        if (it->kind != WI_IMAGE || it->a >= P.doc.img_count) continue;
+        if (it->y > bottom || it->y + it->h < top) continue;
+        uint32_t k = it->a;
+        if (P.img_slot[k] >= 0 || !P.img_url[k]) continue;
+        P.img_slot[k] = (int16_t)image_request(P.img_url[k]);
+        ++started;
+    }
 }
 
 static void style_page(int32_t width) {
@@ -1678,6 +1711,7 @@ void web_paint(const mde_layout *l) {
         }
         layout_page(vw);
     }
+    if (P.have && P.laid_out) request_near_images(scroll_y - H(c), scroll_y + 3 * H(c));
     uint32_t bg = P.have && P.laid_out ? P.lay.page_bg : 0xFFFFFFFFu;
     gfx_fill(S, c.x0, c.y0, W(c), H(c), OPAQUE(bg & 0xFFFFFFu));
     int32_t doc_h = P.laid_out ? P.lay.height : 0;

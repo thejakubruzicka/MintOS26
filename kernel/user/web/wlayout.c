@@ -606,6 +606,7 @@ static void image_box(wnode *n, const wstyle *s, int32_t avail, int32_t *w, int3
 static void control_box(wnode *n, const wstyle *s, int32_t avail, int32_t *w, int32_t *h);
 static void table_columns(wnode *t, int32_t avail, int32_t *cols, uint32_t *ncols, int32_t *tmin, int32_t *tmax, int compute_widths);
 
+static int32_t iseg;                 /* width since the last break opportunity */
 static void intrinsic_flow(wnode *n, int32_t *mn, int32_t *line, int32_t *mx, int nowrap, int depth) {
     for (wnode *c = n->first; c; c = c->next) {
         if (c->tag == WT_TEXT) {
@@ -617,9 +618,10 @@ static void intrinsic_flow(wnode *n, int32_t *mn, int32_t *line, int32_t *mx, in
             int32_t spacew = 0;
             while (i < c->text_len) {
                 if (is_space_byte(t[i])) {
-                    if (st->white_space == WS_PRE && t[i] == '\n') { if (*line > *mx) *mx = *line; if (*line > *mn && nw) *mn = *line; *line = 0; }
+                    if (st->white_space == WS_PRE && t[i] == '\n') { if (*line > *mx) *mx = *line; *line = 0; iseg = 0; ++i; continue; }
                     if (!spacew) spacew = measure(font_for(st, " ", 1), st, " ", 1);
                     if (*line) *line += spacew;
+                    if (nw) iseg += spacew; else iseg = 0;
                     ++i;
                     continue;
                 }
@@ -627,15 +629,15 @@ static void intrinsic_flow(wnode *n, int32_t *mn, int32_t *line, int32_t *mx, in
                 while (i < c->text_len && !is_space_byte(t[i])) ++i;
                 int32_t w = measure(font_for(st, t + s0, i - s0), st, t + s0, i - s0);
                 *line += w;
-                if (w > *mn) *mn = w;
-                if (nw && *line > *mn) *mn = *line;
+                iseg += w;
+                if (iseg > *mn) *mn = iseg;
             }
             continue;
         }
         if (!is_elem(c)) continue;
         const wstyle *s = c->style;
         if (s->display == WD_NONE) continue;
-        if (c->tag == WT_BR) { if (*line > *mx) *mx = *line; *line = 0; continue; }
+        if (c->tag == WT_BR) { if (*line > *mx) *mx = *line; *line = 0; iseg = 0; continue; }
         if (s->display == WD_INLINE && !is_control(c) && c->tag != WT_IMG && depth < MAX_DEPTH) {
             box b; box_of(s, 0, &b);
             *line += b.ml + b.pl + b.bl;
@@ -652,10 +654,13 @@ static void intrinsic_flow(wnode *n, int32_t *mn, int32_t *line, int32_t *mx, in
         int inline_level = s->display == WD_INLINE || s->display == WD_INLINE_BLOCK || s->display == WD_INLINE_TABLE ||
                            s->display == WD_INLINE_FLEX || c->tag == WT_IMG || is_control(c);
         int flex_parent = n->style && (n->style->display == WD_FLEX || n->style->display == WD_INLINE_FLEX) && !n->style->flex_column;
-        if ((inline_level || flex_parent) && s->float_ == WF_NONE) *line += cmx + mrg + (flex_parent && *line ? n->style->gap : 0);
-        else {
+        if ((inline_level || flex_parent) && s->float_ == WF_NONE) {
+            *line += cmx + mrg + (flex_parent && *line ? n->style->gap : 0);
+            iseg = nowrap ? iseg + cmx + mrg : cmn + mrg;
+            if (iseg > *mn) *mn = iseg;
+        } else {
             if (*line > *mx) *mx = *line;
-            *line = 0;
+            *line = 0; iseg = 0;
             if (cmx + mrg > *mx) *mx = cmx + mrg;
         }
     }
@@ -686,9 +691,11 @@ static void intrinsic(wnode *n, int32_t *mn, int32_t *mx) {
         a = tmin + extra; z = tmax + extra;
         if (s->width.u == WU_PX && s->width.v / 64 > a) a = z = s->width.v / 64;
     } else {
-        int32_t line = 0;
+        int32_t line = 0, saved_seg = iseg;
         int nowrap = s->white_space == WS_NOWRAP || s->white_space == WS_PRE;
+        iseg = 0;
         intrinsic_flow(n, &a, &line, &z, nowrap, 0);
+        iseg = saved_seg;
         if (line > z) z = line;
         if (a > z) z = a;
         a += extra; z += extra;
@@ -1061,10 +1068,7 @@ static void flow_atom(ifc *I, wnode *n, int as_flex_item) {
         n->y = 0;
     } else {
         w = used_width(n, s, &b, cw, 1);
-        if (as_flex_item && I->flex && s->width.u == WU_AUTO) {
-            int32_t mn, mx; intrinsic(n, &mn, &mx);
-            if (w > cw - b.ml - b.mr) w = cw - b.ml - b.mr;
-        }
+        if (as_flex_item && I->flex && s->width.u == WU_AUTO && s->grow) w = cw - b.ml - b.mr;   /* flex-grow: take the row */
         if (w > cw - b.ml - b.mr && cw - b.ml - b.mr > 0) w = cw - b.ml - b.mr;
         boxres r;
         uint32_t saved_bfc = L->bfc, saved_nf = L->nfloats;
@@ -1192,19 +1196,22 @@ static uint32_t table_rows(wnode *t, wnode **rows, uint32_t max) {
     return n;
 }
 
-typedef struct tgrid { wnode **rows; uint32_t nrows; tcell *cells; uint32_t ncells; uint32_t ncols; } tgrid;
+typedef struct tgrid { wnode **rows; uint32_t nrows; tcell *cells; uint32_t ncells; uint32_t ncols; uint8_t *occ; } tgrid;
 
+static void free_grid(tgrid *g) { wmem_free(g->rows); wmem_free(g->cells); wmem_free(g->occ); g->rows = 0; g->cells = 0; g->occ = 0; }
 static int build_grid(wnode *t, tgrid *g) {
     uint32_t maxrows = 4096;
-    g->rows = (wnode **)warena_alloc(&L->scratch, maxrows * sizeof(wnode *));
+    wb_set(g, 0, sizeof(*g));
+    g->rows = (wnode **)wmem_alloc(maxrows * sizeof(wnode *));
     if (!g->rows) return 0;
     g->nrows = table_rows(t, g->rows, maxrows);
     uint32_t count = 0;
     for (uint32_t r = 0; r < g->nrows; ++r) for (wnode *c = g->rows[r]->first; c; c = c->next) if (is_cell(c)) ++count;
-    g->cells = count ? (tcell *)warena_alloc(&L->scratch, count * sizeof(tcell)) : 0;
-    if (count && !g->cells) return 0;
-    uint8_t *occ = g->nrows ? (uint8_t *)warena_alloc(&L->scratch, (size_t)g->nrows * MAX_COLS) : 0;
-    if (g->nrows && !occ) return 0;
+    g->cells = count ? (tcell *)wmem_alloc(count * sizeof(tcell)) : 0;
+    if (count && !g->cells) { free_grid(g); return 0; }
+    uint8_t *occ = g->nrows ? (uint8_t *)wmem_calloc((size_t)g->nrows * MAX_COLS) : 0;
+    if (g->nrows && !occ) { free_grid(g); return 0; }
+    g->occ = occ;
     g->ncells = 0; g->ncols = 0;
     for (uint32_t r = 0; r < g->nrows; ++r) {
         uint32_t col = 0;
@@ -1232,7 +1239,8 @@ static int build_grid(wnode *t, tgrid *g) {
 static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *ncols_out, int32_t *tmin, int32_t *tmax, int compute) {
     tgrid g;
     *tmin = *tmax = 0; *ncols_out = 0;
-    if (!build_grid(t, &g) || !g.ncols) return;
+    if (!build_grid(t, &g)) return;
+    if (!g.ncols) { free_grid(&g); return; }
     const wstyle *ts = t->style;
     int32_t sp = ts->collapse ? 0 : ts->border_spacing;
     int32_t cmin[MAX_COLS], cmax[MAX_COLS], cpct[MAX_COLS];
@@ -1260,7 +1268,7 @@ static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *
     int32_t smin = sp * ((int32_t)g.ncols + 1), smax = smin;
     for (uint32_t c = 0; c < g.ncols; ++c) { if (cmax[c] < cmin[c]) cmax[c] = cmin[c]; smin += cmin[c]; smax += cmax[c]; }
     *tmin = smin; *tmax = smax; *ncols_out = g.ncols;
-    if (!compute || !cols_out) return;
+    if (!compute || !cols_out) { free_grid(&g); return; }
     int32_t A = avail - sp * ((int32_t)g.ncols + 1);
     int32_t sum_min = smin - sp * ((int32_t)g.ncols + 1), sum_max = smax - sp * ((int32_t)g.ncols + 1);
     if (A < sum_min) A = sum_min;
@@ -1287,6 +1295,7 @@ static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *
         cols_out[c] = w;
     }
     (void)sum_max;
+    free_grid(&g);
 }
 
 static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_out) {
@@ -1301,21 +1310,17 @@ static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_o
         boxres r; layout_box(c, ix, cy, iw, &r);
         cy += r.h;
     }
-    int32_t *cols = (int32_t *)warena_alloc(&L->scratch, MAX_COLS * sizeof(int32_t));
+    int32_t cols[MAX_COLS];
     int32_t tmin, tmax; uint32_t ncols;
-    if (!cols) { *h_out = cy - y; return; }
     table_columns(t, iw, cols, &ncols, &tmin, &tmax, 1);
     tgrid g;
-    if (!ncols || !build_grid(t, &g)) { *h_out = cy - y + b.pb + b.bb; return; }
+    if (!ncols || !build_grid(t, &g)) { free_grid(&g); *h_out = cy - y + b.pb + b.bb; return; }
     int32_t colx[MAX_COLS + 1];
     colx[0] = ix + sp;
     for (uint32_t c = 0; c < ncols; ++c) colx[c + 1] = colx[c] + cols[c] + sp;
-    int32_t *rowy = (int32_t *)warena_alloc(&L->scratch, ((size_t)g.nrows + 1) * sizeof(int32_t));
-    if (!rowy) { *h_out = cy - y; return; }
     int32_t ry = cy + sp;
     uint32_t ci = 0;
     for (uint32_t r = 0; r < g.nrows; ++r) {
-        rowy[r] = ry;
         int32_t rh = 0;
         const wstyle *rs = g.rows[r]->style;
         uint32_t saved_row_bg = L->row_bg;
@@ -1357,7 +1362,7 @@ static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_o
         (void)first_cell;
         ry += rh + sp;
     }
-    rowy[g.nrows] = ry;
+    free_grid(&g);
     *h_out = ry - y + b.pb + b.bb;
 }
 

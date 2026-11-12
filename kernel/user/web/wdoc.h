@@ -62,7 +62,7 @@ typedef struct wstyle {
     uint8_t display, position, float_, clear, white_space, text_align, text_transform, list_style;
     uint8_t weight;                /* 1..9 (400 = 4, 700 = 7) */
     uint8_t italic, mono, decoration, visibility_hidden, valign, overflow_hidden, border_box;
-    uint8_t flex_column, flex_wrap, justify, hide_text, list_inside, collapse, table_fixed, centered_auto;
+    uint8_t flex_column, flex_wrap, justify, hide_text, list_inside, collapse, table_fixed, centered_auto, grow, pad0[3];
     int16_t font_px, line_px;      /* line_px 0 = normal */
     int16_t text_indent, border_spacing, radius, gap;
     uint32_t color, bg;            /* ARGB; bg alpha 0 = transparent */
@@ -130,6 +130,7 @@ typedef struct wdoc {
     wctl *ctls; uint32_t ctl_count, ctl_cap;
     int truncated;                             /* ran out of nodes or memory while parsing */
     int is_plain_text;
+    int has_doctype;                           /* no <!DOCTYPE>: quirks mode */
 } wdoc;
 
 /* ------------------------------------------------------------------ HTML */

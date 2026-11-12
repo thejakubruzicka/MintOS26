@@ -36,7 +36,7 @@ static int img_size(void *ctx, int32_t img, int32_t *w, int32_t *h) {
 static int img_state(void *ctx, int32_t img) { int32_t w, h; return img_size(ctx, img, &w, &h) ? 1 : -1; }
 
 int main(int argc, char **argv) {
-    static uint8_t arena[48u << 20];
+    static uint8_t arena[64u << 20];
     wmem_init(arena, sizeof(arena));
     if (argc < 3) { fprintf(stderr, "usage: test-web-layout FILE WIDTH [CSS...]\n"); return 2; }
     size_t len;
@@ -47,6 +47,8 @@ int main(int argc, char **argv) {
     size_t ul;
     char *utf = wcharset_to_utf8((const uint8_t *)html, len, cs, &ul);
     if (whtml_parse(&doc, utf, ul, 0) != 0) { printf("ERR parse\n"); return 1; }
+    wmem_free(utf); utf = 0;
+    fprintf(stderr, "MEM after parse: used=%zu arena=%zu nodes=%u\n", wmem_used(), doc.arena.total, doc.node_count);
     int css_arg = 3;
     for (uint32_t i = 0; i < doc.sheet_count; ++i) {
         if (doc.sheets[i].kind == WSHEET_LINK && css_arg < argc) {
@@ -58,9 +60,12 @@ int main(int argc, char **argv) {
     wcss *c = wcss_create(&doc, width, 0);
     if (!c || wcss_apply(c, &doc) != 0) { printf("ERR css\n"); return 1; }
     wcss_stats st; wcss_get_stats(c, &st);
+    fprintf(stderr, "MEM after css: used=%zu arena=%zu rules=%u decls=%u styles=%u\n", wmem_used(), doc.arena.total, st.rules, st.decls, st.distinct_styles);
     wlayout_env env = {width, 800, img_size, img_state, 0};
     wlayout_out out; memset(&out, 0, sizeof(out));
-    if (wlayout_run(&doc, &env, &out) != 0) { printf("ERR layout\n"); return 1; }
+    int lr = wlayout_run(&doc, &env, &out);
+    fprintf(stderr, "MEM after layout: used=%zu peak=%zu items=%u pool=%zu largest_free=%zu\n", wmem_used(), wmem_peak(), out.count, out.pool_len, wmem_largest_free());
+    if (lr != 0) { printf("ERR layout\n"); return 1; }
     printf("TITLE %s\n", doc.title);
     printf("DOC nodes=%u elements=%u links=%u images=%u controls=%u sheets=%u truncated=%d\n", doc.node_count, doc.elem_count,
            doc.link_count, doc.img_count, doc.ctl_count, doc.sheet_count, doc.truncated);
