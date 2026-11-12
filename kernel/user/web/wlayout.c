@@ -3,7 +3,7 @@
 #include "whttp.h"
 #include "../mintde/font.h"
 
-#define MAX_DEPTH 64
+#define MAX_DEPTH 40                      /* ~800 bytes of stack per level; MintDE has 64 KiB */
 #define MAX_FLOATS 256u
 #define MAX_COLS 100u
 #define MAX_DEFER 8
@@ -93,6 +93,7 @@ typedef struct lctx {
     int depth;
     int32_t link;
     uint8_t deco, invisible;
+    int table_depth;
     struct { int on; const wstyle *st; int32_t right; char text[24]; uint8_t bullet; } marker;
     uint32_t gen;
     warena scratch;
@@ -666,12 +667,15 @@ static void intrinsic_flow(wnode *n, int32_t *mn, int32_t *line, int32_t *mx, in
     }
 }
 
+static int idepth;
 static void intrinsic(wnode *n, int32_t *mn, int32_t *mx) {
     *mn = *mx = 0;
     if (!is_elem(n)) return;
     if (n->iw_gen == L->gen) { *mn = n->min_w; *mx = n->max_w; return; }
     const wstyle *s = n->style;
     if (s->display == WD_NONE) return;
+    if (idepth >= MAX_DEPTH) return;                    /* bounded recursion */
+    ++idepth;
     box b; box_of(s, 0, &b);
     int32_t extra = b.bl + b.br + b.pl + b.pr;
     int32_t a = 0, z = 0;
@@ -685,9 +689,11 @@ static void intrinsic(wnode *n, int32_t *mn, int32_t *mx) {
     } else if (is_control(n)) {
         int32_t w, h; control_box(n, s, 1 << 20, &w, &h);
         a = z = w;
-    } else if (s->display == WD_TABLE || s->display == WD_INLINE_TABLE) {
+    } else if ((s->display == WD_TABLE || s->display == WD_INLINE_TABLE) && L->table_depth < 6) {
         int32_t tmin = 0, tmax = 0; uint32_t nc = 0;
+        ++L->table_depth;
         table_columns(n, 1 << 20, 0, &nc, &tmin, &tmax, 0);
+        --L->table_depth;
         a = tmin + extra; z = tmax + extra;
         if (s->width.u == WU_PX && s->width.v / 64 > a) a = z = s->width.v / 64;
     } else {
@@ -704,6 +710,7 @@ static void intrinsic(wnode *n, int32_t *mn, int32_t *mx) {
     if (s->min_w.u == WU_PX) { int32_t m = s->min_w.v / 64 + (s->border_box ? 0 : extra); if (a < m) a = m; if (z < m) z = m; }
     n->min_w = a; n->max_w = z; n->iw_gen = L->gen;
     *mn = a; *mx = z;
+    --idepth;
 }
 
 /* ------------------------------------------------------------------ replaced elements */
@@ -868,8 +875,10 @@ static void layout_box(wnode *n, int32_t x, int32_t y, int32_t w, boxres *res) {
     uint8_t saved_inv = L->invisible;
     if (s->visibility_hidden) L->invisible = 1;
     int32_t h;
-    if (s->display == WD_TABLE || s->display == WD_INLINE_TABLE) {
+    if ((s->display == WD_TABLE || s->display == WD_INLINE_TABLE) && L->table_depth < 6) {
+        ++L->table_depth;
         layout_table(n, x, y, w, &h);
+        --L->table_depth;
     } else if (n->tag == WT_IMG || is_control(n)) {
         h = 0;
     } else {
@@ -1243,7 +1252,9 @@ static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *
     if (!g.ncols) { free_grid(&g); return; }
     const wstyle *ts = t->style;
     int32_t sp = ts->collapse ? 0 : ts->border_spacing;
-    int32_t cmin[MAX_COLS], cmax[MAX_COLS], cpct[MAX_COLS];
+    int32_t *cmin = (int32_t *)wmem_alloc(3u * MAX_COLS * sizeof(int32_t));    /* heap: tables nest */
+    if (!cmin) { free_grid(&g); return; }
+    int32_t *cmax = cmin + MAX_COLS, *cpct = cmin + 2 * MAX_COLS;
     for (uint32_t c = 0; c < g.ncols; ++c) { cmin[c] = 0; cmax[c] = 0; cpct[c] = 0; }
     for (int pass = 0; pass < 2; ++pass) {
         for (uint32_t i = 0; i < g.ncells; ++i) {
@@ -1268,7 +1279,7 @@ static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *
     int32_t smin = sp * ((int32_t)g.ncols + 1), smax = smin;
     for (uint32_t c = 0; c < g.ncols; ++c) { if (cmax[c] < cmin[c]) cmax[c] = cmin[c]; smin += cmin[c]; smax += cmax[c]; }
     *tmin = smin; *tmax = smax; *ncols_out = g.ncols;
-    if (!compute || !cols_out) { free_grid(&g); return; }
+    if (!compute || !cols_out) { free_grid(&g); wmem_free(cmin); return; }
     int32_t A = avail - sp * ((int32_t)g.ncols + 1);
     int32_t sum_min = smin - sp * ((int32_t)g.ncols + 1), sum_max = smax - sp * ((int32_t)g.ncols + 1);
     if (A < sum_min) A = sum_min;
@@ -1296,6 +1307,7 @@ static void table_columns(wnode *t, int32_t avail, int32_t *cols_out, uint32_t *
     }
     (void)sum_max;
     free_grid(&g);
+    wmem_free(cmin);
 }
 
 static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_out) {
@@ -1310,12 +1322,14 @@ static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_o
         boxres r; layout_box(c, ix, cy, iw, &r);
         cy += r.h;
     }
-    int32_t cols[MAX_COLS];
+    int32_t *cols = (int32_t *)wmem_alloc((2u * MAX_COLS + 1u) * sizeof(int32_t));
+    if (!cols) { *h_out = cy - y + b.pb + b.bb; return; }
+    int32_t *colx = cols + MAX_COLS;
     int32_t tmin, tmax; uint32_t ncols;
     table_columns(t, iw, cols, &ncols, &tmin, &tmax, 1);
     tgrid g;
-    if (!ncols || !build_grid(t, &g)) { free_grid(&g); *h_out = cy - y + b.pb + b.bb; return; }
-    int32_t colx[MAX_COLS + 1];
+    wb_set(&g, 0, sizeof(g));
+    if (!ncols || !build_grid(t, &g)) { free_grid(&g); wmem_free(cols); *h_out = cy - y + b.pb + b.bb; return; }
     colx[0] = ix + sp;
     for (uint32_t c = 0; c < ncols; ++c) colx[c + 1] = colx[c] + cols[c] + sp;
     int32_t ry = cy + sp;
@@ -1363,6 +1377,7 @@ static void layout_table(wnode *t, int32_t x, int32_t y, int32_t w, int32_t *h_o
         ry += rh + sp;
     }
     free_grid(&g);
+    wmem_free(cols);
     *h_out = ry - y + b.pb + b.bb;
 }
 

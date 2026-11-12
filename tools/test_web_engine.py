@@ -214,6 +214,102 @@ def images(tmp, core, rng):
           "bilinear enlarging keeps a flat colour flat, output premultiplied", px[:4].hex())
 
 
+def layout(tmpd):
+    exe = build(tmpd, "tools/test_web_layout.c", [f"kernel/user/web/{n}.c" for n in ("wmem", "whttp", "inflate", "whtml", "wcss", "wlayout")] +
+                ["kernel/user/mintde/font_data.c"])
+    fx = ROOT / "tools/fixtures/web"
+    def run(html, width=1000, *css):
+        r = subprocess.run([str(exe), str(html), str(width), *[str(c) for c in css]], capture_output=True, text=True)
+        items = []
+        for line in r.stdout.splitlines():
+            parts = line.split(" ")
+            if parts[0] in ("TEXT", "RECT", "IMAGE", "CTL", "BULLET", "BORDER"):
+                d = {"kind": parts[0]}
+                for p in parts[1:]:
+                    if "=" in p and not p.startswith("text="):
+                        k, v = p.split("=", 1)
+                        d[k] = v
+                if 'text="' in line:
+                    d["text"] = line.split('text="', 1)[1][:-1]
+                items.append(d)
+        return r, items
+    r, items = run(fx / "article.html", 1000, fx / "site.css")
+    out = r.stdout
+    texts = [i for i in items if i["kind"] == "TEXT"]
+    alltext = " ".join(i["text"] for i in texts)
+    check(r.returncode == 0 and "HEAP used=0" in out and "ok=1" in out, "article fixture: parse, style and layout without leaks", r.stderr[-300:])
+    check("TITLE Prague \u2013 MintOS test article" in out, "title with entities", out.splitlines()[0] if out else "")
+    check("P\u0159\u00edklad \u017elu\u0165ou\u010dk\u00fd k\u016f\u0148" in alltext and "\u2014 diacritics & entities." in alltext,
+          "UTF-8 and named/numeric entities reach the text")
+    hidden = ["Jump to content", "Screen reader only text", "Wikipedia logo text", "Mobile only", "script output", "Note:"]
+    check(not any(h in alltext for h in hidden), "display:none, visually-hidden, image-replacement, scripts and ::before are not shown",
+          [h for h in hidden if h in alltext])
+    check("JavaScript is disabled" in alltext, "<noscript> content is shown (scripts never run)")
+    infobox = [i for i in items if i["kind"] == "RECT" and i.get("color") == "fff8f9fa" and int(i["w"]) == 240]
+    first_para = [i for i in texts if i["text"].startswith(") is the capital")]
+    check(infobox and int(infobox[0]["x"]) + 240 == 950 and first_para and int(first_para[0]["x"]) + int(first_para[0]["w"]) < int(infobox[0]["x"]),
+          "float:right infobox sits at the right edge and paragraph lines wrap beside it")
+    check(any(i["kind"] == "IMAGE" and i["w"] == "220" and i["h"] == "147" for i in items), "<img width/height> becomes a 220x147 image box")
+    bullets = [i for i in items if i["kind"] == "BULLET"]
+    check(len(bullets) == 3 and any(t["text"] == "3." for t in texts) and any(t["text"] == "4." for t in texts),
+          "list markers: discs/circles for <ul>, numbers from <ol start=3>")
+    check(any(t["text"] == "Climate" and t["font"] == "6" for t in texts) and sum(1 for i in items if i["kind"] == "BORDER" and i["color"] == "ffa2a9b1") >= 8,
+          "table with caption, header cells (bold) and collapsed cell borders")
+    snow = [t for t in texts if t["text"] == "Snow days"]
+    mean = [t for t in texts if t["text"].startswith("Mean")]
+    check(snow and mean and snow[0]["x"] == mean[0]["x"], "colspan cells align with the column grid")
+    check(any(t["text"].startswith("    printf") and int(t["flags"]) & 8 for t in texts), "<pre> keeps spaces and uses the monospace face")
+    link_ids = {t["link"] for t in texts if t["link"] != "-1"}
+    check(len(link_ids) >= 6 and all(t["color"] == "ff3366cc" for t in texts if t["link"] in ("3", "4", "5")),
+          "links carry their index and the CSS var() colour")
+    ctl = [l for l in out.splitlines() if l.startswith("CONTROL")]
+    check(len(ctl) == 5 and "type=3 name=search" in ctl[1] and "opts=2 sel=1" in ctl[4] and 'value="Special:Search"' in ctl[0],
+          "form controls: hidden, search, submit, checkbox and select (selected option)", ctl)
+    footer = [t for t in texts if t["text"].startswith("This page was last edited")]
+    check(footer and int(footer[0]["y"]) > max(int(i["y"]) + int(i["h"]) for i in infobox), "clear:both footer goes below the float")
+    for width in (320, 600, 1600):
+        r2, items2 = run(fx / "article.html", width, fx / "site.css")
+        maxx = max((int(i["x"]) + int(i["w"]) for i in items2 if i["kind"] == "TEXT"), default=0)
+        check(r2.returncode == 0 and maxx <= width, f"layout at {width}px keeps text inside the viewport", maxx)
+    quirks = Path(tmpd) / "q.html"
+    quirks.write_text("<html><center><table width=80%><tr><td>left</td></tr></table></center>")
+    _, qi = run(quirks, 800)
+    std = Path(tmpd) / "s.html"
+    std.write_text("<!doctype html><center><table width=80%><tr><td>mid</td></tr></table></center>")
+    _, si = run(std, 800)
+    check(qi and si and int(qi[0]["x"]) < 120 and int(si[0]["x"]) > 300, "quirks mode: tables do not inherit <center> alignment")
+    stress = Path(tmpd) / "stress.html"
+    stress.write_text("<div>" * 3000 + "deep" + "</div>" * 3000 + "<table>" * 200 + "<tr><td>x" * 50 + "<p>" + "<b><i>" * 500 +
+                      "<style>a{color:red}" + "x{" * 200 + "@media (min-width:1px){" * 50 + "</style>" + "<ul><li>" * 300 + "&#xFFFFFFFF;&bogus;<<<>>>")
+    r3, _ = run(stress, 900)
+    check(r3.returncode == 0 and "HEAP used=0" in r3.stdout, "deeply nested and malformed HTML/CSS lays out without crashing or leaking", r3.stderr[-200:])
+
+
+def contracts():
+    web = (ROOT / "kernel/user/mintde/web.c").read_text()
+    css = (WEB / "wcss.c").read_text()
+    lay = (WEB / "wlayout.c").read_text()
+    html = (WEB / "whtml.c").read_text()
+    checks = {
+        "no script is ever executed (no JavaScript engine, <script> text is discarded)":
+            "WT_SCRIPT" in html and "never used" in html and "eval" not in web,
+        "certificate failures stop the load with no way to continue":
+            "This connection is not private" in web and "proceed" not in web.lower().replace("proceeding", ""),
+        "every network size is bounded": all(k in web for k in ["DOC_MAX", "CSS_MAX", "IMG_MAX", "IMG_PIXELS_MAX", "WEB_HEAP_BYTES"]),
+        "downloads are written only below ~/Downloads with sanitised, unique names":
+            'DOWNLOAD_DIR "/"' in web and "whttp_disposition" in web and "mint_path_stat(d->path, &st)" in web,
+        "cookies and favorites persist on MintOS HD only when it is present":
+            "home_available()" in web and "COOKIE_FILE" in web and "BOOKMARK_FILE" in web,
+        "layout recursion is bounded (64 KiB ring-3 stack)": "MAX_DEPTH" in lay and "L->depth >= MAX_DEPTH" in lay,
+        "HTML nesting and node counts are bounded": "MAX_DEPTH" in html and "MAX_NODES" in html,
+        "dynamic pseudo-classes never match and unknown CSS is skipped": "dynamic states never match" in css and "unknown_props" in css,
+        "images are fetched lazily near the viewport and decoded within a memory budget":
+            "request_near_images" in web and "keep 1 MiB free" in web,
+    }
+    for name, ok in checks.items():
+        check(ok, "contract: " + name)
+
+
 def freestanding(tmp):
     flags = "-target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -mno-red-zone " \
             "-mno-sse -mno-mmx -mgeneral-regs-only -mcmodel=large -Wall -Wextra -Werror -O2".split()
@@ -352,7 +448,9 @@ def main():
         check(s.startswith("OK status=304 len=0"), "304 has no body", s)
 
         images(tmp, core, rng)
+        layout(tmpd)
         freestanding(tmp)
+        contracts()
 
     if failures:
         raise SystemExit(1)

@@ -202,6 +202,7 @@ check: all
 	$(PYTHON) tools/test_x509.py
 	$(PYTHON) tools/test_tls.py
 	$(PYTHON) tools/test_tls_contracts.py
+	$(PYTHON) tools/test_web_engine.py
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/test_mintfs.c kernel/fs/mintfs.c -o $(BUILD)/test-mintfs
 	$(BUILD)/test-mintfs
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/test_mintos_disk.c kernel/block/block.c kernel/fs/mintos_disk.c kernel/fs/mintfs.c -o $(BUILD)/test-mintos-disk
