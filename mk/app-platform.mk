@@ -53,3 +53,10 @@ $(BUILD)/mintde-procterm.obj: kernel/user/mintde/procterm.c $(MINTDE_HEADERS) | 
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-proc-runtime.obj: kernel/user/proc_runtime.c kernel/user/include/mintos/proc.h kernel/include/uapi/mintos/process.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
+
+# 26.5.014.0 app-platform tests (run before the rest of `make check`).
+.PHONY: check-app-platform
+check: check-app-platform
+check-app-platform: all
+	$(PYTHON) tools/test_app_platform.py
+	$(PYTHON) tools/test_app_platform_contracts.py

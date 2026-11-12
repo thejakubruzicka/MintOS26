@@ -210,9 +210,18 @@ int main(void) {
           "ELF loader preserves RX text and records entry/stack layout");
     CHECK(mint_address_space_lookup(&elf_space,elf_code_va+4096u,&elf_pa,&elf_flags) &&
           (elf_flags&MINT_PAGE_MAP_WRITE) && !(elf_flags&MINT_PAGE_MAP_EXEC) &&
-          mint_address_space_lookup(&elf_space,loaded_image.stack_base,&elf_pa,&elf_flags) &&
+          mint_address_space_lookup(&elf_space,((loaded_image.stack_top - 1u) & ~4095ULL),&elf_pa,&elf_flags) &&
           (elf_flags&MINT_PAGE_MAP_WRITE) && !(elf_flags&MINT_PAGE_MAP_EXEC),
           "ELF loader creates RW+NX data and stack mappings");
+    /* 26.5.014.0: only the top stack page is mapped up front; the rest of
+       the stack is a demand-zero STACK region above an unmapped GUARD region. */
+    MINT_ADDRESS_REGION stack_region = {0}, guard_region = {0};
+    CHECK(!mint_address_space_lookup(&elf_space,loaded_image.stack_base,&elf_pa,0) &&
+          mint_address_space_region_query(&elf_space,loaded_image.stack_base,&stack_region) &&
+          stack_region.kind == MINT_ASPACE_REGION_STACK &&
+          mint_address_space_region_query(&elf_space,loaded_image.stack_base-4096u,&guard_region) &&
+          guard_region.kind == MINT_ASPACE_REGION_GUARD && (guard_region.flags & MINT_ASPACE_REGION_NOACCESS),
+          "stack below its top page is demand-zero with a guard region underneath");
     CHECK(mint_address_space_activate(&elf_space), "activate loaded ELF address space for verification");
     char loaded_code[4]={0}; uint64_t loaded_tag=0;
     CHECK(mint_address_space_copy_from_user(&elf_space,loaded_code,elf_code_va,sizeof(loaded_code)) &&
@@ -220,6 +229,29 @@ int main(void) {
           mint_address_space_copy_from_user(&elf_space,&loaded_tag,elf_code_va+4096u,sizeof(loaded_tag)) &&
           loaded_tag==data_tag,
           "ELF loader copies segment bytes and leaves BSS/data mapping valid");
+    uint64_t probe = 0x1122334455667788ULL;
+    CHECK(mint_address_space_copy_to_user(&elf_space,loaded_image.stack_base,&probe,sizeof(probe)) &&
+          mint_address_space_lookup(&elf_space,loaded_image.stack_base,&elf_pa,0) &&
+          elf_space.demand_faults == 1u,
+          "a kernel copy into an untouched stack page populates it on demand");
+    CHECK(mint_address_space_demand_fault(&elf_space,loaded_image.stack_base-4096u,1,0) == 0,
+          "a fault in the guard region is never satisfied");
+    uint64_t mm_base = MINT_ASPACE_USER_BASE + (8ULL << 30);
+    CHECK(mint_address_space_region_add(&elf_space,mm_base,16u*4096u,MINT_PAGE_MAP_WRITE,MINT_ASPACE_REGION_ANONYMOUS) &&
+          mint_address_space_demand_fault(&elf_space,mm_base+5u*4096u,1,0) == 1 &&
+          mint_address_space_demand_fault(&elf_space,mm_base+5u*4096u,1,0) == 0,
+          "anonymous region pages appear once on first touch");
+    CHECK(mint_address_space_region_carve(&elf_space,mm_base+4u*4096u,4u*4096u) &&
+          !mint_address_space_lookup(&elf_space,mm_base+5u*4096u,&elf_pa,0) &&
+          mint_address_space_region_query(&elf_space,mm_base,&stack_region) && stack_region.size == 4u*4096u &&
+          mint_address_space_region_query(&elf_space,mm_base+8u*4096u,&stack_region) && stack_region.size == 8u*4096u,
+          "munmap-style carve frees pages and splits the region");
+    CHECK(mint_address_space_region_protect(&elf_space,mm_base,4u*4096u,MINT_ASPACE_REGION_NOACCESS) &&
+          mint_address_space_demand_fault(&elf_space,mm_base,0,0) == 0,
+          "PROT_NONE regions refuse demand faults");
+    CHECK(mint_address_space_set_frame_limit(&elf_space,(uint32_t)elf_space.frame_pages_live) &&
+          mint_address_space_demand_fault(&elf_space,mm_base+9u*4096u,1,0) == -1,
+          "the per-space owned-page limit stops demand faults");
     CHECK(mint_address_space_activate_kernel() && mint_address_space_destroy(&elf_space),
           "teardown loaded ELF address space cleanly");
     CHECK(active_pages()==0, "ELF load/teardown returns all mock pages");
