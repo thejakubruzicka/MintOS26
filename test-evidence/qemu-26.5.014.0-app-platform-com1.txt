@@ -1,0 +1,34 @@
+[fpu] x87/SSE enabled: CR0.MP|NE, CR4.OSFXSR|OSXMMEXCPT + OSXSAVE; XCR0=0x0000000000000007 (x87, SSE, AVX) save area 832 bytes, eager per-task switching
+[linux] syscall-instruction entry online: Linux x86-64 numbers -> MintOS services (subset of 73 calls; not a Linux kernel)
+[pool] user page pool online: 4 MiB chunks from physmem, bitmap pages, reserve 114 MiB
+[programs] bundled programs on MintOS HD are current
+[proc] started /System/Programs/lua pid=13 argc=1 entry=0x0000001000012520
+[fputest] AVX YMM state verified
+[fputest] XMM state and double arithmetic verified
+[fpu] process 2 kept its XMM/YMM state across yields and preemption
+[fputest] AVX YMM state verified
+[fputest] XMM state and double arithmetic verified
+[fpu] process 1 kept its XMM/YMM state across yields and preemption
+[fpu] TWO-PROCESS FPU STATE ISOLATION SELF-TEST PASSED preemptions=388
+[proc] process pid=13 exited status=0 peak-pages=104 (clean)
+[proc] started /System/Programs/lua pid=14 argc=2 entry=0x0000001000012520
+[proc] process pid=14 exited status=0 peak-pages=104 (clean)
+[proc] started /System/Programs/lua pid=15 argc=2 entry=0x0000001000012520
+[proc] process pid=15 exited status=0 peak-pages=104 (clean)
+[proc] started /System/Programs/lua pid=16 argc=3 entry=0x0000001000012520
+[proc] process pid=16 exited status=0 peak-pages=1896 (clean)
+[proc] started /System/Programs/spin pid=17 argc=2 entry=0x0000001000001FF0
+[proc] started /System/Programs/hello pid=18 argc=2 entry=0x0000001000001F80
+[proc] process pid=18 exited status=3 peak-pages=11 (clean)
+[proc] started /System/Programs/sysinfo pid=19 argc=1 entry=0x00000010000020A0
+[proc] process pid=19 exited status=0 peak-pages=12 (clean)
+[proc] process pid=17 exited status=0 peak-pages=13 (clean)
+[proc] started /System/Programs/spin pid=20 argc=1 entry=0x0000001000001FF0
+[proc] kill pid=20 signal=2
+[proc] process pid=20 exited status=4611686018427387906 peak-pages=13 (failed)
+[proc] started /System/Programs/wc pid=21 argc=3 entry=0x0000001000002000
+[proc] process pid=21 exited status=0 peak-pages=15 (clean)
+[proc] started /System/Programs/grep pid=22 argc=4 entry=0x0000001000005930
+[proc] process pid=22 exited status=0 peak-pages=33 (clean)
+[proc] started /System/Programs/lua pid=23 argc=2 entry=0x0000001000012520
+[proc] process pid=23 exited status=0 peak-pages=105 (clean)
