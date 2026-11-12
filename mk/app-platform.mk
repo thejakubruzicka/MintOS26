@@ -40,8 +40,7 @@ $(BUILD)/fputest-elf-blob.obj: $(BUILD)/fputest-elf-blob.S
 	$(CC) -target x86_64-unknown-none-elf -c $< -o $@
 
 # Programs and examples installed onto MintOS HD (see kernel/include/programs.h).
-PROGRAM_BUNDLE_FILES ?=
-PROGRAM_BUNDLE_ARGS ?=
+include sdk/sdk.mk
 $(BUILD)/program-bundle.S: tools/mkprograms.py $(PROGRAM_BUNDLE_FILES) | $(BUILD)
 	$(PYTHON) tools/mkprograms.py $@ $(PROGRAM_BUNDLE_ARGS)
 $(BUILD)/program-bundle.obj: $(BUILD)/program-bundle.S
