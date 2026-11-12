@@ -39,6 +39,30 @@ In QEMU:
 
 Delete `build/qemu-mintos-disk-1g.img` to start over with a blank disk.
 
+Since 26.5.014.0 a MintOS disk without an account (and a blank disk when there is no MintOS disk) starts the **Setup Assistant** at boot, so steps 2–4 above become the data-saving test below.
+
+### Data saving and Setup Assistant test (26.5.014.0)
+
+On the host, `make check` runs:
+- `test-data-saving` (`tools/test_data_saving.c`, 49 checks): the preferences parser and serializer, account-name rules (MintDE and the kernel must agree), name suggestions and initials, the accounts file, then `prefs.c` and `accounts.c` unchanged on the real block layer, MintOS-disk module and MintFS: debounced saving, `/Library/Preferences` vs `~/Library/Preferences`, account creation moving `/Users/mintos`, the kernel taking the home from the account at the next mount, the set-home validation, and the power-off flush hook (data written without close is lost on a cut and kept after the hook). It ends with fsck.
+- `test_data_saving_contracts.py` (29 checks): syscall `0x4D50` and its stubs, log component `PREFS`, boot and shell wiring, the flush order before power-off and MintDE's memory budget.
+
+In QEMU (delete `build/qemu-mintos-disk-1g.img` first for a blank disk):
+
+1. `tools/run_qemu.sh --mintos-disk -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0`, then **2** at the selector.
+2. **Setup Assistant** appears instead of the desktop: "Hello" cycles through languages. **Get Started**.
+3. **MintOS HD:** only the blank 1 GB disk is offered. Type `FORMAT sdX` as shown and press Return; COM1 shows `[MintDE] Setup Assistant initialized MintOS HD`. (**Not Now** continues for the session only.)
+4. **Account:** type a full name; the account name is suggested (edit it if you like). Continue; COM1 shows `[mintfs] home folder is now /Users/<account>` and `previous home moved`.
+5. **Look:** pick Dark and an accent; the screen changes at once. **Start Using MintOS**.
+6. Check: Terminal prompt `<account>@MintOS %`; Files' Favorites name the home after the account; Settings has the account card and **Users & Groups**.
+7. **Notes:** ⌘N, type a title and text, ⌘N again for a second note. Both appear under Today in `~/Documents/Notes/<title>.txt`. Search filters them; ⌘⌫ moves a note to the Trash.
+8. Change the wallpaper, open a folder in Files, run a few Terminal commands (`cat Library/Preferences/com.mintos.desktop.prefs` shows the saved settings).
+9. **Apple menu › Restart…** and Return. COM1 shows `[MintDE] notes, history and preferences saved before power-off`, `[power] saving MintOS HD before power-off` and `[mintfs] final commit before power-off: clean`. After a QEMU warm reset the selector may ignore HMP keys (they go to the USB keyboard); quit QEMU and start it again instead, which is a cold boot from the same disk.
+10. After the restart there is no Setup Assistant; COM1 shows `[mintfs] home folder /Users/<account> (from the MintOS account)`. Theme, accent, wallpaper, the selected note, Files' last folder and the Terminal history (Up arrow) are all back.
+11. **Host check:** `build/mintfs-tool check build/qemu-mintos-disk-1g.img` reports `fsck: clean`; `build/mintfs-tool cat build/qemu-mintos-disk-1g.img /Library/Preferences/com.mintos.accounts` shows the account.
+
+To run the assistant again: Settings › Users & Groups › **Run Setup Assistant…** (renaming the account renames its home folder).
+
 ### HTTPS test (26.5.012.0)
 
 On the host, `tools/test_crypto.py`, `tools/test_x509.py` and `tools/test_tls.py` run as part of `make check`. They need an OpenSSL 3 command line, for example `brew install openssl`, and the tests skip politely without one. Add `--live` to `test_x509.py` and `test_tls.py` to also check real sites.

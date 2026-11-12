@@ -377,7 +377,11 @@ static void paint_disk(gfx_rect c) {
     body_center(c, c.y0 + 100, "MintOS saves your account, notes and settings on a MintOS disk.", T.text2);
     if (disk_done) {
         gfx_circle(S, c.x0 + W(c) / 2, c.y0 + 200, 34, OPAQUE(0x34C759u));
-        ui_symbol_glyph(c.x0 + W(c) / 2, c.y0 + 200, SYM_CHECK, OPAQUE(0xFFFFFFu));
+        for (int32_t t = -2; t <= 2; ++t) {                      /* a large check mark */
+            int32_t cx = c.x0 + W(c) / 2, cy = c.y0 + 200;
+            gfx_line(S, cx - 14, cy + t, cx - 4, cy + 10 + t, OPAQUE(0xFFFFFFu));
+            gfx_line(S, cx - 4, cy + 10 + t, cx + 15, cy - 10 + t, OPAQUE(0xFFFFFFu));
+        }
         title_center(c, c.y0 + 270, "MintOS HD Is Ready");
         body_center(c, c.y0 + 298, "Everything you save from now on stays after a restart.", T.text2);
         return;
@@ -401,7 +405,7 @@ static void paint_disk(gfx_rect c) {
         gfx_circle(S, r.x1 - 22, r.y0 + H(r) / 2, on ? 3 : 6, OPAQUE(on ? 0xFFFFFFu : T.window));
     }
     if (blank_count) {
-        char p[32], prompt[64];
+        char p[32], prompt[112];
         expected_phrase(p, sizeof(p));
         copy_text(prompt, sizeof(prompt), "Initializing erases this disk. Type \xE2\x80\x9C"); str_append(prompt, sizeof(prompt), p);
         str_append(prompt, sizeof(prompt), "\xE2\x80\x9D to confirm:");
@@ -488,7 +492,7 @@ void setup_paint(gfx_rect d) {
     gfx_copy(S, &gfx_scratch, d);
     gfx_rect c = card();
     gfx_shadow(S, c.x0, c.y0, W(c), H(c), 18, 40, 14, ARGB(0x50, 0, 0, 0));
-    gfx_round_rect(S, c.x0, c.y0, W(c), H(c), 18, T.dark ? ARGB(0xF0, 0x26, 0x26, 0x29) : ARGB(0xF4, 0xFB, 0xFB, 0xFC));
+    gfx_round_rect(S, c.x0, c.y0, W(c), H(c), 18, OPAQUE(T.dark ? 0x28282Bu : 0xFAFAFBu));   /* opaque: no shadow line */
     gfx_round_rect_stroke(S, c.x0, c.y0, W(c), H(c), 18, T.dark ? ARGB(0x40, 0xFF, 0xFF, 0xFF) : ARGB(0x22, 0, 0, 0));
     switch (page) {
     case PAGE_WELCOME: paint_welcome(c); break;

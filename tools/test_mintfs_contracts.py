@@ -19,6 +19,7 @@ syscall = rd("kernel/abi/syscall.c")
 uapi = rd("kernel/include/uapi/mintos/syscall.h")
 runtime = rd("kernel/user/runtime.c")
 apps = rd("kernel/user/mintde/apps.c")
+notes = rd("kernel/user/mintde/notes.c")
 desktop = rd("kernel/user/desktop.c")
 make = rd("Makefile")
 
@@ -90,9 +91,10 @@ checks = {
     "the File menu and Dock Trash drive the same Files commands":
         "ACT_FILES_BASE + FILES_CMD_NEW_FOLDER" in desktop and "files_command(act - ACT_FILES_BASE)" in desktop and
         "if (files_show_trash()) shell_open_app(APP_FILES);" in desktop,
-    "Notes saves to ~/Documents/Notes.txt with the atomic save, debounced, and falls back to session RAM":
-        '"/Documents/Notes.txt"' in apps and "mint_file_save(notes_path, note_buffer, note_length)" in apps and
-        "(int64_t)(now - notes_edit_ms) >= 1200" in apps and 'mint_fs_open("NOTES.TXT", MINT_FS_OPEN_READ)' in apps,
+    "Notes saves notes in ~/Documents/Notes with the atomic save, debounced, and falls back to session RAM (26.5.014.0)":
+        '"/Documents/Notes"' in notes and "mint_file_save(open_path, text, text_len)" in notes and
+        "SAVE_DELAY_MS 1200u" in notes and 'mint_fs_open("NOTES.TXT", MINT_FS_OPEN_READ)' in notes and
+        "notes_background(now)" in apps,
     "Disk Utility can erase a blank disk as MintOS (MintFS) or FAT16, and never offers Erase for the MintOS disk":
         '"MintOS (MintFS)", "MS-DOS (FAT16)"' in apps and "mint_storage_init_mintos(&request)" in apps and
         "d->mbr_signature_ok || disk_is_mintos(d)" in apps,

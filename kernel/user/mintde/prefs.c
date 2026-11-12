@@ -378,8 +378,12 @@ void prefs_set_home(const char *home) {
     MINT_MFS_VOLUME v;
     prefs_disk = mint_fs_get_volume(&v) == 0 && v.state == MINT_MFS_VOLUME_READY;
     scopy(prefs_home, sizeof(prefs_home), prefs_disk ? home : "");
-    for (uint32_t i = 0; i < PREFS_DOMAINS; ++i)
-        if (domains[i].used) { domains[i].loaded = 1; domains[i].dirty = 1; }
+    for (uint32_t i = 0; i < PREFS_DOMAINS; ++i) {
+        if (!domains[i].used) continue;
+        domains[i].loaded = 1;
+        for (uint32_t e = 0; e < PREFS_MAX; ++e)               /* only domains that hold values */
+            if (entries[e].used && domain_find(entries[e].key, 0) == &domains[i]) { domains[i].dirty = 1; break; }
+    }
     prefs_changed = 1;
 }
 void prefs_reset(void) {
