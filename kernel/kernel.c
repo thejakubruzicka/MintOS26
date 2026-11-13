@@ -689,6 +689,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     /* MintOS disk: mount after the vmalloc arena and DMA users have claimed their
        memory so the bitmap pages never overlap them. */
     if (paging_ok && arena_reserved) mint_mintos_disk_probe();
+    mint_power_set_flush_hook(mint_mfs_flush_for_power);     /* safe shutdown: final MintFS commit */
     int64_t fs_pid = mint_task_create("fs", mint_mfs_task, 0);
     if (fs_pid < 0) mint_serial_write("[mintfs] could not create the commit task; files commit on close only\n");
     if (status_pid < 0 || heartbeat_pid < 0 || abi_pid < 0 || ring3_pid < 0 || ring3_pid_b < 0 || desktop_pid < 0) {

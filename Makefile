@@ -18,6 +18,10 @@ USER_APP_OBJ := $(BUILD)/user-init.obj
 USER_DESKTOP_OBJ := $(BUILD)/user-desktop.obj
 MINTDE_HEADERS := kernel/user/mintde/mintde.h kernel/user/mintde/gfx.h kernel/user/mintde/font.h kernel/user/include/mintos/runtime.h $(wildcard kernel/include/*.h kernel/include/uapi/mintos/*.h)
 MINTDE_OBJS := $(BUILD)/mintde-gfx.obj $(BUILD)/mintde-font.obj $(BUILD)/mintde-widgets.obj $(BUILD)/mintde-apps.obj $(BUILD)/mintde-web.obj $(BUILD)/mintde-netcore.obj $(BUILD)/mintde-mem.obj $(BUILD)/crypto-sha2.obj $(BUILD)/crypto-aead.obj $(BUILD)/crypto-x25519.obj $(BUILD)/crypto-pubkey.obj $(BUILD)/crypto-x509.obj $(BUILD)/crypto-roots_data.obj $(BUILD)/crypto-tls.obj $(BUILD)/crypto-random.obj
+# Data saving (26.5.014.0): preferences, accounts, Setup Assistant, Notes.
+MINTDE_HEADERS += kernel/user/mintde/userdata.h
+MINTDE_DATA_OBJS := $(BUILD)/mintde-prefs.obj $(BUILD)/mintde-accounts.obj $(BUILD)/mintde-setup.obj $(BUILD)/mintde-notes.obj
+MINTDE_OBJS += $(MINTDE_DATA_OBJS)
 USER_DESKTOP_ELF := $(BUILD)/user-desktop.elf
 USER_DESKTOP_BLOB_ASM := $(BUILD)/desktop-elf-blob.S
 USER_DESKTOP_BLOB_OBJ := $(BUILD)/desktop-elf-blob.obj
@@ -144,6 +148,8 @@ $(BUILD)/mintde-mem.obj: kernel/lib/mem.c | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-netcore.obj: kernel/net/netcore.c kernel/include/net.h | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -DMINT_NET_USERSPACE=1 -c $< -o $@
+$(MINTDE_DATA_OBJS): $(BUILD)/mintde-%.obj: kernel/user/mintde/%.c $(MINTDE_HEADERS) | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-gfx.obj: kernel/user/mintde/gfx.c $(MINTDE_HEADERS) | $(BUILD)
 	$(CC) $(USER_C_FLAGS) -c $< -o $@
 $(BUILD)/mintde-font.obj: kernel/user/mintde/font_data.c kernel/user/mintde/font.h | $(BUILD)
@@ -202,6 +208,9 @@ check: all
 	$(BUILD)/test-mintfs
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/test_mintos_disk.c kernel/block/block.c kernel/fs/mintos_disk.c kernel/fs/mintfs.c -o $(BUILD)/test-mintos-disk
 	$(BUILD)/test-mintos-disk
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DMINT_PREFS_HOST_TEST -Itools tools/test_data_saving.c kernel/user/mintde/prefs.c kernel/user/mintde/accounts.c kernel/block/block.c kernel/fs/mintos_disk.c kernel/fs/mintfs.c -o $(BUILD)/test-data-saving
+	$(BUILD)/test-data-saving
+	$(PYTHON) tools/test_data_saving_contracts.py
 	$(PYTHON) tools/test_gpt.py
 	$(PYTHON) tools/test_mintfs_contracts.py
 	$(PYTHON) tools/test_e1000_driver.py

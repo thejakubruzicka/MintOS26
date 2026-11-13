@@ -140,6 +140,7 @@ int shell_apply_settings(void) {
     desktop_settings.version = MINT_DESKTOP_SETTINGS_VERSION;
     int ok = mint_desktop_settings_set(&desktop_settings) == 0;
     (void)mint_desktop_settings_get(&desktop_settings);
+    if (ok) userdata_store_appearance();              /* saved to ~/Library/Preferences (debounced) */
     night_mode = is_night();
     theme_apply(&desktop_settings, night_mode);
     render_wallpaper();
@@ -377,7 +378,7 @@ static void paint_dock(void) {
 enum { ACT_NONE = 0, ACT_ABOUT_OS, ACT_ABOUT_DE, ACT_SETTINGS, ACT_LAUNCHPAD, ACT_RESTART, ACT_SHUTDOWN,
        ACT_HIDE, ACT_QUIT, ACT_NEW_FILES, ACT_NEW_TERMINAL, ACT_CLOSE, ACT_MINIMIZE, ACT_ZOOM,
        ACT_BRING_ALL, ACT_TOGGLE_DARK, ACT_SPOTLIGHT, ACT_HELP, ACT_RELEASE_NOTES, ACT_FOCUS_BASE = 100,
-       ACT_FILES_BASE = 200 };
+       ACT_FILES_BASE = 200, ACT_NOTES_BASE = 300 };
 typedef struct { const char *label; const char *shortcut; uint32_t action; uint8_t enabled, separator, checked; } menu_item;
 static menu_item menu_items[24];
 static uint32_t menu_count;
@@ -419,6 +420,10 @@ static void build_menu(int32_t m) {
             add_item("Move to Trash", "\xE2\x8C\x98\xE2\x8C\xAB", ACT_FILES_BASE + FILES_CMD_TRASH, files_command_enabled(FILES_CMD_TRASH));
             add_sep();
             add_item("Empty Trash\xE2\x80\xA6", "\xE2\x87\xA7\xE2\x8C\x98\xE2\x8C\xAB", ACT_FILES_BASE + FILES_CMD_EMPTY_TRASH, files_command_enabled(FILES_CMD_EMPTY_TRASH));
+            add_sep();
+        } else if (app == APP_NOTES && focused_app == APP_NOTES) {
+            add_item("New Note", "\xE2\x8C\x98N", ACT_NOTES_BASE + NOTES_CMD_NEW, notes_command_enabled(NOTES_CMD_NEW));
+            add_item("Delete Note", "\xE2\x8C\x98\xE2\x8C\xAB", ACT_NOTES_BASE + NOTES_CMD_DELETE, notes_command_enabled(NOTES_CMD_DELETE));
             add_sep();
         } else {
             add_item("New Terminal Window", 0, ACT_NEW_TERMINAL, 1); add_sep();
@@ -541,6 +546,7 @@ static void run_action(uint32_t act) {
     uint32_t app = current_app_for_menu();
     if (act >= ACT_FOCUS_BASE && act < ACT_FOCUS_BASE + APP_COUNT) { shell_open_app(act - ACT_FOCUS_BASE); return; }
     if (act > ACT_FILES_BASE && act < ACT_FILES_BASE + FILES_CMD_COUNT) { if (files_command(act - ACT_FILES_BASE)) shell_damage_window(APP_FILES); return; }
+    if (act > ACT_NOTES_BASE && act < ACT_NOTES_BASE + NOTES_CMD_COUNT) { if (notes_command(act - ACT_NOTES_BASE)) shell_damage_window(APP_NOTES); return; }
     switch (act) {
     case ACT_ABOUT_OS: shell_open_app(APP_ABOUT_OS); break;
     case ACT_ABOUT_DE: shell_open_app(APP_ABOUT_MINTDE); break;
@@ -750,7 +756,8 @@ static void paint_alert(void) {
     ui_label_center(r.x0 + W(r) / 2, r.y0 + 108, FONT_BODY_BOLD, l1, T.text);
     ui_label_center(r.x0 + W(r) / 2, r.y0 + 126, FONT_BODY_BOLD, l2, T.text);
     ui_label_center(r.x0 + W(r) / 2, r.y0 + 150, FONT_CAPTION,
-                    power_confirm == POWER_FAILED ? "Hold the power button to switch it off." : "Notes and settings in Session (RAM) are not kept.", T.text2);
+                    power_confirm == POWER_FAILED ? "Hold the power button to switch it off." :
+                    prefs_on_disk() ? "Your notes and settings are saved on MintOS HD first." : "Notes and settings in Session (RAM) are not kept.", T.text2);
     if (power_confirm == POWER_FAILED) { ui_button(alert_button(0), "OK", 1, 1); return; }
     ui_button(alert_button(0), power_confirm == MINT_POWER_ACTION_RESTART ? "Restart" : "Shut Down", 1, 1);
     ui_button(alert_button(1), "Cancel", 0, 1);
@@ -764,6 +771,11 @@ static void run_power(void) {
     ui_label_center(SW / 2, SH / 2 + 50, FONT_BODY, action == MINT_POWER_ACTION_RESTART ? "Restarting\xE2\x80\xA6" : "Shutting down\xE2\x80\xA6", 0xA0A0A6u);
     (void)mint_display_cursor(pointer_x, pointer_y, MINT_CURSOR_SHAPE_HIDDEN);
     (void)mint_display_present(0, 0, SW, SH);
+    /* Safe shutdown: pending Notes, Terminal history and preferences are
+       written and MintFS commits before the kernel's own final flush. */
+    app_save_all();
+    static const char saved[] = "[MintDE] notes, history and preferences saved before power-off\r\n";
+    (void)mint_write(1, saved, sizeof(saved) - 1u);
     static const char msg_r[] = "[MintDE] restart confirmed\r\n", msg_s[] = "[MintDE] shutdown confirmed\r\n";
     if (action == MINT_POWER_ACTION_RESTART) (void)mint_write(1, msg_r, sizeof(msg_r) - 1u);
     else (void)mint_write(1, msg_s, sizeof(msg_s) - 1u);
@@ -776,6 +788,7 @@ static void run_power(void) {
 /* ------------------------------------------------------------ compose / present */
 static void compose(gfx_rect d) {
     gfx_clip_set(d);
+    if (setup_active()) { setup_paint(d); return; }  /* full-screen Setup Assistant */
     gfx_copy(S, &gfx_wall, d);
     if (launchpad_open) {
         paint_launchpad();
@@ -1067,6 +1080,7 @@ static void key_pressed(const MINT_DESKTOP_KEY_EVENT *k) {
         case ',': shell_open_app(APP_SETTINGS); return;
         case 'n': case 'N':
             if ((k->modifiers & MINT_KEYMOD_SHIFT) && focused_app == APP_FILES) break;   /* New Folder */
+            if (focused_app == APP_NOTES) break;                                         /* New Note */
             shell_open_app(APP_FILES); return;
         case 'l': case 'L': if (focused_app == APP_WEB) break; shell_open_app(APP_LAUNCHPAD); return;
         default: break;
@@ -1086,6 +1100,16 @@ static void key_released(const MINT_DESKTOP_KEY_EVENT *k) {
 }
 
 static void handle_event(const MINT_DESKTOP_EVENT *e) {
+    if (setup_active()) {                             /* the Setup Assistant owns all input */
+        if (e->type == MINT_DESKTOP_EVENT_POINTER_MOVE || e->type == MINT_DESKTOP_EVENT_POINTER_BUTTON) {
+            pointer_x = e->data.pointer.x; pointer_y = e->data.pointer.y;
+            if (e->type == MINT_DESKTOP_EVENT_POINTER_BUTTON && (e->data.pointer.changed_buttons & 1u) && (e->data.pointer.buttons & 1u))
+                setup_click(pointer_x, pointer_y);
+            (void)mint_display_cursor(pointer_x, pointer_y, setup_cursor(pointer_x, pointer_y));
+        } else if (e->type == MINT_DESKTOP_EVENT_KEY && e->data.key.pressed) setup_key(&e->data.key);
+        if (!setup_active()) update_cursor();
+        return;
+    }
     if (e->type == MINT_DESKTOP_EVENT_POINTER_MOVE || e->type == MINT_DESKTOP_EVENT_POINTER_BUTTON) {
         pointer_x = e->data.pointer.x; pointer_y = e->data.pointer.y;
         pointer_moved();
@@ -1122,6 +1146,7 @@ static void tick(void) {
         int night = is_night();
         if (desktop_settings.theme == MINT_THEME_WARM && night != night_mode) (void)shell_apply_settings();
     }
+    (void)setup_tick();
     uint32_t background = app_background();
     for (uint32_t app = 0; background && app < APP_COUNT; ++app)
         if ((background & (1u << app)) && windows[app].open && !windows[app].minimized) shell_damage_window(app);
@@ -1146,10 +1171,12 @@ int64_t mint_user_main(void) {
         desktop_settings.version = MINT_DESKTOP_SETTINGS_VERSION; desktop_settings.theme = MINT_THEME_LIGHT;
         desktop_settings.accent = MINT_ACCENT_MINT; desktop_settings.ui_scale = 1u;
     }
+    userdata_start();                                 /* account + saved preferences from MintOS HD */
     night_mode = is_night();
     theme_apply(&desktop_settings, night_mode);
     render_wallpaper();
     app_init();
+    setup_boot_check();                               /* first boot: Setup Assistant */
     pointer_x = SW / 2; pointer_y = SH / 2;
     damage_all();
     render();

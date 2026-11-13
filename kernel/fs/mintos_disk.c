@@ -99,6 +99,55 @@ int mint_gpt_find_mintos(const uint8_t h[512], const uint8_t e[16384], uint64_t 
     return 0;
 }
 
+/* ------------------------------------------------------------------ accounts (pure, host-tested) */
+int mint_account_name_valid(const char *name) {
+    static const char *const reserved[] = {"root", "daemon", "nobody", "guest", "shared", "system", "wheel"};
+    if (!name || !(name[0] >= 'a' && name[0] <= 'z')) return 0;
+    for (size_t n = 0; name[n]; ++n) {
+        char c = name[n];
+        if (n >= MINT_ACCOUNT_NAME_MAX) return 0;
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) return 0;
+    }
+    for (size_t r = 0; r < sizeof(reserved) / sizeof(reserved[0]); ++r) {
+        size_t i = 0;
+        while (reserved[r][i] && reserved[r][i] == name[i]) ++i;
+        if (!reserved[r][i] && !name[i]) return 0;
+    }
+    return 1;
+}
+static int blank(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+int mint_account_home_from_text(const char *t, size_t len, char *home, size_t cap) {
+    static const char key[] = "home", prefix[] = "\"/Users/";
+    for (size_t i = 0; i < len;) {
+        size_t e = i;
+        while (e < len && t[e] != '\n') ++e;
+        size_t q = i, k = 0;
+        while (q < e && blank(t[q])) ++q;
+        while (key[k] && q < e && t[q] == key[k]) { ++q; ++k; }
+        if (!key[k]) {
+            while (q < e && blank(t[q])) ++q;
+            if (q < e && t[q] == '=') {
+                ++q;
+                while (q < e && blank(t[q])) ++q;
+                size_t p = 0;
+                while (prefix[p] && q + p < e && t[q + p] == prefix[p]) ++p;
+                if (prefix[p]) return 0;
+                char name[MINT_ACCOUNT_NAME_MAX + 2];
+                size_t a = q + p, nl = 0;
+                while (a < e && t[a] != '"' && nl <= MINT_ACCOUNT_NAME_MAX) name[nl++] = t[a++];
+                if (a >= e || t[a] != '"' || nl > MINT_ACCOUNT_NAME_MAX) return 0;
+                name[nl] = '\0';
+                if (!mint_account_name_valid(name) || 7u + nl + 1u > cap) return 0;
+                for (size_t u = 0; u < 7u; ++u) home[u] = prefix[1u + u];
+                for (size_t u = 0; u <= nl; ++u) home[7u + u] = name[u];
+                return 1;
+            }
+        }
+        i = e + 1u;
+    }
+    return 0;
+}
+
 #ifndef MINT_GPT_HOST_TEST
 /* ------------------------------------------------------------------ device glue */
 #define GRANT_OWNER 0x4D465331u   /* "MFS1" */
@@ -169,6 +218,37 @@ static int mount_partition(uint32_t index, uint64_t first, uint64_t last) {
     return 1;
 }
 
+static void set_home_text(const char *home) {
+    size_t i = 0;
+    for (; home[i] && i + 1u < sizeof(volume.home); ++i) volume.home[i] = home[i];
+    volume.home[i] = '\0';
+}
+static int is_directory(const char *path) {
+    uint64_t ino;
+    MINTFS_STAT st;
+    return !mintfs_resolve(&fs, path, &ino) && !mintfs_stat(&fs, ino, &st) && st.type == MINTFS_TYPE_DIR;
+}
+/* The account's home replaces the default /Users/mintos once the Setup
+ * Assistant has written /Library/Preferences/com.mintos.accounts. */
+static void load_account_home(void) {
+    static char text[4096];
+    char home[64];
+    uint64_t ino;
+    if (mintfs_resolve(&fs, MINT_ACCOUNTS_PATH, &ino)) return;
+    int64_t n = mintfs_read(&fs, ino, 0, text, sizeof(text) - 1u);
+    if (n <= 0) return;
+    if (!mint_account_home_from_text(text, (size_t)n, home, sizeof(home)) || !is_directory(home)) {
+        mint_serial_write("[mintfs] accounts file has no usable home; keeping the default home folder\n");
+        mint_log_emit(MINT_LOG_WARN, MINT_LOG_COMPONENT_PREFS, "accounts file ignored: no valid existing home folder");
+        return;
+    }
+    set_home_text(home);
+    mint_serial_write("[mintfs] home folder ");
+    mint_serial_write(volume.home);
+    mint_serial_write(" (from the MintOS account)\n");
+    mint_log_emit(MINT_LOG_INFO, MINT_LOG_COMPONENT_PREFS, "home folder set from the MintOS account");
+}
+
 static int read_gpt(uint32_t index, uint64_t n, uint64_t *first, uint64_t *last) {
     static uint8_t header[512], entries[16384];
     if (!mint_block_read(index, 1, header)) return 0;
@@ -187,7 +267,7 @@ void mint_mintos_disk_probe(void) {
         mint_serial_write("[mintfs] MintOS partition found on ");
         mint_serial_write(bd->name);
         mint_serial_write("\n");
-        if (mount_partition(i, first, last)) return;
+        if (mount_partition(i, first, last)) { load_account_home(); return; }
     }
     mint_serial_write("[mintfs] no MintOS disk; MintOS HD is unavailable (Disk Utility can initialize a blank disk)\n");
 }
@@ -432,6 +512,28 @@ int64_t mint_mfs_sync(void) {
     if (!ready()) return -MINT_ENODEV;
     int rc = mintfs_commit(&fs);
     last_commit_tick = mint_timer_ticks();
+    return rc ? to_errno(rc) : 0;
+}
+int64_t mint_mfs_set_home(const char *path) {
+    if (!ready()) return -MINT_ENODEV;
+    static const char users[] = "/Users/";
+    size_t i = 0;
+    while (users[i] && path[i] == users[i]) ++i;
+    if (users[i] || !mint_account_name_valid(path + i)) return -MINT_EINVAL;
+    if (!is_directory(path)) return -MINT_ENOENT;
+    set_home_text(path);
+    mint_serial_write("[mintfs] home folder is now ");
+    mint_serial_write(volume.home);
+    mint_serial_write("\n");
+    mint_log_emit(MINT_LOG_INFO, MINT_LOG_COMPONENT_PREFS, "home folder changed by the Setup Assistant");
+    return 0;
+}
+/* Power-off/restart: commit the open transaction and flush the disk cache. */
+int mint_mfs_flush_for_power(void) {
+    if (!ready()) return 0;
+    int rc = mintfs_commit(&fs);
+    last_commit_tick = mint_timer_ticks();
+    mint_serial_write(rc ? "[mintfs] final commit before power-off FAILED\n" : "[mintfs] final commit before power-off: clean\n");
     return rc ? to_errno(rc) : 0;
 }
 int mint_mfs_volume(MINT_MFS_VOLUME *out) {

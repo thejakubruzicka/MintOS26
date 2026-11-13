@@ -289,7 +289,19 @@ static void write_slp(uint32_t port, uint8_t slp_typ) {
     outw((uint16_t)port, (uint16_t)(v | 0x2000u));                   /* SLP_EN */
 }
 
+/* Safe shutdown: whatever registered the flush hook (MintFS: commit + disk
+ * cache flush) runs once, with interrupts still enabled, before any power
+ * register is touched. A failed flush is logged but cannot block power-off. */
+static int (*power_flush_hook)(void);
+void mint_power_set_flush_hook(int (*hook)(void)) { power_flush_hook = hook; }
+static void power_flush(void) {
+    if (!power_flush_hook) return;
+    mint_serial_write("[power] saving MintOS HD before power-off\n");
+    if (power_flush_hook() != 0) mint_serial_write("[power] MintOS HD flush reported an error\n");
+}
+
 int mint_power_shutdown(void) {
+    power_flush();
     __asm__ volatile("cli" ::: "memory");
     mint_serial_write("[power] shutdown requested\n");
     if ((power_info.flags & MINT_POWER_HAVE_S5) && power_info.pm1a_cnt &&
@@ -332,6 +344,7 @@ static void reset_via_acpi(void) {
 }
 
 int mint_power_restart(void) {
+    power_flush();
     __asm__ volatile("cli" ::: "memory");
     mint_serial_write("[power] restart requested\n");
     reset_via_acpi();

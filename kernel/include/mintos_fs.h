@@ -45,7 +45,21 @@ typedef struct mint_mfs_volume {
     char status[64];
 } MINT_MFS_VOLUME;
 
-#define MINT_MFS_HOME_NAME "mintos"
+#define MINT_MFS_HOME_NAME "mintos"          /* default home before an account exists */
+
+/* Accounts (26.5.014.0): the Setup Assistant writes the account to this text
+ * file ("key = value" lines, see docs/DATA-SAVING.md). At mount the kernel
+ * reads its `home = "/Users/<account>"` line and, if that folder exists, makes
+ * it the volume's home; MINT_SYS_MFS_SET_HOME changes it at run time. */
+#define MINT_ACCOUNTS_PATH "/Library/Preferences/com.mintos.accounts"
+#define MINT_ACCOUNT_NAME_MAX 31u
+
+/* Pure helpers (host-tested, shared rules with MintDE's accounts.c):
+ * account names are 1-31 bytes of a-z 0-9 _ - . starting with a letter,
+ * and not a reserved name (root, daemon, nobody, guest, shared, system, wheel). */
+int mint_account_name_valid(const char *name);
+/* Finds `home = "/Users/<valid name>"` in an accounts file; 1 on success. */
+int mint_account_home_from_text(const char *text, size_t len, char *home, size_t cap);
 
 #ifndef MINT_MFS_USERSPACE
 /* kernel side */
@@ -64,6 +78,10 @@ int64_t mint_mfs_rename(const char *from, const char *to);
 int64_t mint_mfs_remove(const char *path);
 int64_t mint_mfs_sync(void);
 int mint_mfs_volume(MINT_MFS_VOLUME *out);
+/* Makes "/Users/<account>" (an existing folder) the volume's home. */
+int64_t mint_mfs_set_home(const char *path);
+/* Commit + device flush before power-off/restart (registered as the power flush hook). */
+int mint_mfs_flush_for_power(void);
 void mint_mfs_close_all(uint64_t pid);
 /* Pure helpers (host-tested): GPT for a MintOS disk. */
 uint32_t mint_gpt_crc32(uint32_t crc, const void *data, size_t len);

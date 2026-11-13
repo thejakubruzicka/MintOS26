@@ -77,6 +77,8 @@
 #define MINT_SYS_MFS_SYNC                      0x4D4Au
 #define MINT_SYS_MFS_VOLUME                    0x4D4Bu
 #define MINT_SYS_STORAGE_INIT_MINTOS           0x4D4Cu
+/* Data saving (26.5.014.0, range 0x4D50-0x4D57) */
+#define MINT_SYS_MFS_SET_HOME                  0x4D50u
 
 #define MINT_CLOCK_REALTIME  0
 #define MINT_CLOCK_MONOTONIC 1
