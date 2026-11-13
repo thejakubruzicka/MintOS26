@@ -300,11 +300,17 @@ void mint_arch_enable_input_irqs(int keyboard_enabled, int mouse_enabled) {
 
 /* IRQ stubs save a uniform frame. Acknowledge the originating PIC before
  * returning, including the slave PIC for IRQ12, or input/timer interrupts stop. */
+/* 26.5.014.0: optional work on every PIT tick (the HDA mixer keeps its DMA
+ * ring fed from here so sound continues while ring-3 code is busy). Runs
+ * with interrupts disabled; must be short, bounded and never sleep. */
+void (*volatile mint_timer_irq_hook)(uint64_t interrupted_rip, uint64_t interrupted_cs);
+
 void mint_irq_dispatch(const struct mint_exception_frame *frame) {
     if (!frame) return;
     if (frame->vector == 32u) {
         timer_ticks++;
         outb(PIC1_COMMAND, 0x20u);
+        if (mint_timer_irq_hook) mint_timer_irq_hook(frame->rip, frame->cs);
     } else if (frame->vector == 33u) {
         mint_input_keyboard_irq();
         outb(PIC1_COMMAND, 0x20u);

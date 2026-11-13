@@ -52,6 +52,12 @@ balenaEtcher can write the same `.img` file. Boot the stick with **F12** (one-ti
   - Then click **Connect** in the Network app. The `[e1000]` and `[net]` lines on COM1 report the link and DHCP progress.
   - If it never gets an address, a USB-to-Ethernet adapter is not an alternative yet (no USB network driver).
 - **Clock and HTTPS:** HTTPS certificate checks use the PC's CMOS clock, read as UTC. If Windows on the same machine keeps local time in the CMOS clock, the error is only a few hours, which is harmless for certificates. A clock that is years off makes sites look "not valid yet" or "expired".
+- **Sound (experimental):** the OptiPlex 7040's Intel HD Audio controller with the Realtek ALC3234 codec is detected at boot but left idle (bus mastering off).
+  - Start it in **Settings › Sound › Start Audio Driver** or with Terminal `sound start`. `sound` shows the codec, the output paths it found (line out, speakers, headphones) and underrun counters.
+  - Line out and the internal speaker are the most likely to work. The headphone jack may stay silent, because Dell's headset-mode codec tweaks are not applied.
+  - `sound stop` turns the stream and bus mastering off before freeing memory.
+  - Collect the `[audio]` COM1 lines.
+- Volume keys work on PS/2 keyboards and on USB keyboards that report them as keyboard-page usages. Most multimedia USB keyboards use the Consumer page instead, which is not read yet.
 - Run `power` in Terminal (when input works) to see what the firmware's ACPI tables report, including whether an 8042 controller is advertised.
 - The internal SATA disks are mounted read-only only if they contain FAT16. Nothing is ever written to them.
 - Do not use Disk Utility's Erase on this machine unless you attach a **spare, completely blank** disk for it. MintOS refuses any disk that is not blank, but this has not been validated on real SATA hardware yet.

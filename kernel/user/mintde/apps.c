@@ -352,6 +352,7 @@ static void terminal_run_command(void) {
     if(terminal_equals(cmd,"clear")) { terminal_clear(); return; }
     if(terminal_network_command(cmd)) return;
     if(terminal_mfs_command(cmd)) return;
+    if(personality_terminal_command(cmd, terminal_push)) return;     /* sound, volume, play, beep, notify */
     if(terminal_equals(cmd,"help")) {
         terminal_push("Commands: help, clear, ver, uptime, status, cpu, usb");
         terminal_push("Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] [-s] http(s)://...");
@@ -359,6 +360,7 @@ static void terminal_run_command(void) {
         terminal_push("drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat");
         terminal_push("use sda | ls [name] | cd <dir> | pwd | cat <file>");
         terminal_push("power, shutdown, restart (asks for confirmation)");
+        terminal_push("Sound: sound [start|stop], volume [0-100|mute|unmute], play <sound>, beep [hz] [ms], notify <text>");
         terminal_push("MintOS HD: ls [-l], cd, pwd, cat, open, mkdir, touch, rm [-r], rmdir, mv, cp, echo txt > file, df, sync");
         terminal_push("use hd switches to MintOS HD; use sda/sdb to a read-only FAT16 volume"); return;
     }
@@ -1264,7 +1266,8 @@ static void files_move_to_trash(void) {
     const char *name = mfs_entries[files_selected_entry].name;
     if (!mfs_join(files_work, sizeof(files_work), mfs_path, name) ||
         !mfs_unique(files_work2, sizeof(files_work2), trash, name, 0)) { files_note(mfs_error_text(-MINT_ENAMETOOLONG)); return; }
-    if ((rc = mint_path_rename(files_work, files_work2)) < 0) { files_note(mfs_error_text(rc)); return; }
+    if ((rc = mint_path_rename(files_work, files_work2)) < 0) { files_note(mfs_error_text(rc)); ui_sound(UI_SOUND_ALERT); return; }
+    ui_sound(UI_SOUND_TRASH);
     uint32_t was = (uint32_t)files_selected_entry;
     files_after_change(0);
     if (mfs_entry_count) mfs_select(was < mfs_entry_count ? was : mfs_entry_count - 1u);
@@ -1281,14 +1284,24 @@ static void files_empty_trash(void) {
     static MINT_MFS_DIRENT list[MINT_MFS_LIST_MAX];
     char trash[96]; mfs_trash_path(trash, sizeof(trash));
     files_confirm = 0;
+    uint64_t deleted = 0;
+    int failed = 0;
     for (uint32_t guard = 0; guard < 100000u; ++guard) {
         int64_t n = mint_dir_list(trash, 0, list);
         if (n <= 0) break;
         if (!mfs_join(files_work2, sizeof(files_work2), trash, list[0].name)) break;
         int64_t rc = mfs_delete_tree(files_work2);
-        if (rc < 0) { files_note(mfs_error_text(rc)); break; }
+        if (rc < 0) { files_note(mfs_error_text(rc)); failed = 1; break; }
+        ++deleted;
     }
     if (files_on_mfs()) files_after_change(0);
+    if (deleted) {
+        char body[64]; format_u64(body, sizeof(body), deleted);
+        str_append(body, sizeof(body), deleted == 1u ? " item was deleted permanently." : " items were deleted permanently.");
+        ui_sound(UI_SOUND_EMPTY_TRASH);
+        notify_post(APP_FILES, "Trash emptied", body);
+    }
+    if (failed) ui_sound(UI_SOUND_ALERT);
 }
 static uint32_t mfs_trash_items(void) {
     static MINT_MFS_DIRENT one[MINT_MFS_LIST_MAX];
@@ -1320,6 +1333,24 @@ int files_command(uint32_t command) {
     default: return 0;
     }
     return 1;
+}
+/* Desktop items and Notification Center: show a folder in Files, optionally
+   selecting (and renaming) one item. */
+void files_open_location(const char *dir, const char *select_name, int rename) {
+    mfs_refresh_volume();
+    if (!mfs_ready || !dir || !dir[0]) return;
+    files_started = 1;
+    shell_open_app(APP_FILES);                 /* app_opened() refreshes; navigate afterwards */
+    files_go_mfs(dir);
+    if (select_name && select_name[0]) {
+        int32_t i = mfs_find(select_name);
+        if (i >= 0) { mfs_select((uint32_t)i); if (rename) files_begin_rename(); }
+    }
+    shell_damage_window(APP_FILES);
+}
+void notes_open_document(const char *path) {
+    notes_open_file(path);
+    shell_open_app(APP_NOTES);
 }
 int files_show_trash(void) {
     mfs_refresh_volume();
@@ -2642,15 +2673,20 @@ static int terminal_key(const MINT_DESKTOP_KEY_EVENT *k) {
 
 /* ------------------------------------------------------------ Settings */
 enum { SET_GENERAL, SET_APPEARANCE, SET_WALLPAPER, SET_DISPLAYS, SET_INPUT, SET_STORAGE,
-       SET_NETWORK, SET_PRIVACY, SET_POWER, SET_COUNT };
+       SET_NETWORK, SET_PRIVACY, SET_POWER,
+       SET_SOUND, SET_NOTIFICATIONS,                 /* 26.5.014.0 personality */
+       SET_COUNT };
 static const char *const settings_names[SET_COUNT] = {
-    "General", "Appearance", "Wallpaper", "Displays", "Input", "Storage", "Network", "Privacy", "Power"
+    "General", "Appearance", "Wallpaper", "Displays", "Input", "Storage", "Network", "Privacy", "Power",
+    "Sound", "Notifications"
 };
 static const uint32_t settings_colors[SET_COUNT] = {
-    0x8E8E93u, 0x3A3A3Cu, 0x32ADE6u, 0x007AFFu, 0x8E8E93u, 0x636366u, 0x0A84FFu, 0x5856D6u, 0x34C759u
+    0x8E8E93u, 0x3A3A3Cu, 0x32ADE6u, 0x007AFFu, 0x8E8E93u, 0x636366u, 0x0A84FFu, 0x5856D6u, 0x34C759u,
+    0xFF2D55u, 0xFF3B30u
 };
 static const uint32_t settings_symbols[SET_COUNT] = {
-    SYM_GEAR, SYM_TOGGLES, SYM_DOC, SYM_INFO, SYM_TOGGLES, SYM_DISK, SYM_INFO, SYM_CHECK, SYM_WARNING
+    SYM_GEAR, SYM_TOGGLES, SYM_DOC, SYM_INFO, SYM_TOGGLES, SYM_DISK, SYM_INFO, SYM_CHECK, SYM_WARNING,
+    SYM_BOLT, SYM_INFO
 };
 static gfx_rect settings_item_rect(const mde_layout *l, uint32_t i) {
     return R(l->sidebar.x0 + 10, l->sidebar.y0 + 50 + (int32_t)i * 30, W(l->sidebar) - 20, 28);
@@ -2752,17 +2788,9 @@ static void settings_paint(const mde_layout *l) {
         settings_note(&b, "Auto switches between Light and Dark using the computer's clock (19:00 \xE2\x80\x93 07:00).");
         break;
     }
-    case SET_WALLPAPER: {
-        static const char *const names[3] = {"Mint Waves (Automatic)", "Mint Waves Light", "Mint Waves Dark"};
-        for (int i = 0; i < 3; ++i) {
-            gfx_rect t = R(b.x0 + 8 + i * 200, b.y0 + 8, 180, 110);
-            wallpaper_thumb(t, i == 2, desktop_settings.wallpaper == (uint32_t)i, i == 0);
-            ui_label_center(t.x0 + 90, t.y1 + 22, FONT_CAPTION, names[i], T.text);
-        }
-        b.y0 += 160;
-        settings_note(&b, "Original MintOS artwork. Automatic follows the Light or Dark appearance.");
-        break;
-    }
+    case SET_WALLPAPER: settings_wallpaper_paint(b); break;      /* personality_settings.c */
+    case SET_SOUND: settings_sound_paint(b); break;
+    case SET_NOTIFICATIONS: settings_notifications_paint(b); break;
     case SET_DISPLAYS: {
         MINT_DISPLAY_INFO di = {0}; (void)mint_display_get_info(&di);
         format_u64(a, sizeof(a), di.width); str_append(a, sizeof(a), " \xC3\x97 ");
@@ -2910,10 +2938,11 @@ static int settings_click(const mde_layout *l, int32_t x, int32_t y) {
             desktop_settings.flags ^= MINT_DESKTOP_SETTING_REDUCE_MOTION; (void)shell_apply_settings(); return 1;
         }
     } else if (settings_category == SET_WALLPAPER) {
-        for (int i = 0; i < 3; ++i)
-            if (in(R(b.x0 + 8 + i * 200, b.y0 + 8, 180, 110), x, y)) {
-                desktop_settings.wallpaper = (uint32_t)i; (void)shell_apply_settings(); return 1;
-            }
+        return settings_wallpaper_click(b, x, y);
+    } else if (settings_category == SET_SOUND) {
+        return settings_sound_click(b, x, y);
+    } else if (settings_category == SET_NOTIFICATIONS) {
+        return settings_notifications_click(b, x, y);
     } else if (settings_category == SET_NETWORK) {
         int32_t sy = b.y0 + 5 * 36 + 18;
         if (in(R(b.x1 - 70, sy, 70, 36), x, y)) { network_autoconnect = !network_autoconnect; return 1; }
@@ -3459,9 +3488,12 @@ static void disks_run_format(void) {
             copy_text(disk_result, sizeof(disk_result), "Success: \xE2\x80\x9CMintOS HD\xE2\x80\x9D is ready. Files and Notes now save to it.");
             mfs_refresh_volume();
             notes_loaded = 0;
+            notify_post(APP_DISKS, "MintOS HD is ready", "The disk was erased as MintOS. Files and Notes now save to it.");
         } else if (rc == 0) copy_text(disk_result, sizeof(disk_result), "Success: disk erased and its FAT16 volume validated read-only.");
         else if (rc == -MINT_EBUSY && disk_format_kind == 0) copy_text(disk_result, sizeof(disk_result), "A MintOS disk is already in use. Only one can be mounted at a time.");
         else {
+            ui_sound(UI_SOUND_ALERT);
+            notify_post(APP_DISKS, "Erase failed", "The disk was not changed if the safety checks failed.");
             copy_text(disk_result, sizeof(disk_result), "Erase failed (error ");
             char code[20]; format_u64(code, sizeof(code), (uint64_t)(-rc));
             str_append(disk_result, sizeof(disk_result), code); str_append(disk_result, sizeof(disk_result), "). The disk was not changed if checks failed.");

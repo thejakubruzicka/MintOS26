@@ -1,0 +1,14 @@
+MintOS26 topic/personality host check (macOS, Apple Silicon, tools/macos-host wrapper), 2026-11-13
+
+make check: 808 PASS lines, no FAIL lines; it stops at tools/test_context_switch.py
+(Linux-only: assembles ELF kernel code into a host program; fails on macOS by design, not a regression).
+Remaining check commands after it, run by hand: 480 PASS lines, exit 0.
+
+personality-check:
+PASS: 72/72 HDA checks passed
+PASS: 29/29 mixer checks passed
+PASS: sound checks (0 failures)
+PASS: splash checks (0 failures)
+PASS: 26/26 notification checks passed
+PASS: 14/14 wallpaper checks passed
+PASS: 37/37 personality contracts

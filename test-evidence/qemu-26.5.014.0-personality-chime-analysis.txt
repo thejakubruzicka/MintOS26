@@ -1,0 +1,8 @@
+capture: 48000 Hz, 2 ch, 608027 frames (12.67 s)
+sound starts at frame 21769 (0.454 s into the capture), 146400 frames compared
+correlation with the expected PCM x volume 70: 1.00000
+worst sample error: 0 (of peak 11367)
+dropouts (10 ms windows): 0
+clipped samples: 0
+peak in the 100 ms before the sound: 0
+PASS: captured startup chime matches the generated sound

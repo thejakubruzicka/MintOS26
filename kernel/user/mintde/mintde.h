@@ -4,6 +4,7 @@
  * (widgets.c) and the applications (apps.c). */
 #include <mintos/runtime.h>
 #include "gfx.h"
+#include <mintos/personality.h>   /* 26.5.014.0 sound, boot animation */
 
 #define MINTDE_VERSION "2.3.0"
 #define MINTOS_VERSION "26.5.013.0"
@@ -138,4 +139,5 @@ ICON_DECL(files) ICON_DECL(notes) ICON_DECL(terminal) ICON_DECL(settings) ICON_D
 ICON_DECL(console) ICON_DECL(system_info) ICON_DECL(network) ICON_DECL(disk_utility)
 ICON_DECL(about_mintos) ICON_DECL(mintde) ICON_DECL(launchpad) ICON_DECL(calculator) ICON_DECL(trash) ICON_DECL(web)
 extern const uint8_t mint_icon_mint_leaf_a8[];
+#include "personality.h"   /* 26.5.014.0: sounds, wallpapers, notifications, desktop items */
 #endif

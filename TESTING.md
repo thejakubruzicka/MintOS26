@@ -20,6 +20,29 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
 
+### Personality test (26.5.014.0): sound, boot animation, wallpapers, notifications
+
+`make check` runs `personality-check`:
+- `test-hda`: the HDA core against a register-level fake controller with QEMU and Realtek-like codecs.
+- `test-audio-mixer`: the kernel mixer.
+- `test_sounds.py`, `test_splash.py`, `test-wallpapers`, `test-notify` and `test_personality_contracts.py`.
+
+In QEMU:
+
+1. Add the HDA controller and codec to the usual command:
+   `tools/run_qemu.sh --mintos-disk -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -audiodev coreaudio,id=snd0 -device ich9-intel-hda -device hda-output,audiodev=snd0`
+   (Linux: `-audiodev pa,id=snd0` or `alsa`).
+2. Press 2. The mint-leaf boot animation runs, crossfades into the desktop and plays the startup chime. COM1 shows `[splash]` and `[audio] HDA running: QEMU HDA output`.
+3. **Settings › Sound:** change the alert sound (it previews), the volume and the switches. **Control Center:** drag the Sound slider; Do Not Disturb.
+4. **Settings › Wallpaper:** pick Mint Day (dynamic), Aurora, Leaf Light and the others.
+5. **Notifications:**
+   - Settings › Notifications › Send Test Notification shows a banner at the top right that dismisses itself after 5 s.
+   - Click the date and time in the menu bar to open Notification Center.
+   - Terminal `notify hello` also posts one.
+6. **Desktop items:** after Disk Utility has made a MintOS HD, in Terminal run `cd Desktop`, `mkdir Projects`, `echo hi > Note.txt`. The icons appear on the desktop. Double-click to open them; Return renames through Files.
+7. **⌘⇧3** saves a screenshot on the Desktop, with a sound and a banner. **Volume keys:** HMP `sendkey volumeup`, `volumedown` and `audiomute` show the volume HUD.
+8. **Headless audio capture:** `python3 tools/qemu_personality.py SCRIPT --wav chime.wav` (it uses `-audiodev wav,...,out.frequency=48000`), then `python3 tools/analyze_wav.py chime.wav build/sounds/startup.pcm --channels 2 --volume 70`. Expect a bit-exact match: correlation 1.00000, worst error 0.
+
 ### MintOS disk test (26.5.013.0)
 
 On the host, `make check` runs these MintFS tests:
