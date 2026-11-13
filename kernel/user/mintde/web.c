@@ -28,7 +28,7 @@ static int32_t W(gfx_rect r) { return r.x1 - r.x0; }
 static int32_t H(gfx_rect r) { return r.y1 - r.y0; }
 
 /* Raise after the app-platform frame pool lands (MINT_ASPACE_MAX_USER_FRAMES = 16384). */
-#define WEB_HEAP_BYTES   (8u * 1024u * 1024u)
+#define WEB_HEAP_BYTES   (32u * 1024u * 1024u)   /* 26.5.014.0: frame pool merged */
 #define WEB_CONNS        4u
 #define WEB_REQS         48u
 #define WEB_IMAGES       160u
