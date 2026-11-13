@@ -540,3 +540,13 @@ int main(void){
     puts("PASS: ring-3 syscall validation tests complete");
     return 0;
 }
+
+/* 26.5.014.0 app-platform services reached from syscall.c (process/pipe/
+ * memory calls and the kill check on syscall exit). */
+#include "../kernel/include/process.h"
+int mint_process_current_killed(void) { return 0; }
+MINT_PROCESS *mint_process_current(void) { return 0; }
+int64_t mint_proc_syscall(uint64_t n, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)n; (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    return -MINT_ENOSYS;
+}

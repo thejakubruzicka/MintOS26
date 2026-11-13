@@ -13,7 +13,7 @@ make = (root / 'Makefile').read_text()
 checks = {
     'context-switch assembly saves/restores SysV callee-saved registers': all(x in a for x in ['mint_context_switch:', 'pushq %rbp', 'pushq %rbx', 'pushq %r12', 'pushq %r13', 'pushq %r14', 'pushq %r15', 'popq %r15', 'popq %r14', 'popq %r13', 'popq %r12', 'popq %rbx', 'popq %rbp', 'retq']),
     'task bootstrap fabricates six-register, RFLAGS and return-address frame': all(x in s for x in ['top -= sizeof(uint64_t)', 'top - 8u * sizeof(uint64_t)', 'sp[6] = 0x202u', 'sp[7] = (uint64_t)(uintptr_t)task_bootstrap']),
-    'bounded static task slots and dedicated stacks': 'MINT_TASK_MAX 12u' in h and 'MINT_TASK_STACK_SIZE (16u * 1024u)' in h and 'tasks[MINT_TASK_MAX]' in s,
+    'bounded static task slots and dedicated stacks': 'MINT_TASK_MAX 32u' in h and 'MINT_TASK_STACK_SIZE (16u * 1024u)' in h and 'tasks[MINT_TASK_MAX]' in s,
     'round-robin dispatch rotates its candidate and switches contexts': all(x in s for x in ['next_candidate', 'MINT_TASK_READY', 'mint_context_switch(&scheduler_rsp', 'task->state = MINT_TASK_RUNNING']),
     'sleep blocks a task until the PIT deadline': all(x in s for x in ['MINT_TASK_SLEEPING', 'wake_tick', 'now >= tasks[i].wake_tick', 'mint_task_sleep_ticks']),
     'task return marks a slot dead and returns to scheduler': all(x in s for x in ['t->state = MINT_TASK_DEAD', 'mint_context_switch(&t->rsp, scheduler_rsp)']),

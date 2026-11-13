@@ -38,6 +38,9 @@ struct mint_exception_frame {
 void mint_exception_display(uint64_t vector, uint64_t rip, uint64_t error);
 void mint_irq_dispatch(const struct mint_exception_frame *frame);
 __attribute__((noreturn)) void mint_exception_dispatch(const struct mint_exception_frame *frame);
+/* Returns 1 after handling a resumable user fault (demand paging). */
+uint64_t mint_exception_entry(struct mint_exception_frame *frame);
+extern uint64_t mint_arch_rsp0_shadow;
 /* Restore the scheduler saved kernel context after a contained CPL3 fault. */
 __attribute__((noreturn)) void mint_arch_return_from_user_fault(void);
 

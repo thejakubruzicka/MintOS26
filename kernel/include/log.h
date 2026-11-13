@@ -24,7 +24,8 @@ enum mint_log_component {
     MINT_LOG_COMPONENT_USB = 9,
     MINT_LOG_COMPONENT_NET = 10,
     MINT_LOG_COMPONENT_MINTFS = 11,
-    MINT_LOG_COMPONENT_PREFS = 12
+    MINT_LOG_COMPONENT_PREFS = 12,
+    MINT_LOG_COMPONENT_PROC = 13
 };
 
 typedef struct mint_log_record {

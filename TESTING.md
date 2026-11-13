@@ -20,6 +20,29 @@ PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check
 
 `make run` (or `tools/run_qemu.sh [--headless] [--blank]`) boots the GPT image on a q35 machine with ICH9 AHCI, an e1000 NIC and COM1 written to `build/com1-qemu.log`. All disks use `snapshot=on`, so the build images are never modified. Press **2** at the selector for native MintDE.
 
+### App platform test (26.5.014.0)
+
+Host: `make check` runs `tools/test_app_platform.py` (frame pool, Linux-compat table and translation, pipes/OFDs, FPU clean state) and `tools/test_app_platform_contracts.py` first, through `check-app-platform`. On macOS, run the steps after `tools/test_context_switch.py` one by one (`make -n check`).
+
+QEMU, automated:
+
+```sh
+cc -std=c11 -O2 -o build/mkmintos-disk tools/mkmintos_disk.c kernel/block/block.c kernel/fs/mintos_disk.c kernel/fs/mintfs.c
+rm -f build/qemu-mintos-disk-1g.img && build/mkmintos-disk build/qemu-mintos-disk-1g.img 1024
+python3 tools/qemu_app_platform.py SCRIPT
+```
+
+On Apple Silicon, put `tools/macos-host` on `PATH` for the `cc` step. The QEMU driver uses HMP 45463 and QMP 45473; see the docstring for script commands.
+
+By hand: boot with `--mintos-disk`, press 2, open Terminal and check:
+
+- COM1 shows `[fpu] TWO-PROCESS FPU STATE ISOLATION SELF-TEST PASSED` and `[programs] installed … bundled files`.
+- `hello a "b c"` prints its argv. `hello fail` reports `exited with status 3`.
+- `lua` starts the REPL: try `print(7/2, 2^0.5, 0.1+0.2)`; Ctrl+D quits.
+- `lua /Library/Examples/Lua/primes.lua 200000` runs a script; `echo print(1.5*2) > t.lua` then `lua t.lua` runs your own.
+- `spin 10 &`, then `ps` and `sysinfo`, shows two programs alive at once. `spin` in the foreground, then Ctrl+C, reports `interrupted (Ctrl+C)`.
+- `wc` and `grep -n print` work on `/Library/Examples/Lua/*.lua`.
+
 ### MintOS disk test (26.5.013.0)
 
 On the host, `make check` runs these MintFS tests:

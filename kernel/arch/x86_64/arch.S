@@ -101,9 +101,33 @@ mint_isr_common:
     pushq %r13
     pushq %r14
     pushq %r15
+    /* 26.5.014.0: mint_exception_entry returns only for a fault it fully
+     * handled (a demand-zero page for ring 3); everything else still ends in
+     * mint_exception_dispatch, which never returns. */
+    movq %rsp, %rbx
     movq %rsp, %rdi
     andq $-16, %rsp
-    callq mint_exception_dispatch
+    callq mint_exception_entry
+    testq %rax, %rax
+    jz .Lmint_exception_halt
+    movq %rbx, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdi
+    popq %rsi
+    popq %rbp
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
+    addq $16, %rsp /* vector and error code */
+    iretq
 .Lmint_exception_halt:
     cli
     hlt

@@ -83,6 +83,7 @@ int64_t mint_mfs_set_home(const char *path);
 /* Commit + device flush before power-off/restart (registered as the power flush hook). */
 int mint_mfs_flush_for_power(void);
 void mint_mfs_close_all(uint64_t pid);
+int64_t mint_mfs_fstat(int64_t fd, uint64_t pid, MINT_MFS_STAT *out);   /* 26.5.014.0 */
 /* Pure helpers (host-tested): GPT for a MintOS disk. */
 uint32_t mint_gpt_crc32(uint32_t crc, const void *data, size_t len);
 int mint_gpt_build(uint64_t disk_sectors, const uint8_t disk_guid[16], const uint8_t part_guid[16],

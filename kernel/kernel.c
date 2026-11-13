@@ -25,6 +25,10 @@
 #include "include/desktop_services.h"
 #include "include/ramfs.h"
 #include "include/mintos_fs.h"
+#include "include/fpu.h"
+#include "include/frame_pool.h"
+#include "include/linux_compat.h"
+#include "include/programs.h"
 
 /* Early native kernel core. This code runs only after ExitBootServices and
  * establishes its own 4-level identity page map before allocating the heap. */
@@ -111,13 +115,42 @@ extern const uint8_t mint_user_elf_end[];
 extern const uint8_t mint_desktop_elf_start[];
 extern const uint8_t mint_desktop_elf_end[];
 
+/* 26.5.014.0: user pages and user page tables come from the frame pool
+ * (large physmem chunks + bitmap) instead of one physmem record per page. */
 static uint64_t address_space_claim_page(void *context) {
     (void)context;
-    return mint_physmem_claim_page();
+    return mint_frame_pool_alloc();
 }
 static int address_space_release_page(void *context, uint64_t pa) {
     (void)context;
-    return mint_physmem_release_contiguous(pa, 1);
+    return mint_frame_pool_free(pa);
+}
+static uint64_t frame_pool_claim(void *context, uint64_t pages) {
+    (void)context;
+    return mint_physmem_claim_contiguous_high(pages);
+}
+static int frame_pool_release(void *context, uint64_t base, uint64_t pages) {
+    (void)context;
+    return mint_physmem_release_contiguous(base, pages);
+}
+static uint64_t frame_pool_free_pages(void *context) {
+    (void)context;
+    return mint_physmem_free_pages();
+}
+static void frame_pool_setup(void) {
+    MINT_FRAME_POOL_BACKEND pool = {0, frame_pool_claim, frame_pool_release, frame_pool_free_pages, 0};
+    /* Keep at least 64 MiB (or 1/8 of RAM) for kernel claims made later:
+     * DMA rings, MintFS, network buffers. */
+    uint64_t reserve = mint_physmem_total_pages() / 8u;
+    if (reserve < 16384u) reserve = 16384u;
+    if (mint_frame_pool_init(&pool, reserve)) {
+        /* Grow the first chunk now so boot self-tests see a stable physmem count. */
+        uint64_t warm = mint_frame_pool_alloc();
+        if (warm) (void)mint_frame_pool_free(warm);
+        mint_serial_write("[pool] user page pool online: 4 MiB chunks from physmem, bitmap pages, reserve ");
+        mint_serial_dec64(reserve * 4u / 1024u);
+        mint_serial_write(" MiB\n");
+    }
 }
 static void *address_space_physical_to_pointer(void *context, uint64_t pa) {
     (void)context;
@@ -126,7 +159,7 @@ static void *address_space_physical_to_pointer(void *context, uint64_t pa) {
 }
 static int address_space_page_is_claimed(void *context, uint64_t pa) {
     (void)context;
-    return mint_physmem_is_claimed(pa, 1);
+    return mint_frame_pool_is_allocated(pa);
 }
 static void address_space_load_root(void *context, uint64_t root) {
     (void)context;
@@ -294,7 +327,9 @@ static int address_space_isolation_selftest(void) {
         if (pass) failure = "destroy root A";
         pass = 0;
     }
-    if (mint_physmem_free_pages() != free_before) {
+    MINT_FRAME_POOL_STATS pool_after;
+    mint_frame_pool_get_stats(&pool_after);
+    if (mint_physmem_free_pages() != free_before || pool_after.used_pages != 0) {
         if (pass) failure = "physical-page leak after cleanup";
         pass = 0;
     }
@@ -494,6 +529,31 @@ static void ring3_user_task(void *argument) {
      * process owns live pages while the other task is suspended. */
 }
 
+/* 26.5.014.0: two copies of an SSE/AVX test program fill all XMM (and YMM)
+ * registers with different patterns, yield and spin so they are switched
+ * out by both syscalls and the timer, and verify their registers survived. */
+extern const uint8_t mint_fputest_elf_start[];
+extern const uint8_t mint_fputest_elf_end[];
+static volatile uint32_t fpu_tests_done, fpu_tests_failed;
+static void fpu_selftest_task(void *argument) {
+    uint64_t worker = (uint64_t)(uintptr_t)argument;
+    MINT_PROCESS *process = mint_process_create_current_from_elf(mint_fputest_elf_start,
+                                (size_t)(mint_fputest_elf_end - mint_fputest_elf_start));
+    int ok = process && mint_process_run_current(process) &&
+             mint_process_exit_code(process) == 0;
+    ++fpu_tests_done;
+    if (!ok) ++fpu_tests_failed;
+    mint_serial_write("[fpu] process ");
+    mint_serial_dec64(worker);
+    mint_serial_write(ok ? " kept its XMM/YMM state across yields and preemption\n"
+                         : " FAILED: register state changed or the program faulted\n");
+    if (fpu_tests_done == 2u) {
+        mint_serial_write(fpu_tests_failed ? "[fpu] TWO-PROCESS FPU STATE ISOLATION SELF-TEST FAILED\n"
+                                           : "[fpu] TWO-PROCESS FPU STATE ISOLATION SELF-TEST PASSED preemptions=");
+        if (!fpu_tests_failed) { mint_serial_dec64(mint_task_total_preemptions()); mint_serial_write("\n"); }
+    }
+}
+
 static void native_desktop_task(void *argument) {
     (void)argument;
     while (ring3_tests_completed < MINT_RING3_TEST_WORKERS && ring3_tests_failed == 0)
@@ -590,6 +650,8 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     active_framebuffer = f;
     active_pixels = (volatile uint32_t *)(uintptr_t)f->base;
     mint_arch_init();
+    (void)mint_fpu_init();
+    (void)mint_linux_compat_init();
     (void)mint_pci_enumerate();
     int memory_ok = mint_physmem_init(boot);
     int paging_ok = mint_paging_init(boot);
@@ -636,6 +698,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     /* ACPI tables are only read; nothing is written until a confirmed
        shutdown/restart request. Works without paging via firmware tables. */
     (void)mint_power_init(boot->acpi_rsdp_physical);
+    if (paging_ok) frame_pool_setup();
     int vmalloc_ok = arena_reserved && mint_vmalloc_init();
     int vmalloc_test_ok = vmalloc_ok && mint_vmalloc_selftest();
     mint_serial_write(vmalloc_ok ? "[vmalloc] transactional physical release path ready\n"
@@ -691,6 +754,11 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     if (paging_ok && arena_reserved) mint_mintos_disk_probe();
     mint_power_set_flush_hook(mint_mfs_flush_for_power);     /* safe shutdown: final MintFS commit */
     int64_t fs_pid = mint_task_create("fs", mint_mfs_task, 0);
+    /* 26.5.014.0: platform self-test (two SSE processes) and program install. */
+    (void)mint_task_create("fpu-test-a", fpu_selftest_task, (void *)(uintptr_t)1u);
+    (void)mint_task_create("fpu-test-b", fpu_selftest_task, (void *)(uintptr_t)2u);
+    if (mint_task_create("programs", mint_programs_task, 0) < 0)
+        mint_serial_write("[programs] could not create the install task\n");
     if (fs_pid < 0) mint_serial_write("[mintfs] could not create the commit task; files commit on close only\n");
     if (status_pid < 0 || heartbeat_pid < 0 || abi_pid < 0 || ring3_pid < 0 || ring3_pid_b < 0 || desktop_pid < 0) {
         mint_serial_write("[sched] task creation failed; halted\n");

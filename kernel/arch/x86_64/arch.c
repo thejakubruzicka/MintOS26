@@ -5,6 +5,7 @@
 #include "../../include/address_space.h"
 #include "../../include/process.h"
 #include "../../include/task.h"
+#include "../../include/fpu.h"
 
 #define PIC1_COMMAND 0x20u
 #define PIC1_DATA    0x21u
@@ -110,6 +111,7 @@ static void install_tss(void) {
     uint64_t limit = sizeof(tss) - 1u;
     tss = (struct mint_tss64){0};
     tss.rsp0 = (uintptr_t)(rsp0_stack + sizeof(rsp0_stack));
+    mint_arch_rsp0_shadow = tss.rsp0;
     tss.ist1 = (uintptr_t)(double_fault_stack + sizeof(double_fault_stack));
     tss.ist2 = (uintptr_t)(nmi_stack + sizeof(nmi_stack));
     tss.ist3 = (uintptr_t)(machine_check_stack + sizeof(machine_check_stack));
@@ -257,9 +259,16 @@ uint64_t mint_arch_read_cr2(void) {
     return value;
 }
 
+/* Mirror of TSS.RSP0 for the `syscall` entry, which must switch stacks by
+ * itself (single core: read with interrupts masked by SFMASK). */
+uint64_t mint_arch_rsp0_shadow;
+
 void mint_arch_update_rsp0(uint64_t stack_top) {
     /* RSP0 is used only for privilege transitions into ring 0. */
-    if ((stack_top & 0xFULL) == 0 && stack_top != 0) tss.rsp0 = stack_top;
+    if ((stack_top & 0xFULL) == 0 && stack_top != 0) {
+        tss.rsp0 = stack_top;
+        mint_arch_rsp0_shadow = stack_top;
+    }
 }
 
 uint64_t mint_arch_current_rsp0(void) { return tss.rsp0; }
@@ -305,6 +314,13 @@ void mint_irq_dispatch(const struct mint_exception_frame *frame) {
     if (frame->vector == 32u) {
         timer_ticks++;
         outb(PIC1_COMMAND, 0x20u);
+        /* 26.5.014.0: ring-3 preemption. EOI is already sent, so the next
+         * tick can arrive while another task runs. A process killed while it
+         * was switched out leaves through the common exit path here. */
+        if ((frame->cs & 3u) == 3u) {
+            (void)mint_task_timer_tick_from_user();
+            mint_process_trap_return_check();
+        }
     } else if (frame->vector == 33u) {
         mint_input_keyboard_irq();
         outb(PIC1_COMMAND, 0x20u);
@@ -317,6 +333,29 @@ void mint_irq_dispatch(const struct mint_exception_frame *frame) {
         if (frame->vector >= 40u && frame->vector < 48u) outb(PIC2_COMMAND, 0x20u);
         outb(PIC1_COMMAND, 0x20u);
     }
+}
+
+/* 26.5.014.0: first stop for every CPU exception. A not-present page fault
+ * from ring 3 inside a demand-zero region (mmap, brk, stack) gets a zeroed
+ * page and the instruction is retried; returns 1 then. Anything else goes to
+ * mint_exception_dispatch (terminate the process, or panic for ring 0). */
+uint64_t mint_exception_entry(struct mint_exception_frame *f) {
+    if (f && f->vector == 14u && (f->cs & 3u) == 3u && !(f->error_code & 1u) &&
+        mint_task_current_process() != 0) {
+        MINT_ADDRESS_SPACE *space = (MINT_ADDRESS_SPACE *)mint_address_space_current();
+        uint64_t address = mint_arch_read_cr2();
+        int rc = space ? mint_address_space_demand_fault(space, address, (f->error_code & 2u) != 0,
+                                                         (f->error_code & 16u) != 0) : 0;
+        if (rc == 1) return 1;
+        MINT_ADDRESS_REGION region;
+        if (rc < 0) {
+            mint_serial_write("\n[user-fault] out of memory: the process reached its owned-page limit or the page pool is empty\n");
+        } else if (space && mint_address_space_region_query(space, address & ~0xFFFULL, &region) &&
+                   region.kind == MINT_ASPACE_REGION_GUARD) {
+            mint_serial_write("\n[user-fault] stack overflow: access to the guard region below the stack\n");
+        }
+    }
+    mint_exception_dispatch(f);
 }
 
 static void serial_hex(const char *label, uint64_t v) {
@@ -336,6 +375,13 @@ __attribute__((noreturn)) void mint_exception_dispatch(const struct mint_excepti
         uint64_t fault_address = f->vector == 14u ? mint_arch_read_cr2() : 0;
         mint_serial_write("\n[user-fault] terminating ring-3 process: vector=");
         mint_serial_dec64(f->vector);
+        if (f->vector == 7u) mint_serial_write(" (#NM: FPU unavailable)");
+        else if (f->vector == 16u) mint_serial_write(" (#MF: x87 floating-point error)");
+        else if (f->vector == 19u) {
+            mint_serial_write(" (#XM: SIMD floating-point exception, MXCSR=");
+            mint_serial_hex64(mint_fpu_read_mxcsr());
+            mint_serial_write(")");
+        }
         mint_serial_write(" RIP="); mint_serial_hex64(f->rip);
         mint_serial_write(" ERROR="); mint_serial_hex64(f->error_code);
         if (f->vector == 14u) { mint_serial_write(" CR2="); mint_serial_hex64(fault_address); }

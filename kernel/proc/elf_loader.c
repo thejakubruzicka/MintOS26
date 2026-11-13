@@ -7,6 +7,7 @@
 #define ELFDATA2LSB 1u
 #define EV_CURRENT 1u
 #define ET_EXEC 2u
+#define ET_DYN 3u
 #define EM_X86_64 62u
 #define PT_LOAD 1u
 #define PT_DYNAMIC 2u
@@ -101,45 +102,71 @@ static int fail_and_destroy(MINT_ADDRESS_SPACE *space) {
     return 0;
 }
 
+static int memory_reader(void *context, uint64_t offset, void *out, size_t length) {
+    const uint8_t *blob = (const uint8_t *)context;
+    bytes_copy(out, blob + (size_t)offset, length);
+    return 1;
+}
+
 int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
                          size_t image_size, size_t stack_bytes,
                          MINT_USER_IMAGE *out) {
+    if (!image) {
+        if (out) bytes_zero(out, sizeof(*out));
+        return fail_and_destroy(space);
+    }
+    return mint_elf64_load_user_reader(space, memory_reader, (void *)image, image_size, stack_bytes, out);
+}
+
+int mint_elf64_load_user_reader(MINT_ADDRESS_SPACE *space, mint_elf_reader_t reader, void *context,
+                                size_t image_size, size_t stack_bytes, MINT_USER_IMAGE *out) {
     if (out) bytes_zero(out, sizeof(*out));
-    if (!space || !space->initialized || space->active || !image || !out ||
+    if (!space || !space->initialized || space->active || !reader || !out ||
         image_size < sizeof(MINT_ELF64_EHDR) ||
         stack_bytes < 2u * MINT_PAGING_PAGE_SIZE ||
-        stack_bytes > 64u * 1024u || (stack_bytes & PAGE_MASK) != 0)
+        stack_bytes > MINT_USER_MAX_STACK_BYTES || (stack_bytes & PAGE_MASK) != 0)
         return fail_and_destroy(space);
 
-    const uint8_t *blob = (const uint8_t *)image;
     MINT_ELF64_EHDR eh;
-    bytes_copy(&eh, blob, sizeof(eh));
+    if (!reader(context, 0, &eh, sizeof(eh))) return fail_and_destroy(space);
+    /* ET_EXEC: linked at its final address. ET_DYN without PT_INTERP: a
+     * static-PIE image (musl rcrt1) that relocates itself; it is placed at
+     * MINT_USER_PIE_BASE and the bias is reported through the aux vector. */
     if (eh.ident[0] != 0x7Fu || eh.ident[1] != 'E' || eh.ident[2] != 'L' ||
         eh.ident[3] != 'F' || eh.ident[4] != ELFCLASS64 || eh.ident[5] != ELFDATA2LSB ||
-        eh.ident[6] != EV_CURRENT || eh.type != ET_EXEC || eh.machine != EM_X86_64 ||
+        eh.ident[6] != EV_CURRENT || (eh.type != ET_EXEC && eh.type != ET_DYN) || eh.machine != EM_X86_64 ||
         eh.version != EV_CURRENT || eh.ehsize != sizeof(MINT_ELF64_EHDR) ||
         eh.phentsize != sizeof(MINT_ELF64_PHDR) || eh.phnum == 0 ||
         eh.phnum > MINT_ELF64_MAX_SEGMENTS || eh.phoff > image_size ||
         (uint64_t)eh.phnum * eh.phentsize > image_size - eh.phoff)
         return fail_and_destroy(space);
+    const uint64_t bias = eh.type == ET_DYN ? MINT_USER_PIE_BASE : 0;
 
+    MINT_ELF64_PHDR phdrs[MINT_ELF64_MAX_SEGMENTS];
+    if (!reader(context, eh.phoff, phdrs, (size_t)eh.phnum * sizeof(MINT_ELF64_PHDR)))
+        return fail_and_destroy(space);
     MINT_SEGMENT_PLAN plans[MINT_ELF64_MAX_SEGMENTS];
     bytes_zero(plans, sizeof(plans));
     uint32_t count = 0;
     uint64_t total_pages = 0;
-    uint64_t image_base = UINT64_MAX, image_end = 0;
+    uint64_t image_base = UINT64_MAX, image_end = 0, phdr_va = 0;
     int entry_is_executable = 0;
+    uint64_t limit = space->frame_limit ? space->frame_limit : MINT_ASPACE_MAX_USER_FRAMES;
 
     for (uint32_t i = 0; i < eh.phnum; ++i) {
-        MINT_ELF64_PHDR ph;
-        const uint64_t off = eh.phoff + (uint64_t)i * eh.phentsize;
-        bytes_copy(&ph, blob + (size_t)off, sizeof(ph));
-        if (ph.type == PT_INTERP || ph.type == PT_DYNAMIC) return fail_and_destroy(space);
+        MINT_ELF64_PHDR ph = phdrs[i];
+        if (ph.type == PT_INTERP) return fail_and_destroy(space);
+        if (ph.type == PT_DYNAMIC) {
+            if (eh.type != ET_DYN) return fail_and_destroy(space);
+            continue;
+        }
         if (ph.type == PT_GNU_STACK) {
             if (ph.flags & PF_X) return fail_and_destroy(space);
             continue;
         }
         if (ph.type != PT_LOAD) continue;
+        if (ph.vaddr > UINT64_MAX - bias) return fail_and_destroy(space);
+        ph.vaddr += bias;
         if (count >= MINT_ELF64_MAX_SEGMENTS || ph.memsz == 0 || ph.filesz > ph.memsz ||
             ph.offset > image_size || ph.filesz > image_size - ph.offset ||
             ph.vaddr > UINT64_MAX - ph.memsz || !pow2_or_small(ph.align) ||
@@ -159,9 +186,11 @@ int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
             map_end <= map_base || plan_overlaps(plans, count, map_base, map_end))
             return fail_and_destroy(space);
         uint64_t pages = (map_end - map_base) / MINT_PAGING_PAGE_SIZE;
-        if (pages > MINT_ASPACE_MAX_USER_FRAMES || total_pages > MINT_ASPACE_MAX_USER_FRAMES - pages)
+        if (pages > limit || total_pages > limit - pages)
             return fail_and_destroy(space);
         total_pages += pages;
+        if (ph.offset <= eh.phoff && eh.phoff - ph.offset < ph.filesz)
+            phdr_va = ph.vaddr + (eh.phoff - ph.offset);
 
         uint32_t page_flags = 0;
         if (ph.flags & PF_W) page_flags |= MINT_PAGE_MAP_WRITE;
@@ -172,7 +201,7 @@ int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
         plans[count].page_flags = page_flags;
         plans[count].region_kind = (ph.flags & PF_X) ? MINT_ASPACE_REGION_IMAGE_TEXT :
                                                        MINT_ASPACE_REGION_IMAGE_DATA;
-        if ((ph.flags & PF_X) && eh.entry >= ph.vaddr && eh.entry < mem_end)
+        if ((ph.flags & PF_X) && eh.entry + bias >= ph.vaddr && eh.entry + bias < mem_end)
             entry_is_executable = 1;
         if (map_base < image_base) image_base = map_base;
         if (map_end > image_end) image_end = map_end;
@@ -180,13 +209,14 @@ int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
     }
     if (!count || !entry_is_executable) return fail_and_destroy(space);
 
+    /* The stack is a demand-zero region below the top of the user window,
+     * with an unmapped guard region underneath it. */
     uint64_t stack_top = MINT_ASPACE_USER_END - MINT_PAGING_PAGE_SIZE;
     uint64_t stack_base = stack_top - stack_bytes;
-    if (stack_base <= MINT_ASPACE_USER_BASE || stack_base - MINT_PAGING_PAGE_SIZE < MINT_ASPACE_USER_BASE ||
-        plan_overlaps(plans, count, stack_base - MINT_PAGING_PAGE_SIZE, stack_top))
+    uint64_t guard_base = stack_base - MINT_USER_STACK_GUARD_BYTES;
+    if (guard_base <= MINT_ASPACE_USER_BASE ||
+        plan_overlaps(plans, count, guard_base, stack_top))
         return fail_and_destroy(space);
-    total_pages += stack_bytes / MINT_PAGING_PAGE_SIZE;
-    if (total_pages > MINT_ASPACE_MAX_USER_FRAMES) return fail_and_destroy(space);
 
     for (uint32_t i = 0; i < count; ++i) {
         if (!mint_address_space_region_reserve(space, plans[i].map_base,
@@ -197,19 +227,31 @@ int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
     }
     if (!mint_address_space_region_reserve(space, stack_base, stack_bytes,
             MINT_PAGE_MAP_WRITE, MINT_ASPACE_REGION_STACK) ||
-        !map_region_pages(space, stack_base, stack_top, MINT_PAGE_MAP_WRITE))
+        !mint_address_space_region_reserve(space, guard_base, MINT_USER_STACK_GUARD_BYTES,
+            MINT_ASPACE_REGION_NOACCESS, MINT_ASPACE_REGION_GUARD))
+        return fail_and_destroy(space);
+    /* The top stack page is mapped now so argv/envp can be written before the
+     * space is ever active; deeper pages arrive on first touch. */
+    if (!map_region_pages(space, stack_top - MINT_PAGING_PAGE_SIZE, stack_top, MINT_PAGE_MAP_WRITE))
         return fail_and_destroy(space);
 
     /* The trusted loader initializes mapped pages through the physical backing,
        so it can populate RX text without temporarily making it writable. */
+    static uint8_t bounce[4096];
     for (uint32_t i = 0; i < count; ++i) {
         const MINT_ELF64_PHDR *ph = &plans[i].ph;
-        if (ph->filesz && !mint_address_space_initialize_mapped_bytes(space, ph->vaddr,
-                blob + (size_t)ph->offset, (size_t)ph->filesz))
-            return fail_and_destroy(space);
+        uint64_t done = 0;
+        while (done < ph->filesz) {
+            uint64_t chunk = ph->filesz - done;
+            if (chunk > sizeof(bounce)) chunk = sizeof(bounce);
+            if (!reader(context, ph->offset + done, bounce, (size_t)chunk) ||
+                !mint_address_space_initialize_mapped_bytes(space, ph->vaddr + done, bounce, (size_t)chunk))
+                return fail_and_destroy(space);
+            done += chunk;
+        }
     }
 
-    out->entry = eh.entry;
+    out->entry = eh.entry + bias;
     out->image_base = image_base;
     out->image_end = image_end;
     out->stack_base = stack_base;
@@ -217,5 +259,8 @@ int mint_elf64_load_user(MINT_ADDRESS_SPACE *space, const void *image,
     out->stack_size = stack_bytes;
     out->segment_count = count;
     out->loaded = 1u;
+    out->load_bias = bias;
+    out->phdr = phdr_va;
+    out->phnum = eh.phnum;
     return 1;
 }

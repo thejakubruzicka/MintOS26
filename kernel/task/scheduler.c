@@ -4,6 +4,7 @@
 #include "../include/serial.h"
 #include "../include/address_space.h"
 #include "../include/process.h"
+#include "../include/fpu.h"
 
 #define MINT_TASK_NAME_LEN 16u
 #define MINT_EINVAL 22
@@ -11,6 +12,13 @@
 #define MINT_ENOMEM 12
 
 typedef struct mint_task {
+    /* 26.5.014.0: user FPU/SSE/AVX registers and FS base live here while the
+     * task is switched out (eager save/restore; see fpu.h). */
+    MINT_FPU_STATE fpu;
+    uint64_t fs_base;
+    uint64_t user_ticks;
+    uint32_t slice_ticks;
+    uint8_t fpu_user;
     uint64_t rsp;
     mint_task_entry_t entry;
     void *argument;
@@ -27,7 +35,7 @@ typedef struct mint_task {
     uint8_t stack[MINT_TASK_STACK_SIZE] __attribute__((aligned(16)));
 } mint_task_t;
 
-static mint_task_t tasks[MINT_TASK_MAX] __attribute__((aligned(16)));
+static mint_task_t tasks[MINT_TASK_MAX] __attribute__((aligned(64)));
 static uint32_t task_count;
 static int32_t current_task = -1;
 static uint32_t next_candidate;
@@ -35,6 +43,16 @@ static uint64_t scheduler_rsp;
 static uint64_t next_pid = 1;
 static uint64_t total_created;
 static uint64_t total_exited;
+static uint64_t total_preemptions;
+#define MINT_MSR_FS_BASE 0xC0000100u
+/* Ring-3 time slice: a user task that has run for this many PIT ticks without
+ * entering the kernel is preempted when another task is ready. */
+#define MINT_USER_SLICE_TICKS 2u
+
+static void write_fs_base(uint64_t value) {
+    __asm__ volatile("wrmsr" :: "c"(MINT_MSR_FS_BASE), "a"((uint32_t)value),
+                     "d"((uint32_t)(value >> 32)) : "memory");
+}
 
 extern void mint_context_switch(uint64_t *old_rsp, uint64_t new_rsp);
 
@@ -66,8 +84,13 @@ void mint_task_init(void) {
         tasks[i].state = MINT_TASK_UNUSED;
         tasks[i].logged_user_root = 0;
         tasks[i].logged_user_yield = 0;
+        tasks[i].fs_base = 0;
+        tasks[i].user_ticks = 0;
+        tasks[i].slice_ticks = 0;
+        tasks[i].fpu_user = 0;
         tasks[i].name[0] = 0;
     }
+    total_preemptions = 0;
     mint_serial_write("[sched] cooperative round-robin scheduler initialized\n");
 }
 
@@ -115,6 +138,10 @@ int64_t mint_task_create(const char *name, mint_task_entry_t entry, void *argume
     t->state = MINT_TASK_READY;
     t->logged_user_root = 0;
     t->logged_user_yield = 0;
+    t->fs_base = 0;
+    t->user_ticks = 0;
+    t->slice_ticks = 0;
+    t->fpu_user = 0;
     total_created++;
     uint32_t n = bounded_strlen(name, MINT_TASK_NAME_LEN - 1u);
     for (uint32_t j = 0; j < n; ++j) t->name[j] = name[j];
@@ -212,6 +239,80 @@ int mint_task_set_privilege_stack_top(uint64_t stack_top) {
     return 1;
 }
 
+/* Called by the process manager immediately before a task first enters
+ * ring 3: the task gets a clean x87/SSE/AVX state and FS base 0, and from now
+ * on the scheduler saves/restores them whenever the task switches. */
+void mint_task_user_state_begin(void) {
+    if (current_task < 0 || (uint32_t)current_task >= task_count) return;
+    mint_task_t *t = &tasks[(uint32_t)current_task];
+    mint_fpu_state_make_clean(&t->fpu);
+    t->fs_base = 0;
+    t->slice_ticks = 0;
+    t->fpu_user = mint_fpu_ready() ? 1u : 0u;
+    if (t->fpu_user) mint_fpu_restore(&t->fpu);
+    write_fs_base(0);
+}
+
+void mint_task_user_state_end(void) {
+    if (current_task < 0 || (uint32_t)current_task >= task_count) return;
+    mint_task_t *t = &tasks[(uint32_t)current_task];
+    t->fpu_user = 0;
+    t->fs_base = 0;
+    write_fs_base(0);
+}
+
+int mint_task_set_fs_base(uint64_t value) {
+    if (current_task < 0 || (uint32_t)current_task >= task_count) return 0;
+    tasks[(uint32_t)current_task].fs_base = value;
+    write_fs_base(value);
+    return 1;
+}
+
+uint64_t mint_task_total_preemptions(void) { return total_preemptions; }
+
+/* Make a sleeping task runnable now (used by kill so a sleeping program
+ * notices the request immediately). */
+void mint_task_wake(uint64_t pid) {
+    for (uint32_t i = 0; i < task_count; ++i)
+        if (tasks[i].pid == pid && tasks[i].state == MINT_TASK_SLEEPING) tasks[i].wake_tick = 0;
+}
+
+uint64_t mint_task_user_ticks(uint64_t pid) {
+    for (uint32_t i = 0; i < task_count; ++i)
+        if (tasks[i].pid == pid && tasks[i].state != MINT_TASK_UNUSED) return tasks[i].user_ticks;
+    return 0;
+}
+
+static int another_task_ready(uint32_t self) {
+    uint64_t now = mint_timer_ticks();
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (i == self) continue;
+        if (tasks[i].state == MINT_TASK_READY) return 1;
+        if (tasks[i].state == MINT_TASK_SLEEPING && now >= tasks[i].wake_tick) return 1;
+    }
+    return 0;
+}
+
+/* PIT IRQ0 arrived while ring-3 code was running. The kernel itself stays
+ * non-preemptive: this is reached only when the interrupted context was CPL3,
+ * so no kernel data structure can be half-updated. The IRQ frame lives on
+ * this task's private RSP0 stack, so switching away here is the same as a
+ * yielding syscall. Returns 1 if the task was switched out and resumed. */
+int mint_task_timer_tick_from_user(void) {
+    if (current_task < 0 || (uint32_t)current_task >= task_count) return 0;
+    uint32_t self = (uint32_t)current_task;
+    mint_task_t *t = &tasks[self];
+    if (!t->process) return 0;
+    ++t->user_ticks;
+    if (++t->slice_ticks < MINT_USER_SLICE_TICKS) return 0;
+    t->slice_ticks = 0;
+    if (!another_task_ready(self)) return 0;
+    ++total_preemptions;
+    if (t->state == MINT_TASK_RUNNING) t->state = MINT_TASK_READY;
+    mint_context_switch(&t->rsp, scheduler_rsp);
+    return 1;
+}
+
 void mint_task_yield(void) {
     if (current_task < 0 || (uint32_t)current_task >= task_count) return;
     mint_task_t *t = &tasks[(uint32_t)current_task];
@@ -289,6 +390,13 @@ static void activate_selected_task(mint_task_t *task) {
     mint_arch_set_user_transition(&task->user_transition);
     /* TSS.RSP0 must agree with the selected task before any CPL3 return. */
     mint_arch_update_rsp0(task->privilege_stack_top);
+    /* User register state that the kernel never touches: FPU/SSE/AVX and the
+     * FS base (musl's thread pointer). */
+    if (task->fpu_user) {
+        mint_fpu_restore(&task->fpu);
+        write_fs_base(task->fs_base);
+    }
+    task->slice_ticks = 0;
 }
 
 __attribute__((noreturn)) void mint_scheduler_run(void) {
@@ -326,8 +434,11 @@ __attribute__((noreturn)) void mint_scheduler_run(void) {
         task->switches++;
         activate_selected_task(task);
         mint_context_switch(&scheduler_rsp, task->rsp);
-        /* Reached whenever the selected task yields, sleeps, or exits. The
-         * scheduler root and transition pointer are restored at loop top. */
+        /* Reached whenever the selected task yields, sleeps, exits or is
+         * preempted. Its FPU registers are still live: save them before any
+         * other user task can run. */
+        if (task->fpu_user) mint_fpu_save(&task->fpu);
+        /* The scheduler root and transition pointer are restored at loop top. */
         if (task->state == MINT_TASK_RUNNING) task->state = MINT_TASK_READY;
     }
 }

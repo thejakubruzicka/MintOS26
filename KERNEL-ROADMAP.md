@@ -10,6 +10,14 @@
 
 - **26.5.009.0 additions:** GOP modes up to 4096x2400 with padded strides (per-mode backbuffers from high memory), write-combined framebuffer via PAT, PS/2 9-bit delta fix and acceleration, ACPI S5 shutdown and FADT/0xCF9/8042 restart, Intel RAID-mode AHCI acceptance. Validated live on QEMU q35/OVMF; physical hardware and VirtualBox still pending.
 
+- **26.5.014.0 app platform (Phase B):**
+  - Per-task x87/SSE/AVX state (XSAVE/FXSAVE, eager switching) and timer preemption of ring-3 code; the kernel stays non-preemptive.
+  - A bitmap user-page pool over 4 MiB physmem chunks, PTE-tracked page ownership, and demand-zero `mmap`/`brk` and 8 MiB guarded stacks.
+  - 64 MiB default per-process limit; 32 tasks and 24 process slots.
+  - Processes spawned from MintOS HD with argv/envp/auxv, wait/kill/zombies, pipes and POSIX-style descriptors.
+  - A Linux x86-64 syscall-compatibility *subset* behind the `syscall` instruction.
+  - musl 1.2.5 SDK; Lua 5.4.9 and command-line tools installed to `/System/Programs` and run from Terminal.
+
 - **26.5.013.0 additions:** MintFS (copy-on-write, checksummed, crash-safe) on GPT MintOS disks; block-layer write grants; 4 KiB AHCI transfers; 13 file syscalls with per-process handles; an `fs` commit task.
 
 - **26.5.012.0 additions:** user-space TLS 1.3 client with X.509 validation against the Mozilla roots, and its crypto library (SHA-2, HKDF, ChaCha20-Poly1305, AES-GCM, X25519, RSA/ECDSA verification); RDSEED/RDRAND-based randomness; 64 KiB default user stacks.
@@ -29,7 +37,7 @@
 
 1. **MintDE 1.0.3 stabilization:** validate cursor stability, menu dismissal, alpha blend appearance, resize hit targets, Launchpad and multiple-volume Files behavior in VirtualBox at several screen resolutions.
 2. **File I/O follow-ups:** persist Settings on MintOS HD, boot from a MintOS disk (installer), POSIX file calls with the C library (Phase B), and validate MintFS on VirtualBox and real SATA disks.
-3. **Console and process services:** improve terminal output/keyboard editing, blocking/wakeup, child process cleanup and handle/resource accounting.
+3. **Console and process services:** wait queues instead of 1-tick polling, `posix_spawn`/exec for programs, signal-handler delivery, threads (`clone`) and futexes, and GUI apps as separate processes (`docs/WINDOW-SERVER.md`). Done in 26.5.014.0: spawn, pipes, wait/kill, resource accounting.
 4. **Resizable windows and UI runtime:** formalize resize constraints, content re-layout, focus and multi-window state; avoid adding decoration without hit-test parity.
 5. **E1000 validation:** use the new `net status`, `net start`, `net test`, `net status` workflow in a disposable VM, preserve COM1 stage/register snapshots, and fix the observed TX/RX completion failure before adding packet-buffer queues or TCP/IP.
 6. **More VirtualBox drivers:** proceed only after repeated DMA reliability; likely next targets are 16550 serial RX, ACPI table diagnostics, PS/2 edge cases, and USB UHCI/OHCI/EHCI discovery.
