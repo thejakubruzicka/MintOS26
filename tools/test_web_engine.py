@@ -297,7 +297,9 @@ def contracts():
             "This connection is not private" in web and "proceed" not in web.lower().replace("proceeding", ""),
         "every network size is bounded": all(k in web for k in ["DOC_MAX", "CSS_MAX", "IMG_MAX", "IMG_PIXELS_MAX", "WEB_HEAP_BYTES"]),
         "downloads are written only below ~/Downloads with sanitised, unique names":
-            'DOWNLOAD_DIR "/"' in web and "whttp_disposition" in web and "mint_path_stat(d->path, &st)" in web,
+            'DOWNLOAD_DIR); str_append(d->path, sizeof(d->path), "/")' in web and "whttp_disposition" in web and "mint_path_stat(d->path, &st)" in web,
+        "web files follow the account's home folder, not a fixed /Users/mintos":
+            "web_path(WP_DOWNLOADS)" in web and "v.home" in web and '"/Users/mintos/' not in web,
         "cookies and favorites persist on MintOS HD only when it is present":
             "home_available()" in web and "COOKIE_FILE" in web and "BOOKMARK_FILE" in web,
         "layout recursion is bounded (64 KiB ring-3 stack)": "MAX_DEPTH" in lay and "L->depth >= MAX_DEPTH" in lay,

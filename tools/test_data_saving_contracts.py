@@ -106,7 +106,9 @@ checks = {
         "setup_begin(account.present)" in setup,
     # --- Setup Assistant
     "MintDE starts with the saved preferences and shows the Setup Assistant on first boot":
-        before(desktop, "userdata_start();", "theme_apply(&desktop_settings, night_mode);\n    render_wallpaper();\n    app_init();") and
+        before(desktop, "userdata_start();", "theme_apply(&desktop_settings, night_mode);") and
+        before(desktop, "userdata_start();", "personality_init();") and          # saved sound/wallpaper prefs
+        before(desktop, "personality_init();", "render_wallpaper();\n    app_init();") and
         "setup_boot_check();" in desktop and "if (!account.present) setup_begin(0);" in setup,
     "the Setup Assistant owns the screen and the input while it runs":
         "if (setup_active()) { setup_paint(d); return; }" in desktop and "setup_click(pointer_x, pointer_y)" in desktop and

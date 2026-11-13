@@ -196,9 +196,25 @@ static void load_notes_preview(void) {
     notes_line_count = 0;
     MINT_MFS_VOLUME v;
     if (mint_fs_get_volume(&v) != 0 || v.state != MINT_MFS_VOLUME_READY) return;
-    static char path[160], text[1024];
-    copy_text(path, sizeof(path), v.home);
-    str_append(path, sizeof(path), "/Documents/Notes.txt");
+    /* The most recently edited note in ~/Documents/Notes (data saving's Notes store). */
+    static char dir[160], path[160 + MINT_MFS_NAME_MAX + 2], text[1024];
+    static MINT_MFS_DIRENT list[MINT_MFS_LIST_MAX];
+    copy_text(dir, sizeof(dir), v.home);
+    str_append(dir, sizeof(dir), "/Documents/Notes");
+    int64_t best_time = -1;
+    path[0] = '\0';
+    for (uint32_t start = 0; start < 4096u;) {
+        int64_t got = mint_dir_list(dir, start, list);
+        if (got <= 0) break;
+        for (int64_t k = 0; k < got; ++k)
+            if (list[k].type == MINT_MFS_FILE && list[k].name[0] != '.' && list[k].mtime > best_time) {
+                best_time = list[k].mtime;
+                copy_text(path, sizeof(path), dir); str_append(path, sizeof(path), "/"); str_append(path, sizeof(path), list[k].name);
+            }
+        start += (uint32_t)got;
+        if (got < (int64_t)MINT_MFS_LIST_MAX) break;
+    }
+    if (!path[0]) return;
     int64_t n = mint_file_load(path, text, sizeof(text) - 1u);
     if (n <= 0) return;
     text[n] = '\0';

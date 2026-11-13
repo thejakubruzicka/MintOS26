@@ -39,11 +39,14 @@ static int32_t H(gfx_rect r) { return r.y1 - r.y0; }
 #define CSS_MAX          (1536u * 1024u)
 #define IMG_MAX          (3u * 1024u * 1024u)
 #define IMG_PIXELS_MAX   (1600u * 1200u)
-#define HOME_DIR         "/Users/mintos"
-#define WEB_DIR          "/Users/mintos/Library/Web"
-#define COOKIE_FILE      "/Users/mintos/Library/Web/Cookies"
-#define BOOKMARK_FILE    "/Users/mintos/Library/Web/Bookmarks"
-#define DOWNLOAD_DIR     "/Users/mintos/Downloads"
+/* Paths follow the account's home folder (26.5.014.0 data saving: /Users/<account>). */
+enum { WP_HOME = 0, WP_LIBRARY, WP_WEB, WP_COOKIES, WP_BOOKMARKS, WP_DOWNLOADS, WP_COUNT_ };
+static const char *web_path(uint32_t which);
+#define HOME_DIR         web_path(WP_HOME)
+#define WEB_DIR          web_path(WP_WEB)
+#define COOKIE_FILE      web_path(WP_COOKIES)
+#define BOOKMARK_FILE    web_path(WP_BOOKMARKS)
+#define DOWNLOAD_DIR     web_path(WP_DOWNLOADS)
 
 static uint8_t heap_mem[WEB_HEAP_BYTES] __attribute__((aligned(16)));
 static int heap_ready;
@@ -163,12 +166,22 @@ static void show_message(const char *title, const char *heading, const char *det
 static void layout_page(int32_t width);
 
 /* ------------------------------------------------------------------ files on MintOS HD */
+static const char *web_path(uint32_t which) {
+    static const char *const suffix[WP_COUNT_] = {"", "/Library", "/Library/Web", "/Library/Web/Cookies", "/Library/Web/Bookmarks", "/Downloads"};
+    static char paths[WP_COUNT_][160];
+    MINT_MFS_VOLUME v;
+    const char *home = mint_fs_get_volume(&v) == 0 && v.state == MINT_MFS_VOLUME_READY && v.home[0] ? v.home : "/Users/" MINT_MFS_HOME_NAME;
+    if (which >= WP_COUNT_) which = WP_HOME;
+    copy_text(paths[which], sizeof(paths[which]), home);
+    str_append(paths[which], sizeof(paths[which]), suffix[which]);
+    return paths[which];
+}
 static int home_available(void) {
     MINT_MFS_STAT st;
     return mint_path_stat(HOME_DIR, &st) == 0;
 }
 static void ensure_web_dir(void) {
-    (void)mint_dir_create(HOME_DIR "/Library");
+    (void)mint_dir_create(web_path(WP_LIBRARY));
     (void)mint_dir_create(WEB_DIR);
 }
 static void save_cookies(void) {
@@ -437,7 +450,7 @@ static int dl_begin(int ri, const char *name_hint) {
     size_t bl = text_length(base);
     for (size_t k = bl; k > 1; --k) if (base[k - 1] == '.') { if (bl - (k - 1) < sizeof(ext)) { copy_text(ext, sizeof(ext), base + k - 1); base[k - 1] = '\0'; } break; }
     for (int n = 1; n < 100; ++n) {
-        copy_text(d->path, sizeof(d->path), DOWNLOAD_DIR "/");
+        copy_text(d->path, sizeof(d->path), DOWNLOAD_DIR); str_append(d->path, sizeof(d->path), "/");
         str_append(d->path, sizeof(d->path), base);
         if (n > 1) { char num[8]; format_u64(num, sizeof(num), (uint64_t)n); str_append(d->path, sizeof(d->path), " "); str_append(d->path, sizeof(d->path), num); }
         str_append(d->path, sizeof(d->path), ext);
@@ -471,7 +484,10 @@ static void dl_finish(int ri, int ok, const char *why) {
     }
     if (d->fd >= 0) { (void)mint_file_close(d->fd); d->fd = -1; }
     (void)mint_fs_flush();
-    if (ok && !r->resp.truncated) { d->state = DL_DONE; d->total = d->got; flash_status("Downloaded ", d->name); }
+    if (ok && !r->resp.truncated) {
+        d->state = DL_DONE; d->total = d->got; flash_status("Downloaded ", d->name);
+        notify_post(APP_WEB, "Download finished", d->name);          /* banner + Notification Center */
+    }
     else {
         d->state = DL_FAILED;
         copy_text(d->error, sizeof(d->error), why ? why : d->error[0] ? d->error : "the connection was interrupted");

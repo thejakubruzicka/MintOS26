@@ -27,9 +27,18 @@ const uint32_t personality_pref_key_count = sizeof(personality_pref_keys) / size
 static uint32_t applied_volume = 0xFFFFu, applied_muted = 0xFFFFu, applied_wallpaper = 0xFFFFu;
 static uint32_t wallpaper_minute = 0xFFFFu;
 
+/* 26.5.014.0 merge: personality settings live in the data-saving prefs store
+ * (~/Library/Preferences/com.mintos.<domain>.prefs). A saved volume wins over
+ * the kernel's default after a reboot. */
+static int saved_volume;
 void personality_init(void) {
     personality_prefs_defaults(&personality_prefs);
     if (desktop_settings.wallpaper <= WP_MINT_WAVES_DARK) personality_prefs.wallpaper = desktop_settings.wallpaper;
+    for (uint32_t i = 0; i < personality_pref_key_count; ++i) {
+        int64_t v = prefs_get_int(personality_pref_keys[i].key, -1);
+        if (v >= 0 && (uint64_t)v <= personality_pref_keys[i].max) *personality_pref_keys[i].field = (uint32_t)v;
+    }
+    saved_volume = prefs_get_int("sound.volume", -1) >= 0;
     applied_wallpaper = personality_prefs.wallpaper;
 }
 
@@ -64,6 +73,8 @@ void personality_prefs_apply(void) {
         (void)shell_apply_settings();        /* re-renders the wallpaper and repaints */
     }
     ++personality_prefs_generation;
+    for (uint32_t i = 0; i < personality_pref_key_count; ++i)      /* debounced save by the prefs store */
+        (void)prefs_set_int(personality_pref_keys[i].key, *personality_pref_keys[i].field);
 }
 
 /* ------------------------------------------------------------ wallpaper */
@@ -115,7 +126,9 @@ void personality_paint_splash(gfx_surface *s, uint32_t alpha) {
 
 void personality_startup(int crossfade) {
     MINT_AUDIO_INFO ai;
-    if (sound_info(&ai)) {                  /* the kernel keeps the volume across MintDE restarts */
+    if (saved_volume) {                     /* saved on MintOS HD: restore it in the kernel mixer */
+        (void)mint_audio_volume(personality_prefs.volume, personality_prefs.muted);
+    } else if (sound_info(&ai)) {           /* the kernel keeps the volume across MintDE restarts */
         personality_prefs.volume = ai.volume <= 100u ? ai.volume : 70u;
         personality_prefs.muted = ai.muted ? 1u : 0u;
     }
