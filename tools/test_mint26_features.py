@@ -4,9 +4,9 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 s=(root/'uefi/main.c').read_text()
 checks={
- 'release reports 26.5.013.0': '26.5.013.0' in s,
+ 'release reports 26.5.014.0': '26.5.014.0' in s,
  'launcher contains thirteen apps': 'int apps[13]' in s and 'row*4+col' in s,
- 'About pages identify OS and desktop versions separately': all(k in s for k in ['Version 26.5.013.0  •  x86-64','Version 2.3.0  •  Native desktop environment']),
+ 'About pages identify OS and desktop versions separately': all(k in s for k in ['Version 26.5.014.0  •  x86-64','Version 2.4.0  •  Native desktop environment']),
  'startup selector defaults safely to UEFI Desktop': all(k in s for k in ['wait_for_boot_choice()','Auto-starting UEFI Desktop','2  MintDE 2.0','boot_image_handle=image']),
  'Calendar and month-navigation handlers exist': 'APP_CALENDAR' in s and 'weekday_sun0' in s and 'calendar_month++' in s and 'calendar_month--' in s,
  'Clock uses UEFI RuntimeServices time': 'get_display_time(&t)' in s and 'zone_name()' in s,

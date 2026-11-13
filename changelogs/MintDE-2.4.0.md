@@ -1,0 +1,29 @@
+# MintDE 2.4.0 — Setup Assistant, saved settings, programs, real web pages and sound
+
+- **Setup Assistant on first boot:**
+  - "Hello" in ten languages.
+  - It offers to make a blank disk your MintOS HD, with a typed confirmation.
+  - Your account (full name and account name) gets its own `/Users/<you>` folder.
+  - Light, Dark or Auto plus the accent colour, previewed live.
+  - Settings › **Users & Groups** shows your account and can run setup again.
+- **MintOS remembers things:**
+  - appearance, wallpaper, sound and notification settings, network auto-connect;
+  - Files' last folder, the open note, and Terminal history (↑/↓);
+  - your Web favourites, cookies and downloads.
+- **Notes holds many notes:** a sidebar grouped by Today, Yesterday and so on, search, New Note (⌘N) and Delete (to the Trash). Each note is a text file in `~/Documents/Notes`.
+- **Terminal runs programs:** `lua`, `lua script.lua`, `hello`, `wc`, `grep`, `sysinfo`, `./prog`, with live output, Ctrl+C and `&` background jobs. The prompt is `<you>@MintOS %`.
+- **Web draws real pages:**
+  - CSS styling, images, tables, floats and lists;
+  - forms such as search boxes, logins, checkboxes and dropdowns;
+  - Favorites (⌘D) and Downloads (⇧⌘J) into `~/Downloads`, with a notification when a download finishes;
+  - sites that only speak TLS 1.2. Scripts are never run.
+- **Sound:**
+  - an original startup chime ("Mint Morning"), UI sounds, and five alert sounds;
+  - Settings › **Sound**, a volume slider in Control Center, the keyboard volume keys, and a volume HUD.
+- **Wallpapers:**
+  - original MintOS designs, Aurora, Leaf Light, Fresh Dew, Mint Dunes and solid colours, all drawn by MintDE;
+  - **Mint Day**, a dynamic wallpaper whose sky and sun follow the time of day.
+- **Notification Center:** click the date and time. It holds notifications plus Calendar, System, World Clock and Notes widgets, and banners appear at the top right. Settings › **Notifications** has Do Not Disturb.
+- **The desktop:** files and folders in `~/Desktop` appear as icons, and ⌘⇧3 saves a screenshot there.
+- **The boot animation** crossfades into the desktop.
+- The app icons stay the same for now; a refreshed set is planned for 26.6/26.7.

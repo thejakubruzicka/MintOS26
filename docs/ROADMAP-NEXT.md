@@ -23,20 +23,36 @@ Left for later:
 - **Disks and access:** more than one MintOS disk at a time; users and permissions.
 - **API:** POSIX names (`open`/`read`/…) come with the C library in Phase B.
 
-## Phase B — platform for real software (prerequisite for goals 1 and 3)
+## Phase B — platform for real software — mostly done in 26.5.014.0
 
-- **FPU/SSE/AVX** in user space: XSAVE state switching in the scheduler. Most real software needs floating point.
-- **Separate app processes:** each app runs as its own process that draws into a shared surface MintDE composites. This needs IPC and a small window-server protocol, so one crashing app cannot take down the desktop.
-- **C library:** a port of musl (MIT) on top of POSIX system calls (files via the VFS, time, memory mapping, then threads).
-- **First ports:** Lua, SQLite, QuickJS, a C compiler (TinyCC) and a game (Doom).
-- **Later:** SMP, so all four cores of the i5-6700 are used.
+Delivered:
+- **FPU/SSE/AVX:** in ring 3, with eager per-task XSAVE.
+- **Scheduling and memory:** timer preemption of programs, a frame pool, demand paging and `mmap`/`brk`.
+- **Processes:** spawn, wait, kill and pipes.
+- **C library and programs:** an explicit Linux-x86-64 syscall subset and the musl 1.2.5 SDK; Lua 5.4 and small tools run from Terminal.
 
-## Phase C — full web page rendering (goal 1)
+Left for later:
+- **Separate GUI app processes:** the window server, designed in `docs/WINDOW-SERVER.md`.
+- **More ports:** SQLite, QuickJS, TinyCC and Doom.
+- **Threads and SMP.**
 
-- **NetSurf:** port it (GPL-2), with HTML 4/5 parsing, CSS 2.1 layout and PNG/JPEG/GIF/WebP images. It fetches through MintOS's own HTTP and TLS stack and draws into a MintDE window. Its framebuffer front end is the starting point.
-- **Before the port is ready:** images in the current Web app via stb_image (public domain), gzip, and basic CSS (`display:none`, colours, font sizes).
-- **Honest limit:** document-style sites (Wikipedia, news, blogs, docs) will render properly. JavaScript-heavy web apps (YouTube, Gmail, Figma) need a modern JavaScript engine and DOM, a much later step (QuickJS bindings).
-- **Also needed:** TLS 1.2 and P-256 key exchange for the remaining HTTPS servers.
+## Phase C — full web page rendering (goal 1) — own engine in 26.5.014.0
+
+Delivered (the user chose "own engine first"):
+- **Engine:** an HTML/CSS engine with images (stb_image, with no floating point), gzip, cookies, forms, downloads and favorites.
+- **TLS:** TLS 1.2, and P-256 for both TLS versions.
+- **What renders:** Wikipedia, DuckDuckGo Lite and Hacker News render well. BBC News renders only partly.
+
+Next:
+- **Missing web features:** SVG/WebP images, CSS grid and positioned layouts, background images and web fonts.
+- **NetSurf:** porting it (GPL-2) on the new musl SDK is still an option for full CSS 2.1.
+- **Honest limit:** JavaScript-heavy sites need a JS engine and DOM (QuickJS bindings), a much later step.
+
+## Personality (added November 2026) — done in 26.5.014.0
+- **Sound:** an Intel HD Audio driver with original MintOS sounds.
+- **Look and desktop:** the mint-leaf boot animation, procedural wallpapers with a dynamic Mint Day, and Notification Center with widgets and banners.
+- **Your data:** a Setup Assistant and accounts, and desktop items.
+- **Icons:** a refreshed set is planned for 26.6/26.7.
 
 ## Phase D — graphics (goal 2)
 

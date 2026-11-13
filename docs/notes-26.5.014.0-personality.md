@@ -67,7 +67,7 @@ Branch `topic/personality`. Release numbers are left at 26.5.013.0 / MintDE 2.3.
   - Widgets:
     - **Calendar:** the month, with today in the accent colour.
     - **System:** CPU load (sampled on the PIT), RAM, MintOS HD space and uptime.
-    - **World Clock:** analog clocks for This Mac, London, New York and Tokyo, with EU/US daylight-saving rules. The hardware clock is read as UTC.
+    - **World Clock:** analog clocks for Local time, London, New York and Tokyo, with EU/US daylight-saving rules. The hardware clock is read as UTC.
     - **Notes:** the first lines of `~/Documents/Notes.txt`.
 - **Banners:**
   - They slide in at the top right and dismiss themselves after 5 s.

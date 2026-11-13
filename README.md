@@ -1,8 +1,21 @@
-# MintOS26 26.5.013.0 — MintDE 2.3.0
+# MintOS26 26.5.014.0 — MintDE 2.4.0
 
-**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.3.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
+**MintOS26** is the operating system and kernel. **MintDE — Mint Desktop Environment** is its native ring-3 desktop environment, independently versioned as **MintDE 2.4.0**. The firmware-mediated desktop is referred to as **UEFI Desktop**.
 
 The startup selector defaults to UEFI Desktop (Enter/1 or a three-second timeout). Press 2/M to request the experimental MintDE native handoff. MintDE calls `ExitBootServices`; this handoff is one-way until reset, so keep EFI enabled and retain UEFI Desktop as the recovery path.
+
+## 26.5.014.0 / MintDE 2.4.0 — programs, saved settings, real web pages and sound
+
+- **Your own account:** the first boot opens a **Setup Assistant**. It sets up MintOS HD and your account with its own `/Users/<you>` folder, plus your look. Settings, notes, Terminal history and Web favourites are all saved and come back after a restart.
+- **Programs:** MintOS runs real programs from MintOS HD. Terminal starts `lua` (Lua 5.4), `hello`, `wc`, `grep` and `sysinfo`, built with the musl C library through the new SDK (`docs/SDK.md`). Programs get floating point, their own memory, and preemptive time-slicing.
+- **The Web app** has its own HTML/CSS engine. Pages like Wikipedia, DuckDuckGo and Hacker News render with styling, images, tables and working forms. Downloads land in `~/Downloads`, and TLS 1.2-only sites open too. JavaScript is not run.
+- **MintOS's own character:**
+  - an original startup chime and UI sounds, through the new Intel HD Audio driver;
+  - a mint-leaf boot animation;
+  - original wallpapers, including the dynamic **Mint Day**;
+  - Notification Center with widgets and banners;
+  - your `~/Desktop` items shown on the desktop.
+- **Trying it:** in QEMU, run `tools/run_qemu.sh --mintos-disk -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -audiodev coreaudio,id=snd0 -device ich9-intel-hda -device hda-output,audiodev=snd0`.
 
 ## 26.5.013.0 / MintDE 2.3.0 — files that stay (MintFS)
 

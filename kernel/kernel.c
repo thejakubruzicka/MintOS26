@@ -673,7 +673,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     __asm__ volatile("cli; cld" ::: "memory");
     mint_serial_init();
     mint_log_init();
-    mint_serial_write("\nMintOS26 26.5.013.0 native kernel entry\n");
+    mint_serial_write("\nMintOS26 26.5.014.0 native kernel entry\n");
     if (!boot || boot->magic != MINT_BOOT_INFO_MAGIC ||
         boot->abi_version != MINT_BOOT_INFO_ABI ||
         boot->struct_size < sizeof(MINT_BOOT_INFO)) {

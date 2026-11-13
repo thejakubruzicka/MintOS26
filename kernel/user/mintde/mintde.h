@@ -7,8 +7,8 @@
 #include "userdata.h"     /* preferences and the computer account (data saving) */
 #include <mintos/personality.h>   /* 26.5.014.0 sound, boot animation */
 
-#define MINTDE_VERSION "2.3.0"
-#define MINTOS_VERSION "26.5.013.0"
+#define MINTDE_VERSION "2.4.0"
+#define MINTOS_VERSION "26.5.014.0"
 
 enum {
     APP_FILES = 0, APP_NOTES, APP_TERMINAL, APP_SETTINGS, APP_MONITOR, APP_STORAGE,

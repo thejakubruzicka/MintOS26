@@ -1,5 +1,13 @@
 # MintOS26 changelog
 
+## 26.5.014.0 / MintDE 2.4.0 — Programs, saved settings, real web pages and sound
+
+- **Programs:** FPU/SSE/AVX in ring 3, timer preemption of programs, a frame pool with demand paging, processes with pipes, a Linux-compatible syscall subset, the musl 1.2.5 SDK, and Lua 5.4 plus tools running from Terminal.
+- **Data saving:** a preferences store on MintOS HD, accounts with a first-boot Setup Assistant, Notes with many notes, Terminal history, and saving before Shut Down/Restart.
+- **Web:** a new HTML/CSS engine with images, forms, cookies, downloads and favorites, plus TLS 1.2 and P-256.
+- **Personality:** an Intel HD Audio driver with original MintOS sounds, a mint-leaf boot animation, procedural wallpapers including the dynamic Mint Day, Notification Center with widgets and banners, and desktop items.
+- **Validation:** every `make check` command passes on macOS except the Linux-only test. In a combined QEMU pass, settings, the account and notes survived a restart, the startup chime was captured, and fsck reported the disk clean.
+
 ## 26.5.013.0 / MintDE 2.3.0 — MintFS, a read/write filesystem
 
 - **MintFS:** MintOS's own copy-on-write, checksummed filesystem. A power cut leaves the last commit intact, and there is a consistency checker.

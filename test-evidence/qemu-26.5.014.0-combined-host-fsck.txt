@@ -1,0 +1,55 @@
+# 26.5.014.0 combined QEMU pass: host fsck of the MintOS disk after Setup Assistant, Terminal/Lua, Notes, Web and a restart
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+fsck: clean
+  inodes=45 dirs=24 files=21 reachable=195 marked=195
+  bad_checksums=0 bad_pointers=0 double_refs=0 leaked=0 missing=0 bad_dirs=0 bad_links=0
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+volume "MintOS HD" generation 94, 261688 of 261883 blocks free
+
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+Applications/  0 bytes  mtime=1794559256
+Library/  39 bytes  mtime=1794559276
+  Examples/  13 bytes  mtime=1794559256
+    Lua/  58 bytes  mtime=1794559256
+      files.lua  432 bytes  mtime=1794559256
+      hello.lua  543 bytes  mtime=1794559256
+      primes.lua  353 bytes  mtime=1794559256
+  Preferences/  29 bytes  mtime=1794559276
+    com.mintos.accounts  209 bytes  mtime=1794559276
+System/  18 bytes  mtime=1794559256
+  Programs/  105 bytes  mtime=1794559256
+    hello  23032 bytes  mtime=1794559256
+    wc  33112 bytes  mtime=1794559256
+    grep  87336 bytes  mtime=1794559256
+    sysinfo  23592 bytes  mtime=1794559256
+    spin  31864 bytes  mtime=1794559256
+    lua  345856 bytes  mtime=1794559256
+    .bundle-id  16 bytes  mtime=1794559256
+Volumes/  0 bytes  mtime=1794559256
+Users/  34 bytes  mtime=1794559276
+  Shared/  0 bytes  mtime=1794559256
+  alexmint/  193 bytes  mtime=1794559347
+    Desktop/  0 bytes  mtime=1794559256
+    Documents/  46 bytes  mtime=1794559354
+      Welcome to MintOS.txt  183 bytes  mtime=1794559256
+      Notes/  34 bytes  mtime=1794559365
+        Merged release check.txt  56 bytes  mtime=1794559365
+    Downloads/  0 bytes  mtime=1794559256
+    Movies/  0 bytes  mtime=1794559256
+    Music/  0 bytes  mtime=1794559256
+    Pictures/  0 bytes  mtime=1794559256
+    .Trash/  0 bytes  mtime=1794559256
+    Library/  34 bytes  mtime=1794559385
+      Preferences/  170 bytes  mtime=1794559434
+        com.mintos.files.prefs  152 bytes  mtime=1794559277
+        com.mintos.notes.prefs  158 bytes  mtime=1794559366
+        com.mintos.desktop.prefs  198 bytes  mtime=1794559434
+        com.mintos.sound.prefs  209 bytes  mtime=1794559434
+        com.mintos.notifications.prefs  158 bytes  mtime=1794559434
+      Web/  17 bytes  mtime=1794559387
+        Cookies  555 bytes  mtime=1794559387
+    Public/  0 bytes  mtime=1794559276
+    t.lua  42 bytes  mtime=1794559335
+    .mintsh_history  145 bytes  mtime=1794559347
+
+# startup chime in the captured HDA output (48 kHz stereo): sound spans 1.10-3.80 s (boot 1) and 249.25-251.95 s (boot 2), peak -9.2 dBFS

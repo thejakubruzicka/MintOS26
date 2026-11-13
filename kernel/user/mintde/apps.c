@@ -3493,24 +3493,24 @@ static int disks_key(const MINT_DESKTOP_KEY_EVENT *k) {
 
 /* ------------------------------------------------------------ About windows */
 static const char *const os_versions[8] = {
+    "26.5.014.0  Accounts, saved settings, programs, real web pages, sound",
     "26.5.013.0  MintFS: read/write copy-on-write disks, MintOS HD",
     "26.5.012.0  TLS 1.3, certificate checks, HTTPS in Web and curl",
     "26.5.011.0  USB input, Intel Ethernet, IPv4/TCP stack, Web browser",
     "26.5.010.0  MintDE 2: macOS-style desktop, shared canvas, RTC clock",
     "26.5.009.0  Real-hardware display, mouse, ACPI power, RAID-mode SATA",
     "26.5.008.0  VirtualBox E1000 RX loopback and descriptor diagnostics",
-    "26.5.007.0  E1000 TX timeout isolation",
-    "26.5.006.0  E1000 loopback diagnostics and terminal prompt"
+    "26.5.007.0  E1000 TX timeout isolation"
 };
 static const char *const de_versions[8] = {
+    "MintDE 2.4.0  Setup Assistant, Notes, Web engine, sounds, wallpapers",
     "MintDE 2.3.0  Finder on MintOS HD, Trash, Notes saved to disk",
     "MintDE 2.2.0  Secure web browsing, padlock, DuckDuckGo search",
     "MintDE 2.1.0  Web browser, Network app, Terminal network tools",
     "MintDE 2.0.0  Windows, Dock, Launchpad, Spotlight, Control Center",
     "MintDE 1.0.8  Shut Down / Restart and precise pointer",
     "MintDE 1.0.7  VirtualBox loopback and RX diagnostics",
-    "MintDE 1.0.6  E1000 loopback failure diagnostics",
-    "MintDE 1.0.5  E1000 loopback diagnostics and terminal prompt"
+    "MintDE 1.0.6  E1000 loopback failure diagnostics"
 };
 static void about_paint(uint32_t app, const mde_layout *l) {
     gfx_rect f = l->frame;

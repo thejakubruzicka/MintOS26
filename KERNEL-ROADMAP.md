@@ -1,4 +1,4 @@
-# MintOS26 Kernel Roadmap — 26.5.013.0 / MintDE 2.3.0
+# MintOS26 Kernel Roadmap — 26.5.014.0 / MintDE 2.4.0
 
 ## Current status
 
@@ -17,6 +17,14 @@
   - Processes spawned from MintOS HD with argv/envp/auxv, wait/kill/zombies, pipes and POSIX-style descriptors.
   - A Linux x86-64 syscall-compatibility *subset* behind the `syscall` instruction.
   - musl 1.2.5 SDK; Lua 5.4.9 and command-line tools installed to `/System/Programs` and run from Terminal.
+
+- **26.5.014.0 additions:**
+  - FPU/SSE/AVX state per task and timer preemption of ring-3 code.
+  - A frame pool with demand-zero paging, `mmap`/`brk`, and 64 MiB per process by default.
+  - Spawned processes with pipes, wait and kill.
+  - An explicit Linux-x86-64 syscall-compat subset, for the musl SDK and Lua.
+  - An account home folder taken from `/Library/Preferences`, and a MintFS flush before power-off.
+  - An Intel HD Audio driver with a PIT-driven mixer, and the kernel boot animation.
 
 - **26.5.013.0 additions:** MintFS (copy-on-write, checksummed, crash-safe) on GPT MintOS disks; block-layer write grants; 4 KiB AHCI transfers; 13 file syscalls with per-process handles; an `fs` commit task.
 

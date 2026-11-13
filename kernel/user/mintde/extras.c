@@ -309,7 +309,7 @@ static void clock_face(int32_t cx, int32_t cy, int32_t rad, int64_t secs, const 
 
 static void widget_world_clock(gfx_rect r, int64_t epoch) {
     tile(r, 16);
-    static const char *const cities[4] = {"This Mac", "London", "New York", "Tokyo"};
+    static const char *const cities[4] = {"Local", "London", "New York", "Tokyo"};
     int32_t cw = W(r) / 4;
     for (uint32_t i = 0; i < 4u; ++i) {
         int64_t off = i ? city_offset(i, epoch) : 0;

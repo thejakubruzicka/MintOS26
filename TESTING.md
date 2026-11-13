@@ -1,4 +1,4 @@
-# MintOS26 26.5.013.0 / MintDE 2.3.0 — Test Guide
+# MintOS26 26.5.014.0 / MintDE 2.4.0 — Test Guide
 
 ## Host build and test
 

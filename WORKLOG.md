@@ -1,65 +1,64 @@
-# MintOS26 26.5.013.0 / MintDE 2.3.0 worklog
+# MintOS26 26.5.014.0 / MintDE 2.4.0 worklog
 
-Previous worklog: `docs/WORKLOG-26.5.012.0.md`.
+Previous worklog: `docs/WORKLOG-26.5.013.0.md`. Per-topic details, decisions and known limits are in `docs/notes-26.5.014.0-{data-saving,app-platform,web-engine,personality}.md`.
 
 ## Goal
 
-Phase A of `docs/ROADMAP-NEXT.md`: a real read/write filesystem with a proper structure. The agreed rule is that MintOS writes only to disks it formatted itself, and the work is tested in VMs first.
+The user asked for several topics at once:
+- "proper data saving";
+- "working webpages";
+- "software";
+- "more individual personality".
 
-## Design decisions
+They chose to run them in parallel, the web engine before a NetSurf port, and all four personality areas with icons deferred to 26.6/26.7. They also approved downloading stb_image, musl and Lua.
 
-- **Copy-on-write rather than a journal.**
-  - MintFS never overwrites a block that the committed state still references. A commit writes new blocks, relocates the dirty bitmap blocks, flushes, writes the next of two alternating superblocks, and flushes again.
-  - Mount picks the newest superblock whose checksum is valid, so there is no replay step that could itself be interrupted.
-  - Blocks freed in an open transaction stay reserved until it commits.
-- **Checksums with context.** Every metadata block header carries a type tag, a CRC32C, its own block address, its owner and its generation. A misdirected or stale write is detected as reliably as bit rot.
-- **Simple structures.**
-  - A two-level radix inode map, inodes with inline data or direct, single-indirect and double-indirect pointers, and folders as variable-length record lists.
-  - Mount builds the free-space bitmap into RAM.
-  - The roadmap had mentioned B-trees. A flat layout was chosen instead because it is easier to verify exhaustively, and folders of a few thousand entries are fast enough at this scale.
-- **Write safety at the block layer, not only in the filesystem.**
-  - Every disk stays READONLY to `mint_block_write`.
-  - MintFS gets a write grant for exactly its partition's LBA range, under its own owner tag. A bug in MintFS cannot write the GPT or another disk.
-  - Initialization temporarily grants the whole disk to write the GPT, then revokes the grant before formatting.
-- **Initialization only on blank disks.** It requires:
-  - zeroed sectors 0, 1, 2 and 33, and n−33 and n−1;
-  - at least 64 MiB;
-  - the device's serial and size as Disk Utility displayed them;
-  - the typed `FORMAT <device>` confirmation (the existing FAT16 formatter gate, now shared).
-- **One MintOS disk at a time,** mounted as `/` ("MintOS HD"). The home folder is `/Users/mintos`.
-- **Kernel-side descriptors, user-side conveniences.**
-  - The kernel offers a small handle API: 32 handles, owned by a process and closed on exit.
-  - The runtime builds whole-file load and an **atomic save** on top of it: it writes `.~name` next to the original, then renames over it. Notes, and anything else using `mint_file_save`, can never leave a half-written document.
-  - Rename replaces its target in one MintFS commit.
-- **Recursive delete lives in user space** (Empty Trash, `rm -r`). The kernel removes only empty folders, which keeps every kernel operation small and bounded.
-- **Trash is a folder,** `~/.Trash`, as on macOS. The Dock Trash opens it.
+## How it was built
 
-## Problems found during the work
+- **Branches:** 26.5.013.0 was committed first (`d3e23ac`). Four sessions then worked in separate git worktrees (`worktrees/<topic>`, branches `topic/<topic>`):
+  - data-saving;
+  - app-platform;
+  - web-engine;
+  - personality.
+- **Merge plan:** syscall ranges and log components were reserved per topic up front, and only the coordinator changed versions, so the branches merged with small, mechanical conflicts.
+- **Usage limits:** they paused the sessions several times. The work continued two sessions at a time, with WIP commits so nothing was lost.
+- **Merging:** the branches were merged into `dev/26.5.009.0` in this order: data-saving, app-platform, web-engine, personality. The combination was built after each merge.
 
-- **Deleting an inline file corrupted the disk** (found by the host torture test). Small files keep their bytes in the inode, in the same space the block-pointer table would use. `free_from()` read those bytes as pointers and freed live blocks. It now returns early for inline files. The fsck-after-every-commit run caught this within a few hundred operations.
-- **The first crash simulation was too weak.** Cutting power only between whole commits never hit the interesting window. The RAM disk now has a volatile write cache, and a power cut persists a random subset of pending writes, some torn. A `crash_at` hook also freezes the disk at a chosen write inside a commit.
-- **A per-index folder listing would be O(n²),** because each call reloaded the folder. `mintfs_list()` returns a batch from a single load. The torture test cross-checks it against `mintfs_readdir`.
-- **The new syscall names collided with the session RAMFS calls** (`MINT_SYS_FS_*`, `MINT_FS_DIRENT`). The MintFS ABI uses the `MFS` prefix, and the kernel functions are `mint_mfs_*`.
-- **macOS host tests hid a missing symbol.** The Rosetta wrapper links with `dynamic_lookup`, so the syscall harnesses linked without stubs for the new calls. They now have stubs, and `test_user_syscalls.c` exercises the new calls, so Linux CI keeps linking.
-- **UI bugs found in QEMU:**
-  - Rename appended typed text after the extension. Rename now has a real caret and selects the name without its extension, as Finder does.
-  - Files kept a stale selection index after a refresh. It now reselects by name.
-  - Disk Utility still offered Erase for the new MintOS disk. The kernel would refuse it anyway because the disk is not blank, but the button is now disabled.
+## Merge conflicts and integration fixes
+
+- **Conflicts:**
+  - **Log component enums:** union of 12, 13 and 14.
+  - **`MINT_ASPACE_MAX_USER_FRAMES`:** app-platform's header (frame limits and the 256-region table) was kept.
+  - **Makefile object lists:** both kept.
+  - **Settings pane enum:** Power, Sound, Notifications, then Users & Groups. Spotlight's pane map was extended.
+  - **File menu items** for Notes and Web: both kept.
+  - **IRQ0:**
+    - Personality's timer hook (mixer and CPU sampling) now runs *before* app-platform's ring-3 preemption.
+    - That way it always runs at interrupt time with interrupts disabled, never after a task switch.
+- **Integration:**
+  - **Personality settings** (volume, alert, startup sound, wallpaper, notifications, desktop items) are now read from and written to the data-saving preferences store. A saved volume wins over the kernel default after a reboot.
+  - **The Web app** had `/Users/mintos/…` hard-coded for Downloads, Favorites and Cookies. With accounts, the home is `/Users/<account>`, so the paths are now built from the volume's home folder, and a contract test guards it. A finished download also posts a notification.
+  - **Web page heap:** raised from 8 to 32 MiB. app-platform's frame pool removes the old ~14 MiB physmem cap, and MintDE is now about 37 MB of its 64 MiB.
+  - **Notes widget:** Notification Center's Notes widget now shows the most recently edited note in `~/Documents/Notes`, not the old single `Notes.txt`.
+  - **Clock label:** the World Clock label "This Mac" became "Local".
+  - **Startup-order contract:** `test_data_saving_contracts.py` now accounts for `personality_init()` between the appearance restore and the wallpaper.
 
 ## Validation
 
-- **Host tests:**
-  - `test_mintfs.c`: 32 checks. Seeds 1–23 all pass, about 10,000 random operations each, with fsck after every commit, 300 power cuts with torn writes, and crashes inside commits. The default seed takes about 20 s and is also clean under ASan and UBSan.
-  - `test_mintos_disk.c`: 48 checks. It runs the real `block.c`, `mintos_disk.c` and `mintfs.c` on read-only-registered RAM disks and covers the blank-disk rules, the grant boundaries, untouched other disks and gaps, the file API, remount and fsck. It is clean under ASan and UBSan.
-  - `test_gpt.py`: 48 checks against an independent struct/zlib parser, including the 63 GiB cap and corruption refusal.
-  - `test_mintfs_contracts.py`: 26 checks.
-  - `test_user_syscalls.py`: 15 new checks.
-- **QEMU 11.1 q35/OVMF** with a blank, persistent 1 GiB SATA disk:
-  - Disk Utility initialized it (GPT plus MintFS) and it mounted as MintOS HD.
-  - In Files: Finder sidebar, New Folder, rename, Move to Trash with ⌘⌫, Empty Trash with ⇧⌘⌫ and its confirmation, and the Dock Trash.
-  - Notes saved to `~/Documents/Notes.txt`, and double-clicking a text file opened it in Notes.
-  - In Terminal: `ls -l`, `cd`, `mkdir`, `echo >`, `>>`, `cat`, `cp`, `mv`, `rm -r` and `df`.
-  - Settings › Storage showed the volume.
-  - **Hard power-offs** (QEMU killed): data written before the cut survived. In one test I typed, waited two seconds, typed more and cut power at once. The file held the committed text and not the last keystrokes, there was no leftover temporary file, and `tools/mintfs_tool check` on the host reported the volume clean (generation 25 after the session).
-- **After the QEMU evidence run,** a one-line defensive guard was added: `mint_mfs_write` stops if MintFS ever reports zero progress. The host tests were rerun afterwards, but the QEMU screenshots predate it.
-- **Not validated:** VirtualBox and the physical OptiPlex 7040. Do not initialize a disk on the OptiPlex unless it is a spare, blank disk.
+- **Host:** every `make check` command passes on macOS except the Linux-only `tools/test_context_switch.py`. The final summary is in `test-evidence/host-check-macos-26.5.014.0-summary.txt`.
+- **Combined QEMU 11.1 q35/OVMF pass:** a fresh blank 1 GiB disk, with the ich9-intel-hda output captured to WAV.
+  - **First boot:** boot animation, then the Setup Assistant.
+    - It initialized MintOS HD and the bundled programs were installed.
+    - It created the account `alexmint` (`/Users/alexmint`), and Dark with the purple accent was applied.
+  - **Terminal:** the prompt `alexmint@MintOS %`, then `hello` (HOME is the account's home), `sysinfo` (preemption, FPU and Linux compat), and `lua t.lua` with floats and strings plus the bundled primes example.
+  - **Other apps:** Notes made a new note. Web showed Wikipedia "Mentha" over HTTPS with styling, the infobox and its photo. Settings › Wallpaper set Aurora.
+  - **Restart** from the Apple menu. COM1 shows `[power] saving MintOS HD before power-off`. After the reboot everything came back: the account home, Dark with purple, the Aurora wallpaper, and the note, which Notification Center's Notes widget also shows.
+  - **The startup chime** was captured on both boots (≈2.7 s audible, peak −9.2 dBFS).
+  - **Host fsck:** clean. The preference files for files, notes, desktop, sound and notifications are there, and Web cookies are under the account's home.
+  - Evidence: `test-evidence/qemu-26.5.014.0-combined-*`.
+- **Not validated:** VirtualBox and the physical OptiPlex 7040 (HDA on the ALC3234 and the I219 are experimental there).
+- **Known limits:** listed in each topic note. In short:
+  - no JavaScript, SVG, web fonts or CSS grid;
+  - Greek and other non-Latin scripts show as `?`;
+  - BBC News renders only partly;
+  - audio is output only, at 48 kHz;
+  - GUI apps are not separate processes yet.

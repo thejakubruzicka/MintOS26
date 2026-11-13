@@ -1,7 +1,7 @@
 # Running MintOS26 on real hardware — Dell OptiPlex 7040 guide
 
 Target machine: Dell OptiPlex 7040 (Intel Skylake, Q170 PCH), Core i5/i7-6xxx, NVIDIA GeForce GTX 1050 Ti, UEFI firmware.
-Status: **26.5.013.0 (MintDE 2.3.0) is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
+Status: **26.5.014.0 (MintDE 2.4.0) is not yet validated on this machine.** This guide lists what is expected to work, the firmware settings to use, and how to capture evidence.
 
 ## What to expect
 
@@ -36,7 +36,7 @@ The GTX 1050 Ti is driven only through the UEFI GOP framebuffer the card's firmw
 make clean all
 # macOS: find the stick with `diskutil list` (e.g. /dev/disk4), then:
 diskutil unmountDisk /dev/diskN
-sudo dd if=build/mintos26-26.5.013.0-uefi.img of=/dev/rdiskN bs=4m
+sudo dd if=build/mintos26-26.5.014.0-uefi.img of=/dev/rdiskN bs=4m
 diskutil eject /dev/diskN
 ```
 
