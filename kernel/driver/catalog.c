@@ -7,6 +7,8 @@
 #include "../include/pci.h"
 #include "../include/input.h"
 #include "../include/storage_diag.h"
+#include "../include/hda.h"
+#include "../include/uapi/mintos/audio.h"
 
 static void zero_bytes(void *out, size_t n) {
     uint8_t *p = (uint8_t *)out;
@@ -93,7 +95,18 @@ void mint_driver_catalog_snapshot(MINT_DRIVER_CATALOG *out) {
     add(out, 11u, pci_has(0, 0, 0x01u, 0x08u) ? MINT_DRIVER_DEVICE_FOUND : MINT_DRIVER_NOT_IMPLEMENTED,
         "NVMe storage", pci_has(0, 0, 0x01u, 0x08u) ? "Detected; NVMe I/O unsupported." : "No NVMe driver; no disk probes.");
     add(out, 12u, MINT_DRIVER_ACTIVE, "ACPI power", "S5 soft-off and restart; sleep states not implemented.");
-    add(out, 13u, MINT_DRIVER_NOT_IMPLEMENTED, "Audio output", "No native audio playback.");
+    static MINT_AUDIO_INFO audio; (void)mint_audio_get_info(&audio);
+    add(out, 13u, audio.state == MINT_AUDIO_RUNNING ? MINT_DRIVER_ACTIVE :
+        audio.state == MINT_AUDIO_ABSENT ? MINT_DRIVER_UNAVAILABLE : MINT_DRIVER_DEVICE_FOUND,
+        "Intel High Definition Audio",
+        audio.state == MINT_AUDIO_RUNNING ? (audio.experimental ? "Experimental: 48 kHz 16-bit stereo output, polled, kernel mixer." :
+                                             "Polled HDA output: 48 kHz 16-bit stereo, kernel mixer.") :
+        audio.state == MINT_AUDIO_FOUND ? (audio.experimental ? "Detected; experimental, idle until started in Settings > Sound." :
+                                           "Detected; the audio task is starting it.") :
+        audio.state == MINT_AUDIO_STARTING ? "Starting: controller reset and codec discovery." :
+        audio.state == MINT_AUDIO_FAILED ? "Start failed; see Storage & Logs (AUDIO)." :
+        audio.state == MINT_AUDIO_STOPPED ? "Stopped cleanly; bus mastering off, DMA released." :
+        "No HDA controller (PCI class 0x0403) detected.");
     static MINT_NET_INFO net_state; (void)mint_net_get_info(&net_state);
     add(out, 14u, net_state.state == MINT_NET_STATE_UP ? MINT_DRIVER_ACTIVE : MINT_DRIVER_UNAVAILABLE, "IPv4 network stack",
         net_state.state == MINT_NET_STATE_UP ? "Connected: ARP, ICMP, UDP, DHCP, DNS and TCP client." :

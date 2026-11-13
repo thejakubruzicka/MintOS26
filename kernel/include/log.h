@@ -25,7 +25,8 @@ enum mint_log_component {
     MINT_LOG_COMPONENT_NET = 10,
     MINT_LOG_COMPONENT_MINTFS = 11,
     MINT_LOG_COMPONENT_PREFS = 12,
-    MINT_LOG_COMPONENT_PROC = 13
+    MINT_LOG_COMPONENT_PROC = 13,
+    MINT_LOG_COMPONENT_AUDIO = 14      /* 26.5.014.0 personality: HDA sound */
 };
 
 typedef struct mint_log_record {

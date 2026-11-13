@@ -309,11 +309,19 @@ void mint_arch_enable_input_irqs(int keyboard_enabled, int mouse_enabled) {
 
 /* IRQ stubs save a uniform frame. Acknowledge the originating PIC before
  * returning, including the slave PIC for IRQ12, or input/timer interrupts stop. */
+/* 26.5.014.0: optional work on every PIT tick (the HDA mixer keeps its DMA
+ * ring fed from here so sound continues while ring-3 code is busy). Runs
+ * with interrupts disabled; must be short, bounded and never sleep. */
+void (*volatile mint_timer_irq_hook)(uint64_t interrupted_rip, uint64_t interrupted_cs);
+
 void mint_irq_dispatch(const struct mint_exception_frame *frame) {
     if (!frame) return;
     if (frame->vector == 32u) {
         timer_ticks++;
         outb(PIC1_COMMAND, 0x20u);
+        /* Personality hook first: it must run on every tick, at IRQ time
+         * with interrupts disabled, before any preemptive task switch. */
+        if (mint_timer_irq_hook) mint_timer_irq_hook(frame->rip, frame->cs);
         /* 26.5.014.0: ring-3 preemption. EOI is already sent, so the next
          * tick can arrive while another task runs. A process killed while it
          * was switched out leaves through the common exit path here. */

@@ -32,6 +32,7 @@ static const char *component_name(uint32_t c) {
     case MINT_LOG_COMPONENT_MINTFS: return "MINTFS";
     case MINT_LOG_COMPONENT_PREFS: return "PREFS";
     case MINT_LOG_COMPONENT_PROC: return "PROC";
+    case MINT_LOG_COMPONENT_AUDIO: return "AUDIO";
     default: return "KERNEL";
     }
 }

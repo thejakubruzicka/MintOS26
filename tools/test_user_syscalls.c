@@ -8,6 +8,26 @@
 #include "../kernel/include/serial.h"
 #include "../kernel/include/syscall.h"
 #include "../kernel/include/uapi/mintos/syscall.h"
+
+/* 26.5.014.0 personality: syscalls 0x4D58-0x4D5F are handled in kernel/sound/audio_syscall.c. */
+#include "../kernel/include/uapi/mintos/audio.h"
+static int personality_syscalls_routed;
+int64_t mint_personality_syscall(const MINT_ADDRESS_SPACE *space, uint64_t number, uint64_t a0,
+                                 uint64_t a1, uint64_t a2, uint64_t a3);
+int64_t mint_personality_syscall(const MINT_ADDRESS_SPACE *space, uint64_t number, uint64_t a0,
+                                 uint64_t a1, uint64_t a2, uint64_t a3) {
+    (void)space; (void)a0; (void)a1; (void)a2; (void)a3;
+    ++personality_syscalls_routed;
+    return number >= MINT_SYS_AUDIO_INFO && number <= 0x4D5Fu ? -MINT_ENODEV : -MINT_ENOSYS;
+}
+struct mint_audio_info;
+int mint_audio_get_info(struct mint_audio_info *out);
+int mint_audio_get_info(struct mint_audio_info *out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof(MINT_AUDIO_INFO));
+    ((MINT_AUDIO_INFO *)out)->version = MINT_AUDIO_INFO_VERSION;
+    return 1;
+}
 #include "../kernel/include/desktop_abi.h"
 #include "../kernel/include/desktop_services.h"
 #include "../kernel/include/ramfs.h"

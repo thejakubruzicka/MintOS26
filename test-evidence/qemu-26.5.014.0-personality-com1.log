@@ -1,0 +1,178 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x0,0xFFFF,0x0)
+
+MintOS26 26.5.013.0 native kernel entry
+[splash] MintOS boot animation started
+[arch] kernel GDT loaded; 64-bit TSS installed at selector 0x18
+[arch] dedicated guarded stacks configured for RSP0, double fault, NMI and machine check
+[arch] IDT installed for exceptions 0..31, PIT/PS2 IRQs and DPL3 int-0x80 gate
+[arch] maskable interrupts remain disabled until PIT/PIC initialization
+[pci] enumerating PCI configuration space via mechanism 1
+[pci] 00:00.0 vendor=8086 device=29C0 class=06:00 prog-if=00
+[pci] 00:01.0 vendor=1234 device=1111 class=03:00 prog-if=00 [display device; no GPU driver attached]
+[pci] 00:02.0 vendor=8086 device=100E class=02:00 prog-if=00 [network controller]
+[pci] 00:03.0 vendor=1B36 device=000D class=0C:03 prog-if=30
+[pci] 00:04.0 vendor=8086 device=293E class=04:03 prog-if=00
+[pci] 00:1F.0 vendor=8086 device=2918 class=06:01 prog-if=00
+[pci] 00:1F.2 vendor=8086 device=2922 class=01:06 prog-if=01 [mass-storage controller]
+[pci] 00:1F.3 vendor=8086 device=2930 class=0C:05 prog-if=00
+[pci] enumeration complete found=8 stored=8 scanned-slots=8199 overflow=0
+[mm] UEFI descriptors: 122
+[mm] conventional pages: 234598
+[mm] merged free ranges: 7
+[paging] installed 64 GiB identity map plus FFFF8000 higher-half direct-map alias
+[paging] 2 MiB leaves; kernel image split into protected 4 KiB pages
+[paging] NX enabled; text RX, rodata R/NX, data RW/NX
+[paging] framebuffer identity range marked uncached (WC remap follows when PAT is available)
+[paging] eight non-present guard pages installed around RSP0/DF/NMI/MC stacks
+[log][INFO][BLOCK][#1] storage diagnostics started; media writes are disabled
+[ahci] controller 00:1F.2 vendor=0x0000000000008086 device=0x0000000000002922 BAR5=0x0000000081064000
+[ahci] controller PI=0x000000000000003F
+[log][INFO][AHCI][#2] controller ready; serialized DMA with bounded polling; generic media writes rem
+[log][INFO][AHCI][#3] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][WARN][PARTITION][#4] partition table valid, but no supported FAT16 partition type was found
+[block] sda controller-index=0 port=0 sectors=262144 bytes=134217728 capacity-source=LBA48 read-only=yes
+[identify] sda lba28_raw=262144 lba48_supported=yes lba48_raw=262144 selected_sectors=262144
+[log][WARN][PARTITION][#5] partition type is not one of the supported FAT16 types
+[storage] sda LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x0000000009056F07 repeat=MATCH MBR-disk-id=0x0000000000000000 developer-marker=MISMATCH/UNKNOWN
+[storage] sda filesystem: partition table valid, but no supported FAT16 partition type was found
+[log][INFO][AHCI][#6] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][INFO][PARTITION][#7] MintOS26 FAT16 candidate validated; read-only mount verification pending
+[block] sdb controller-index=0 port=1 sectors=1048576 bytes=536870912 capacity-source=LBA48 read-only=yes
+[identify] sdb lba28_raw=1048576 lba48_supported=yes lba48_raw=1048576 selected_sectors=1048576
+[log][INFO][FAT16][#8] MintOS26 FAT16 BPB and cluster geometry validated read-only
+[storage] sdb LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x000000000A7162F4 repeat=MATCH MBR-disk-id=0x0000000026300421 developer-marker=MATCH
+[storage] sdb filesystem: MintOS26 FAT16 candidate validated; read-only mount verification pending
+[ahci] controller-index=0 port=2 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#9] implemented port link is not active (SSTS DET/IPM check failed)
+[log][INFO][AHCI][#10] SATA link online with ATA device signature; starting bounded IDENTIFY probe
+[log][WARN][PARTITION][#11] partition table valid, but no supported FAT16 partition type was found
+[block] sdc controller-index=0 port=3 sectors=2097152 bytes=1073741824 capacity-source=LBA48 read-only=yes
+[identify] sdc lba28_raw=2097152 lba48_supported=yes lba48_raw=2097152 selected_sectors=2097152
+[log][WARN][PARTITION][#12] partition type is not one of the supported FAT16 types
+[storage] sdc LBA0 signature=0x0000000000000055 0x00000000000000AA CRC32=0x00000000A7B8AA0D repeat=MATCH MBR-disk-id=0x0000000000000000 developer-marker=MISMATCH/UNKNOWN
+[storage] sdc filesystem: partition table valid, but no supported FAT16 partition type was found
+[ahci] controller-index=0 port=4 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#13] implemented port link is not active (SSTS DET/IPM check failed)
+[ahci] controller-index=0 port=5 link not active SSTS=0x0000000000000000 SIG=0x00000000FFFF0101
+[log][WARN][AHCI][#14] implemented port link is not active (SSTS DET/IPM check failed)
+[log][INFO][PARTITION][#15] MintOS26 FAT16 mounted read-only; seed files readable; writes disabled
+[storage] FAT16 mounted read-only on block index 1; Notes and Settings seed files readable
+[storage] diagnostic probe complete controllers=1 devices=3 readonly-mounted=yes volumes=1 persistent=no writes-disabled=yes
+[log][INFO][BLOCK][#16] read-only filesystem validation completed; persistent writes remain disabled
+[mm] excluded physical range pages: 0
+[mm] claimed test physical frame at 0x0000000000134000
+[paging] higher-half direct-map alias self-test passed
+[paging] dynamic map/unmap and higher-half alias self-test passed
+[heap] 256 KiB contiguous identity-mapped kernel heap online at 0x0000000000135000
+[display] framebuffer remapped write-combining via PAT
+[display] GOP mode 1920x1080 stride=1920 format=1 base=0x0000000080000000
+[display] retained backbuffer + backdrop attached: 2 x 8100 KiB at 0x000000003AD13000 / 0x000000003A52A000
+[acpi] RSDP=0x000000003FB7E014 rev=2 oem=BOCHS  tables=6 FADT PM1a_CNT=0x0000000000000604 S5=0/0 reset-reg 8042
+[log][INFO][KERNEL][#17] ACPI tables parsed for shutdown/restart
+[vmalloc] 16 MiB virtual arena initialized (4096 pages)
+[vmalloc] invalid free or mapping ownership mismatch
+[vmalloc] alloc/map/zero/write/unmap/free self-test passed
+[vmalloc] repeated allocate/free table-reclaim test passed
+[vmalloc] transactional physical release path ready
+[paging] dynamic PT active/peak/reclaimed=3/4/73
+[vmalloc] used/peak pages=0/5 allocations/frees=66/66 failed/rollback/free-errors=0/0/1
+[aspace] independent roots, isolated user mappings, CR3 switch and cleanup passed
+[settings] versioned theme/accent/scale/wallpaper/reduced-motion API ready (session memory)
+[vfs] session RAM filesystem online files=3 max-files=8 bytes-per-file=4096 (volatile across reboot)
+[desktop-core] seeded two bounded userspace event-service probes
+[desktop-core] settings service + session RAM filesystem + bounded display/event services ready
+[e1000] Intel 82540EM Gigabit detected by read-only PCI scan; driver idle, DMA disabled until Terminal `net start` / `net up`
+[log][INFO][E1000][#18] Intel E1000-family adapter detected; driver idle until explicit start; DMA disabled
+[audio] HDA controller 0x0000000000008086:0x000000000000293E under a hypervisor: the audio task will start it
+[rtc] CMOS wall clock 2026-11-13 8:10 (no timezone applied)
+[irq] legacy PIC remapped; IRQ0 alone is unmasked
+[timer] PIT channel 0 configured near 100 Hz; waiting for first IRQ
+[audio] PIT hook installed: mixer service and CPU-load sampling
+[input] PS/2 keyboard online (IRQ1, set-1 translation)
+[input] PS/2 mouse online (IRQ12, 3-byte packets)
+[kernel] enabling maskable interrupts after IDT/PIC/PIT/input setup
+[proc] process table initialized; bounded ELF64 loader enabled
+[sched] cooperative round-robin scheduler initialized
+[sched] created pid=1 name=desktop-status
+[sched] created pid=2 name=heartbeat
+[sched] created pid=3 name=abi-smoke
+[sched] created pid=4 name=ring3-smoke-a
+[sched] created pid=5 name=ring3-smoke-b
+[sched] created pid=6 name=native-desktop
+[sched] created pid=7 name=splash
+[sched] created pid=8 name=audio
+[sched] created pid=9 name=usb
+[sched] created pid=10 name=net
+[mintfs] MintOS partition found on sdc
+[mintfs] mounted "MintOS HD" from sdc read/write, generation 10, 1016 MiB free
+[log][INFO][MINTFS][#19] MintOS disk mounted read/write as /
+[sched] created pid=11 name=fs
+[kernel] enabling interrupts and entering scheduler
+[sched] per-task CR3, transition-state and RFLAGS switching online
+[sched] task start pid=1 name=desktop-status
+[sched] task start pid=2 name=heartbeat
+[sched] task start pid=3 name=abi-smoke
+[abi] Linux-inspired write syscall contract online
+[abi] getpid returned 3
+[abi] clock_gettime status=0 uptime=0s
+[sched] task exited pid=3 name=abi-smoke total-exited=1
+[sched] task start pid=4 name=ring3-smoke-a
+[ring3] worker 1 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=4 entry=0x0000001000200000 segments=2 stack-pages=16
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=4
+[sched] task start pid=5 name=ring3-smoke-b
+[ring3] worker 2 creating an independent ELF64 process
+[proc] loaded ELF64 process pid=5 entry=0x0000001000200000 segments=2 stack-pages=16
+[proc] entering ring 3 at ELF entry
+[user-runtime] libmint runtime v1 online
+[sched] user task yield enabled pid=5
+[sched] task start pid=6 name=native-desktop
+[sched] task start pid=7 name=splash
+[sched] task start pid=8 name=audio
+[log][INFO][AUDIO][#20] starting Intel HDA output driver
+[sched] task start pid=9 name=usb
+[usb] xHCI at PCI 0:3.0 BAR0 kind=4 base=0x000000C000000000
+[usb] xHCI running: ports=8 ctx=32 usb3-ports=1+4
+[log][INFO][USB][#21] xHCI controller running; scanning root ports
+[sched] task start pid=10 name=net
+[sched] task start pid=11 name=fs
+[sched] first activation user root pid=4 cr3=0x000000000018D000
+[sched] first activation user root pid=5 cr3=0x00000000001A9000
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=4 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 1 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=4 name=ring3-smoke-a total-exited=2
+[user-runtime] syscall wrappers, event poll and display-info passed
+[proc] process pid=5 exited status=0 (clean)
+[proc] address space and transition stack reaped cleanly
+[ring3] worker 2 ELF64 lifecycle and resource reaping passed
+[ring3] ELF64 USER PROCESS TEST PASSED
+[sched] task exited pid=5 name=ring3-smoke-b total-exited=3
+[audio] codec 0 vendor 0x000000001AF40012 (QEMU HDA output) widgets=2
+[audio] output path: pin 3 -> 2 (line out)
+[audio] HDA running: QEMU HDA output, outputs=1, CORB/RIRB, 48 kHz 16-bit stereo, ring 256 KiB
+[log][INFO][AUDIO][#22] HDA output stream running at 48 kHz 16-bit stereo
+[sched] task exited pid=8 name=audio total-exited=4
+[desktop-ui] launching native shell as a persistent ring-3 process
+[proc] loaded ELF64 process pid=6 entry=0x0000001000200000 segments=2 stack-pages=16
+[proc] entering ring 3 at ELF entry
+[splash] boot animation finished; MintDE takes over the display
+[display] shared canvas mapped into pid 6
+[e1000] Intel 82540EM Gigabit driver active; polling RX/TX rings initialized; MAC=52:54:00:12:34:56 link up; DMA below 4 GiB; interrupts masked
+[log][INFO][E1000][#23] E1000-family adapter initialized with bounded polling RX/TX rings; interrupts masked
+[net] network start requested; link up, starting DHCP
+[MintDE] boot animation crossfaded into the desktop
+[user-desktop] MintDE 2.3.0; macOS-style shell, shared canvas, Dock, Launchpad, Spotlight and Control Center ready
+[sched] task exited pid=7 name=splash total-exited=5
+[usb] port 5 slot 1: HID keyboard ready
+[usb] port 6 slot 2: HID tablet ready
+[sched] first activation user root pid=6 cr3=0x000000000018D000
+[net] DHCP lease 10.0.2.15 mask 255.255.255.0 gateway 10.0.2.2 dns 10.0.2.3
+[log][INFO][NET][#24] DHCP lease obtained; IPv4 network is up
+[task] heartbeat pid=2 ticks=501
+[task] heartbeat pid=2 ticks=1001

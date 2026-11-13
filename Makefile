@@ -46,6 +46,60 @@ CHANGELOG_DATA_ARGS := $(foreach note,$(CHANGELOG_FILES),MINTOS26/DEVELOP/CHANGE
 README := $(BUILD)/UEFI-README.TXT
 EFI_FLAGS := -target x86_64-pc-win32-coff -ffreestanding -fshort-wchar -fno-stack-protector -fno-builtin -mno-red-zone -Wall -Wextra -Wno-sign-compare -O2
 
+# ---- 26.5.014.0 personality: HDA sound + mixer, original MintOS sounds,
+# boot animation, wallpapers, notifications and desktop items. Kept in one
+# block (objects, rules, tests) so the release merge stays simple.
+.DEFAULT_GOAL := all
+SOUND_MANIFEST := $(BUILD)/sounds/manifest.txt
+PERSONALITY_HEADERS := kernel/include/hda.h kernel/include/audio_mixer.h kernel/include/boot_splash.h kernel/include/uapi/mintos/audio.h
+PERSONALITY_KERNEL_OBJS := $(BUILD)/hda-core.obj $(BUILD)/hda.obj $(BUILD)/audio-mixer.obj $(BUILD)/audio-syscall.obj $(BUILD)/system-status.obj $(BUILD)/sounds.obj $(BUILD)/splash-art.obj $(BUILD)/boot-splash.obj
+PERSONALITY_MINTDE_SRCS := kernel/user/mintde/personality.c kernel/user/mintde/wallpapers.c kernel/user/mintde/notify.c kernel/user/mintde/extras.c kernel/user/mintde/desktop_items.c kernel/user/mintde/personality_settings.c
+PERSONALITY_MINTDE_HEADERS := kernel/user/mintde/personality.h kernel/user/mintde/wallpapers.h kernel/user/mintde/notify.h kernel/user/include/mintos/personality.h $(PERSONALITY_HEADERS)
+PERSONALITY_MINTDE_OBJS := $(BUILD)/mintde-splash.obj $(BUILD)/personality-runtime.obj $(patsubst kernel/user/mintde/%.c,$(BUILD)/mintde-p-%.obj,$(PERSONALITY_MINTDE_SRCS))
+MINTDE_HEADERS += $(PERSONALITY_MINTDE_HEADERS)
+KERNEL_OBJS += $(PERSONALITY_KERNEL_OBJS)
+MINTDE_OBJS += $(PERSONALITY_MINTDE_OBJS)
+$(SOUND_MANIFEST): tools/make_sounds.py | $(BUILD)
+	$(PYTHON) tools/make_sounds.py $(BUILD)/sounds
+$(BUILD)/sounds.obj: kernel/sound/sounds.S $(SOUND_MANIFEST)
+	$(CC) -target x86_64-unknown-none-elf -c $< -o $@
+$(BUILD)/hda-core.obj: kernel/sound/hda_core.c $(PERSONALITY_HEADERS) | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/hda.obj: kernel/sound/hda.c $(PERSONALITY_HEADERS) kernel/include/pci.h kernel/include/physmem.h kernel/include/vmalloc.h kernel/include/log.h kernel/include/task.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/audio-mixer.obj: kernel/sound/audio_mixer.c $(PERSONALITY_HEADERS) | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/audio-syscall.obj: kernel/sound/audio_syscall.c $(PERSONALITY_HEADERS) kernel/include/address_space.h kernel/include/uapi/mintos/syscall.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/system-status.obj: kernel/sound/system_status.c $(PERSONALITY_HEADERS) kernel/include/physmem.h kernel/include/paging.h kernel/include/task.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/splash-art.obj: kernel/ui/splash_art.c kernel/include/boot_splash.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/boot-splash.obj: kernel/ui/boot_splash.c kernel/include/boot_splash.h kernel/include/desktop_abi.h | $(BUILD)
+	$(CC) $(KERNEL_FLAGS) -Ikernel -c $< -o $@
+$(BUILD)/mintde-splash.obj: kernel/ui/splash_art.c kernel/include/boot_splash.h | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/mintde-p-%.obj: kernel/user/mintde/%.c $(MINTDE_HEADERS) | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/personality-runtime.obj: kernel/user/personality_runtime.c kernel/user/include/mintos/personality.h kernel/include/uapi/mintos/audio.h | $(BUILD)
+	$(CC) $(USER_C_FLAGS) -c $< -o $@
+$(BUILD)/kernel.obj $(BUILD)/syscall.obj $(BUILD)/driver-catalog.obj: $(PERSONALITY_HEADERS)
+.PHONY: personality-check
+check: personality-check
+personality-check: all
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DMINT_HDA_HOST_TEST tools/test_hda.c kernel/sound/hda_core.c -o $(BUILD)/test-hda
+	$(BUILD)/test-hda
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/test_audio_mixer.c kernel/sound/audio_mixer.c -o $(BUILD)/test-audio-mixer
+	$(BUILD)/test-audio-mixer
+	$(PYTHON) tools/test_sounds.py $(BUILD)/sounds
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/render_splash_preview.c kernel/ui/splash_art.c -o $(BUILD)/render-splash-preview
+	$(PYTHON) tools/test_splash.py $(BUILD)/render-splash-preview
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror tools/test_notify.c kernel/user/mintde/notify.c -o $(BUILD)/test-notify
+	$(BUILD)/test-notify
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -D_DEFAULT_SOURCE tools/test_wallpapers.c kernel/user/mintde/wallpapers.c -lm -o $(BUILD)/test-wallpapers
+	$(BUILD)/test-wallpapers
+	$(PYTHON) tools/test_personality_contracts.py
+
 .PHONY: all clean check preview run kernel
 all: $(EFI) $(USER_ELF) $(USER_DESKTOP_ELF) $(KERNEL) $(ESP) $(DISK) $(DATA) $(VDI) $(VDI_FIXED) $(VDI_BLANK) $(ISO)
 kernel: $(KERNEL)

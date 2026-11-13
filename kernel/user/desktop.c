@@ -127,6 +127,7 @@ static int is_night(void) {
 
 /* ------------------------------------------------------------ appearance */
 static void render_wallpaper(void) {
+    if (personality_render_wallpaper()) return;          /* procedural MintOS wallpapers */
     uint32_t variant = desktop_settings.wallpaper == 1u ? MINT_WALLPAPER_LIGHT :
                        desktop_settings.wallpaper == 2u ? MINT_WALLPAPER_DARK :
                        (T.dark ? MINT_WALLPAPER_DARK : MINT_WALLPAPER_LIGHT);
@@ -512,6 +513,7 @@ static void paint_menu_bar(void) {
     }
     char t[48]; shell_format_clock(t, sizeof(t), shell_now_epoch(), 0);
     gfx_rect c = clock_rect();
+    if (extras_notification_center_open()) gfx_round_rect(S, c.x0, 3, W(c), MENUBAR_H - 6, 5, ARGB(0x22, 0, 0, 0));
     ui_label(c.x0 + 8, BL(bar, FONT_BODY), FONT_BODY, t, fg);
     gfx_rect sp = spotlight_icon_rect(), cc = control_icon_rect();
     if (spotlight_open) gfx_round_rect(S, sp.x0, 3, W(sp), MENUBAR_H - 6, 5, ARGB(0x22, 0, 0, 0));
@@ -575,7 +577,8 @@ static void run_action(uint32_t act) {
 }
 
 /* ------------------------------------------------------------ Control Center */
-static gfx_rect cc_rect(void) { return R(SW - 336, MENUBAR_H + 6, 326, 252); }
+static gfx_rect cc_rect(void) { return R(SW - 336, MENUBAR_H + 6, 326, 252 + extras_cc_sound_height() + 10); }
+static gfx_rect cc_sound_rect(void) { gfx_rect r = cc_rect(); return R(r.x0 + 12, r.y0 + 162, W(r) - 24, extras_cc_sound_height()); }
 static void paint_control_center(void) {
     if (!control_center_open) return;
     gfx_rect r = cc_rect();
@@ -586,11 +589,7 @@ static void paint_control_center(void) {
     gfx_circle(S, a.x0 + 26, a.y0 + 35, 6, OPAQUE(T.dark ? 0xFFFFFFu : 0x3A3A3Cu));
     ui_label(a.x0 + 48, a.y0 + 32, FONT_BODY_BOLD, "Dark Mode", T.text);
     ui_label(a.x0 + 48, a.y0 + 49, FONT_CAPTION, T.dark ? "On" : "Off", T.text2);
-    gfx_round_rect(S, b.x0, b.y0, W(b), H(b), 12, T.dark ? ARGB(0x30, 0xFF, 0xFF, 0xFF) : ARGB(0x90, 0xFF, 0xFF, 0xFF));
-    MINT_INPUT_INFO in = {0}; (void)mint_input_get_info(&in);
-    ui_label(b.x0 + 14, b.y0 + 28, FONT_BODY_BOLD, "Input", T.text);
-    ui_label(b.x0 + 14, b.y0 + 46, FONT_CAPTION, in.keyboard_ready ? "Keyboard ready" : "No keyboard", T.text2);
-    ui_label(b.x0 + 14, b.y0 + 61, FONT_CAPTION, in.mouse_ready ? "Pointer ready" : "No pointer", T.text2);
+    extras_cc_dnd_paint(b);
     gfx_rect c = R(r.x0 + 12, r.y0 + 92, W(r) - 24, 60);
     gfx_round_rect(S, c.x0, c.y0, W(c), H(c), 12, T.dark ? ARGB(0x30, 0xFF, 0xFF, 0xFF) : ARGB(0x90, 0xFF, 0xFF, 0xFF));
     ui_label(c.x0 + 14, c.y0 + 22, FONT_BODY_BOLD, "Accent Color", T.text);
@@ -599,13 +598,18 @@ static void paint_control_center(void) {
         gfx_circle(S, c.x0 + 22 + i * 30, c.y0 + 42, 9, OPAQUE(sw[i]));
         if ((uint32_t)i == desktop_settings.accent) gfx_circle(S, c.x0 + 22 + i * 30, c.y0 + 42, 3, OPAQUE(0xFFFFFFu));
     }
-    gfx_rect d = R(r.x0 + 12, r.y0 + 162, W(r) - 24, 78);
+    extras_cc_sound_paint(cc_sound_rect());
+    gfx_rect d = R(r.x0 + 12, cc_sound_rect().y1 + 10, W(r) - 24, 78);
     gfx_round_rect(S, d.x0, d.y0, W(d), H(d), 12, T.dark ? ARGB(0x30, 0xFF, 0xFF, 0xFF) : ARGB(0x90, 0xFF, 0xFF, 0xFF));
-    ui_label(d.x0 + 14, d.y0 + 22, FONT_BODY_BOLD, "Display", T.text);
+    ui_label(d.x0 + 14, d.y0 + 22, FONT_BODY_BOLD, "Display & Input", T.text);
     char res[32], n[12]; format_u64(res, sizeof(res), (uint64_t)SW); str_append(res, sizeof(res), " \xC3\x97 ");
     format_u64(n, sizeof(n), (uint64_t)SH); str_append(res, sizeof(res), n);
     ui_label(d.x0 + 14, d.y0 + 40, FONT_CAPTION, res, T.text2);
-    ui_label(d.x0 + 14, d.y0 + 58, FONT_CAPTION, "Brightness and sound need drivers.", T.text3);
+    MINT_INPUT_INFO in = {0}; (void)mint_input_get_info(&in);
+    char ready[64];
+    copy_text(ready, sizeof(ready), in.keyboard_ready ? "Keyboard ready" : "No keyboard");
+    str_append(ready, sizeof(ready), in.mouse_ready ? " \xC2\xB7 Pointer ready" : " \xC2\xB7 No pointer");
+    ui_label(d.x0 + 14, d.y0 + 58, FONT_CAPTION, ready, T.text3);
 }
 static int control_center_click(int32_t x, int32_t y) {
     gfx_rect r = cc_rect();
@@ -613,6 +617,10 @@ static int control_center_click(int32_t x, int32_t y) {
     if (gfx_rect_contains(R(r.x0 + 12, r.y0 + 12, 146, 70), x, y)) {
         desktop_settings.theme = T.dark ? MINT_THEME_LIGHT : MINT_THEME_DARK; (void)shell_apply_settings(); return 1;
     }
+    if (gfx_rect_contains(R(r.x0 + 168, r.y0 + 12, 146, 70), x, y)) {
+        personality_prefs.do_not_disturb ^= 1u; personality_prefs_apply(); return 1;
+    }
+    if (extras_cc_sound_click(cc_sound_rect(), x, y)) return 1;
     for (int i = 0; i < 5; ++i)
         if (gfx_rect_contains(R(r.x0 + 12 + 22 + i * 30 - 12, r.y0 + 92 + 30, 24, 24), x, y)) {
             desktop_settings.accent = (uint32_t)i; (void)shell_apply_settings(); return 1;
@@ -643,8 +651,8 @@ static void spotlight_search(void) {
     spot_count = 0;
     for (uint32_t a = 0; a < APP_COUNT && spot_count < 8u; ++a)
         if (ci_has(app_name(a), spotlight_query)) spot_results[spot_count++] = (spot_result){app_name(a), "Application", a, 0xFFu};
-    static const char *const panes[] = {"Appearance", "Wallpaper", "Displays", "Power", "Storage", "Network"};
-    for (uint32_t p = 0; p < 6u && spot_count < 10u; ++p)
+    static const char *const panes[] = {"Appearance", "Wallpaper", "Displays", "Power", "Storage", "Network", "Sound", "Notifications", "Users & Groups"};
+    for (uint32_t p = 0; p < 9u && spot_count < 10u; ++p)
         if (ci_has(panes[p], spotlight_query)) spot_results[spot_count++] = (spot_result){panes[p], "System Settings", APP_SETTINGS, p};
     if (spotlight_sel >= (int32_t)spot_count) spotlight_sel = spot_count ? (int32_t)spot_count - 1 : 0;
 }
@@ -683,7 +691,7 @@ static void spotlight_activate(int32_t i) {
     spot_result res = spot_results[i];
     spotlight_open = 0;
     if (res.settings_pane != 0xFFu) {
-        static const uint32_t map[6] = {1u, 2u, 3u, 8u, 5u, 6u}; /* Settings pane indices */
+        static const uint32_t map[9] = {1u, 2u, 3u, 8u, 5u, 6u, 9u, 10u, 11u}; /* Settings pane indices */
         settings_select_pane(map[res.settings_pane]);
     }
     shell_open_app(res.app);
@@ -798,6 +806,7 @@ static void compose(gfx_rect d) {
     if (launchpad_open) {
         paint_launchpad();
     } else {
+        extras_paint_desktop(d);                       /* ~/Desktop icons, under the windows */
         for (uint32_t i = 0; i < zcount; ++i) paint_window(zorder[i], d);
         gfx_clip_set(d);
         paint_dock();
@@ -808,19 +817,22 @@ static void compose(gfx_rect d) {
     paint_control_center();
     paint_spotlight();
     paint_switcher();
+    gfx_clip_set(d);
+    extras_paint_overlays();                           /* Notification Center, banners, volume HUD */
     paint_alert();
 }
 /* Blurred panels sample a 2*radius margin around themselves; make sure that
    margin is recomposed in the same pass so no stale glass feeds back in. */
 static gfx_rect expand_for_glass(gfx_rect d) {
     if (gfx_rect_empty(d)) return d;
-    gfx_rect panels[6 + APP_COUNT]; uint32_t n = 0; int32_t ic;
+    gfx_rect panels[12 + APP_COUNT]; uint32_t n = 0; int32_t ic;
     dock_geometry(&panels[n++], &ic);
     panels[n++] = R(0, 0, SW, MENUBAR_H);
     if (active_menu >= 0) { build_menu(active_menu); panels[n++] = menu_rect(); }
     if (control_center_open) panels[n++] = cc_rect();
     if (spotlight_open) { spotlight_search(); panels[n++] = spotlight_rect(); }
     if (power_confirm) panels[n++] = alert_rect();
+    n += extras_glass_rects(&panels[n], 6u);
     if (!launchpad_open)
         for (uint32_t i = 0; i < zcount; ++i) {          /* translucent window sidebars sample behind themselves */
             uint32_t app = zorder[i];
@@ -887,6 +899,7 @@ static void update_cursor(void) {
 }
 
 static void pointer_moved(void) {
+    if (extras_pointer_moved(pointer_x, pointer_y)) return;     /* Control Center volume drag */
     if (drag_app >= 0) {
         mde_window *w = &windows[drag_app];
         shell_damage_window((uint32_t)drag_app);
@@ -947,6 +960,7 @@ static void pointer_moved(void) {
 }
 
 static void close_overlays(void) {
+    extras_close_overlays();
     if (active_menu >= 0 || control_center_open || spotlight_open) damage_all();
     active_menu = -1; hovered_menu_item = -1; control_center_open = 0; spotlight_open = 0;
 }
@@ -960,6 +974,7 @@ static void pointer_pressed(uint32_t clicks) {
         } else if (power_confirm != POWER_FAILED && gfx_rect_contains(alert_button(1), x, y)) { power_confirm = 0; damage_all(); }
         return;
     }
+    if (extras_pointer_pressed(x, y, clicks, 0)) return;     /* Notification Center and banners */
     if (spotlight_open) {
         gfx_rect r = spotlight_rect();
         if (gfx_rect_contains(r, x, y)) {
@@ -983,6 +998,7 @@ static void pointer_pressed(uint32_t clicks) {
         if (!on_bar) return;
     }
     if (y < MENUBAR_H && !launchpad_open) {
+        if (gfx_rect_contains(clock_rect(), x, y)) { control_center_open = 0; extras_toggle_notification_center(); return; }
         if (gfx_rect_contains(spotlight_icon_rect(), x, y)) { spotlight_open = 1; spotlight_query[0] = '\0'; spotlight_sel = 0; damage_all(); return; }
         if (gfx_rect_contains(control_icon_rect(), x, y)) { control_center_open = 1; damage_all(); return; }
         for (int32_t m = 0; m < 7; ++m) {
@@ -1024,6 +1040,7 @@ static void pointer_pressed(uint32_t clicks) {
     }
     int32_t app = window_at(x, y);
     if (app < 0) {
+        if (extras_pointer_pressed(x, y, clicks, 1)) return;     /* desktop items */
         if (focused_app >= 0) { shell_damage_window((uint32_t)focused_app); focused_app = -1; shell_damage(R(0, 0, SW, MENUBAR_H)); }
         return;
     }
@@ -1043,6 +1060,7 @@ static void pointer_pressed(uint32_t clicks) {
 }
 
 static void pointer_released(void) {
+    extras_pointer_released();
     if (drag_app >= 0 || resize_app >= 0) damage_all();
     drag_app = -1; resize_app = -1;
 }
@@ -1057,6 +1075,9 @@ static void key_pressed(const MINT_DESKTOP_KEY_EVENT *k) {
         else if (ch == '\n') { if (power_confirm == POWER_FAILED) { power_confirm = 0; damage_all(); } else run_power(); }
         return;
     }
+    /* volume keys, screenshots; desktop items only when nothing else has keyboard focus */
+    if (extras_key(k, (focused_app >= 0 && !launchpad_open) || spotlight_open || launchpad_open || active_menu >= 0 ||
+                      control_center_open || switcher_open)) return;
     if (cmd && ch == 9u) {                                   /* Command-Tab */
         if (!zcount) return;
         if (!switcher_open) { switcher_open = 1; switcher_index = zcount > 1 ? 1u : 0u; }
@@ -1152,6 +1173,7 @@ static void tick(void) {
         if (desktop_settings.theme == MINT_THEME_WARM && night != night_mode) (void)shell_apply_settings();
     }
     (void)setup_tick();
+    extras_tick();
     uint32_t background = app_background();
     for (uint32_t app = 0; background && app < APP_COUNT; ++app)
         if ((background & (1u << app)) && windows[app].open && !windows[app].minimized) shell_damage_window(app);
@@ -1162,6 +1184,7 @@ static void tick(void) {
 }
 
 int64_t mint_user_main(void) {
+    int boot_animation = personality_boot_handoff();      /* stop the kernel boot animation first */
     if (mint_display_map_canvas(&canvas) != 0 || canvas.version != MINT_DISPLAY_CANVAS_VERSION ||
         !canvas.width || !canvas.height || canvas.stride_pixels < canvas.width) {
         static const char failed[] = "[user-desktop] shared display canvas unavailable; MintDE cannot start\n";
@@ -1179,12 +1202,18 @@ int64_t mint_user_main(void) {
     userdata_start();                                 /* account + saved preferences from MintOS HD */
     night_mode = is_night();
     theme_apply(&desktop_settings, night_mode);
+    personality_init();
     render_wallpaper();
     app_init();
+    extras_init(SW, SH);
     setup_boot_check();                               /* first boot: Setup Assistant */
     pointer_x = SW / 2; pointer_y = SH / 2;
     damage_all();
-    render();
+    /* Compose the first frame without presenting it: personality_startup()
+       crossfades into it from the boot animation (or presents it at once). */
+    compose(R(0, 0, SW, SH));
+    damage = R(0, 0, 0, 0);
+    personality_startup(boot_animation);                 /* startup chime + crossfade */
     (void)mint_display_cursor(pointer_x, pointer_y, MINT_CURSOR_SHAPE_ARROW);
     static const char ready[] = "[user-desktop] MintDE " MINTDE_VERSION "; macOS-style shell, shared canvas, Dock, Launchpad, Spotlight and Control Center ready\n";
     (void)mint_write(1, ready, sizeof(ready) - 1u);

@@ -26,6 +26,9 @@
 #include "../include/mintos_fs.h"
 #include "../include/proc_syscalls.h"
 
+int64_t mint_personality_syscall(const MINT_ADDRESS_SPACE *space, uint64_t number, uint64_t arg0,
+                                 uint64_t arg1, uint64_t arg2, uint64_t arg3);
+
 /* Kernel-internal dispatcher. Callers here supply trusted kernel pointers; the
  * ring-3 entry below never passes raw user pointers into this function. */
 int64_t mint_syscall_dispatch(uint64_t number, uint64_t arg0, uint64_t arg1,
@@ -671,6 +674,9 @@ int64_t mint_syscall_dispatch_user(uint64_t number, uint64_t arg0, uint64_t arg1
         mint_task_sleep_ticks(arg0);
         return 0;
     }
+    /* 26.5.014.0 personality range: sound and the boot animation (kernel/sound/audio_syscall.c). */
+    if (number >= 0x4D58u && number <= 0x4D5Fu)
+        return mint_personality_syscall(space, number, arg0, arg1, arg2, arg3);
     /* Remaining implemented calls use no user pointers (currently getpid). */
     return mint_syscall_dispatch(number, arg0, arg1, arg2, arg3, arg4, arg5);
 }

@@ -5,6 +5,7 @@
 #include <mintos/runtime.h>
 #include "gfx.h"
 #include "userdata.h"     /* preferences and the computer account (data saving) */
+#include <mintos/personality.h>   /* 26.5.014.0 sound, boot animation */
 
 #define MINTDE_VERSION "2.3.0"
 #define MINTOS_VERSION "26.5.013.0"
@@ -175,4 +176,5 @@ int users_pane_click(gfx_rect body, int32_t x, int32_t y);
 /* apps.c */
 void app_save_all(void);                       /* Notes, Terminal history, preferences, MintFS commit */
 void app_home_changed(void);                   /* the home moved: Files, Notes and Terminal follow */
+#include "personality.h"   /* 26.5.014.0: sounds, wallpapers, notifications, desktop items */
 #endif

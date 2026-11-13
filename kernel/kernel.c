@@ -29,6 +29,9 @@
 #include "include/frame_pool.h"
 #include "include/linux_compat.h"
 #include "include/programs.h"
+#define MINT_KERNEL_SPLASH 1
+#include "include/boot_splash.h"
+#include "include/hda.h"
 
 /* Early native kernel core. This code runs only after ExitBootServices and
  * establishes its own 4-level identity page map before allocating the heap. */
@@ -344,10 +347,27 @@ static int address_space_isolation_selftest(void) {
     return pass;
 }
 
+/* 26.5.014.0: the boot animation (kernel/ui/boot_splash.c) owns the screen
+ * during a normal boot. The diagnostic panel below is drawn only when the
+ * desktop cannot start; the boot results are kept for that case. */
+static struct {
+    const MINT_BOOT_INFO *boot;
+    int memory_ok, paging_ok, nx_ok, heap_ok, maptest_ok, vmalloc_ok, vmalloc_test_ok, aspace_test_ok, desktop_core_ok;
+    uint64_t reserved_page;
+} early_status;
+static volatile uint32_t diagnostic_panel_shown;
+
 static void draw_early_kernel(const MINT_BOOT_INFO *boot, int memory_ok, uint64_t reserved_page,
                               int paging_ok, int nx_ok, int heap_ok, int maptest_ok,
                               int vmalloc_ok, int vmalloc_test_ok, int aspace_test_ok,
                               int desktop_core_ok) {
+    early_status.boot = boot; early_status.memory_ok = memory_ok; early_status.reserved_page = reserved_page;
+    early_status.paging_ok = paging_ok; early_status.nx_ok = nx_ok; early_status.heap_ok = heap_ok;
+    early_status.maptest_ok = maptest_ok; early_status.vmalloc_ok = vmalloc_ok;
+    early_status.vmalloc_test_ok = vmalloc_test_ok; early_status.aspace_test_ok = aspace_test_ok;
+    early_status.desktop_core_ok = desktop_core_ok;
+    if (mint_boot_splash_active()) return;
+    diagnostic_panel_shown = 1u;
     const MINT_FRAMEBUFFER_INFO *f = &boot->framebuffer;
     volatile uint32_t *fb = (volatile uint32_t *)(uintptr_t)f->base;
     rect(fb, f, 0, 0, (int)f->width, (int)f->height, RGB(12,24,40));
@@ -402,7 +422,7 @@ static void draw_early_kernel(const MINT_BOOT_INFO *boot, int memory_ok, uint64_
 
 static void draw_runtime_status(uint64_t ticks, int received, uint64_t active_tasks,
                                 uint64_t total_created, uint64_t total_exited) {
-    if (!active_framebuffer || !active_pixels) return;
+    if (!active_framebuffer || !active_pixels || !diagnostic_panel_shown) return;
     const MINT_FRAMEBUFFER_INFO *f = active_framebuffer;
     int x = active_panel_x + 28;
     int y = active_panel_y + 496;
@@ -439,6 +459,18 @@ static void draw_runtime_status(uint64_t ticks, int received, uint64_t active_ta
     centered(active_pixels, f, y + 99, ring3, 1,
              ring3_test_state == 2 ? RGB(103,232,196) :
              ring3_test_state == 3 ? RGB(255,143,143) : RGB(181,201,215));
+}
+
+/* Desktop start failed: stop the boot animation and show the diagnostic panel. */
+static void show_diagnostic_panel(void) {
+    mint_boot_splash_abort();
+    if (!early_status.boot) return;
+    draw_early_kernel(early_status.boot, early_status.memory_ok, early_status.reserved_page,
+                      early_status.paging_ok, early_status.nx_ok, early_status.heap_ok,
+                      early_status.maptest_ok, early_status.vmalloc_ok, early_status.vmalloc_test_ok,
+                      early_status.aspace_test_ok, early_status.desktop_core_ok);
+    draw_runtime_status(mint_timer_ticks(), 1, mint_task_live_count(),
+                        mint_task_total_created(), mint_task_total_exited());
 }
 
 static void status_task(void *argument) {
@@ -560,20 +592,25 @@ static void native_desktop_task(void *argument) {
         mint_task_sleep_ticks(10);
     if (ring3_tests_failed || ring3_tests_completed < MINT_RING3_TEST_WORKERS) {
         mint_serial_write("[desktop-ui] native shell launch withheld because a ring-3 smoke test failed\n");
+        show_diagnostic_panel();
         return;
     }
+    mint_boot_splash_progress(700u);
 
     mint_serial_write("[desktop-ui] launching native shell as a persistent ring-3 process\n");
     const size_t elf_size = (size_t)(mint_desktop_elf_end - mint_desktop_elf_start);
     MINT_PROCESS *process = mint_process_create_current_from_elf(mint_desktop_elf_start, elf_size);
     if (!process) {
         mint_serial_write("[desktop-ui] user ELF load failed; keeping kernel status display\n");
+        show_diagnostic_panel();
         return;
     }
     native_desktop_active = 1u;
+    mint_boot_splash_progress(850u);
     if (!mint_process_run_current(process)) {
         native_desktop_active = 0u;
         mint_serial_write("[desktop-ui] native shell exited unexpectedly; diagnostic display resumed\n");
+        show_diagnostic_panel();
     }
 }
 
@@ -617,6 +654,7 @@ static int attach_display_backbuffers(const MINT_FRAMEBUFFER_INFO *f) {
 
 void mint_exception_display(uint64_t vector, uint64_t rip, uint64_t error) {
     if (!active_framebuffer || !active_pixels) return;
+    mint_boot_splash_abort();
     const MINT_FRAMEBUFFER_INFO *f = active_framebuffer;
     rect(active_pixels, f, 0, 0, (int)f->width, (int)f->height, RGB(31,10,22));
     rect(active_pixels, f, 0, 0, (int)f->width, 10, RGB(240,80,105));
@@ -649,6 +687,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     }
     active_framebuffer = f;
     active_pixels = (volatile uint32_t *)(uintptr_t)f->base;
+    mint_boot_splash_begin(&kernel_surface);
     mint_arch_init();
     (void)mint_fpu_init();
     (void)mint_linux_compat_init();
@@ -666,6 +705,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
         mint_serial_hex64(reserved_page);
         mint_serial_write("\n");
     }
+    mint_boot_splash_progress(120u);
     int maptest_ok = paging_ok && reserved_page && mint_paging_selftest_page(reserved_page);
     mint_serial_write(maptest_ok ? "[paging] dynamic map/unmap and higher-half alias self-test passed\n"
                                   : "[paging] dynamic map/unmap or higher-half alias self-test did not pass\n");
@@ -715,6 +755,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     mint_serial_dec64(mint_vmalloc_failed_allocations()); mint_serial_write("/");
     mint_serial_dec64(mint_vmalloc_rollback_count()); mint_serial_write("/");
     mint_serial_dec64(mint_vmalloc_failed_frees()); mint_serial_write("\n");
+    mint_boot_splash_progress(250u);
     int aspace_test_ok = vmalloc_ok && vmalloc_test_ok && address_space_isolation_selftest();
     int desktop_core_ok = mint_desktop_core_init();
     mint_desktop_settings_init();
@@ -728,11 +769,16 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     /* Boot performs only read-only PCI match discovery. Bus mastering and DMA
        remain disabled until the user explicitly runs Terminal: net start. */
     (void)mint_e1000_probe();
+    /* HDA audio: read-only PCI match here; the audio task starts known-good
+       (virtual) controllers, real hardware waits for an explicit start. */
+    mint_hda_probe();
+    mint_boot_splash_progress(330u);
     draw_early_kernel(boot, memory_ok, reserved_page, paging_ok,
                       mint_paging_nx_is_active(), heap_ok, maptest_ok,
                       vmalloc_ok, vmalloc_test_ok, aspace_test_ok, desktop_core_ok);
     (void)mint_rtc_init();
     mint_timer_init();
+    mint_personality_timer_init();
     (void)mint_input_init();
     mint_serial_write("[kernel] enabling maskable interrupts after IDT/PIC/PIT/input setup\n");
     /* Scheduling remains cooperative. PS/2 input IRQs now feed the same bounded
@@ -745,6 +791,10 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     int64_t ring3_pid = mint_task_create("ring3-smoke-a", ring3_user_task, (void *)(uintptr_t)1u);
     int64_t ring3_pid_b = mint_task_create("ring3-smoke-b", ring3_user_task, (void *)(uintptr_t)2u);
     int64_t desktop_pid = mint_task_create("native-desktop", native_desktop_task, 0);
+    if (mint_boot_splash_active() && mint_task_create("splash", mint_boot_splash_task, 0) < 0)
+        mint_serial_write("[splash] could not create the animation task\n");
+    if (mint_task_create("audio", mint_audio_task, 0) < 0)
+        mint_serial_write("[audio] could not create the audio task; sound disabled\n");
     int64_t usb_pid = mint_task_create("usb", mint_usb_task, 0);
     if (usb_pid < 0) mint_serial_write("[usb] could not create the USB polling task; USB input disabled\n");
     int64_t net_pid = mint_task_create("net", mint_net_task, 0);
@@ -766,6 +816,7 @@ void kernel_entry(const MINT_BOOT_INFO *boot) {
     }
     draw_runtime_status(0, 0, mint_task_live_count(),
                         mint_task_total_created(), mint_task_total_exited());
+    mint_boot_splash_progress(420u);
     mint_serial_write("[kernel] enabling interrupts and entering scheduler\n");
     __asm__ volatile("sti" ::: "memory");
     mint_scheduler_run();
