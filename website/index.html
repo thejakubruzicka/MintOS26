@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MintOS26 — an operating system written from scratch</title>
-  <meta name="description" content="MintOS26 is a freestanding x86-64 operating system with its own UEFI loader, kernel, memory manager, scheduler, syscall ABI, storage stack and native desktop, MintDE.">
+  <meta name="description" content="MintOS26 is a freestanding x86-64 operating system with its own UEFI loader, kernel, filesystem, network stack, web engine, sound driver and a macOS-style desktop, MintDE. Download the 26.5.014.0 ISO.">
   <meta name="theme-color" content="#07110e" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f5faf8" media="(prefers-color-scheme: light)">
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="MintOS26 — an operating system written from scratch">
-  <meta property="og:description" content="Own UEFI loader, kernel, memory manager, scheduler, syscalls, storage stack and a native desktop. No Linux underneath.">
+  <meta property="og:description" content="Own kernel, filesystem, network stack, web engine, sound and a macOS-style desktop. No Linux underneath. Download the ISO and try it in a VM.">
   <meta property="og:url" content="https://thejakubruzicka.github.io/MintOS26/">
   <meta property="og:image" content="https://thejakubruzicka.github.io/MintOS26/assets/screenshots/mintde-desktop.jpg">
   <meta name="twitter:card" content="summary_large_image">
@@ -29,7 +29,7 @@
   <header class="nav" id="nav">
     <div class="wrap nav-inner">
       <a class="brand" href="#top" aria-label="MintOS26 home">
-        <img src="assets/icons/mintde.png" alt="" width="30" height="30">
+        <img src="assets/icons/mintos.png" alt="" width="30" height="30">
         <span>MintOS<span class="brand-num">26</span></span>
       </a>
       <nav class="nav-links" id="nav-links" aria-label="Primary">
@@ -38,6 +38,7 @@
         <a href="#try">Terminal</a>
         <a href="#status">Status</a>
         <a href="#releases">Releases</a>
+        <a href="#download">Download</a>
         <a href="#build">Build</a>
       </nav>
       <a class="btn btn-sm btn-ghost nav-gh" href="https://github.com/thejakubruzicka/MintOS26" aria-label="MintOS26 on GitHub">
@@ -57,17 +58,18 @@
       <div class="wrap hero-copy">
         <p class="eyebrow reveal">
           <span class="pulse" aria-hidden="true"></span>
-          26.5.008.0 &middot; MintDE 1.0.7 &middot; experimental
+          26.5.014.0 &middot; MintDE 2.4.0 &middot; experimental
         </p>
         <h1 class="reveal">An operating system,<br><span class="grad">written from scratch.</span></h1>
         <p class="lede reveal">
-          MintOS26 is a freestanding x86-64 OS with its own UEFI loader, kernel, memory manager,
-          scheduler, syscall ABI, storage stack and native desktop. There is no Linux underneath
-          &mdash; every layer is MintOS.
+          MintOS26 is a freestanding x86-64 OS with its own UEFI loader, kernel, filesystem,
+          network stack, web engine, sound driver and a macOS-style desktop. There is no Linux
+          underneath &mdash; every layer is MintOS.
         </p>
         <div class="cta reveal">
-          <a class="btn btn-primary" href="https://github.com/thejakubruzicka/MintOS26">View the source</a>
-          <a class="btn btn-ghost" href="#build">Build &amp; boot it <span aria-hidden="true">&rarr;</span></a>
+          <a class="btn btn-primary" href="https://github.com/thejakubruzicka/MintOS26/releases/download/v26.5.014.0/mintos26-26.5.014.0-uefi.iso">Download the ISO <small>(34&nbsp;MB)</small></a>
+          <a class="btn btn-ghost" href="https://github.com/thejakubruzicka/MintOS26">View the source</a>
+          <a class="btn btn-ghost" href="#download">How to boot it <span aria-hidden="true">&rarr;</span></a>
         </div>
       </div>
 
@@ -78,18 +80,18 @@
             <em>QEMU &middot; q35 + OVMF</em>
           </div>
           <img src="assets/screenshots/mintde-desktop.jpg" width="1600" height="900"
-               alt="The MintDE desktop: a menu bar with Desktop, File, Edit, View, Window and Help menus, live Keyboard and Pointer indicators, and a glass dock of ten app icons at the bottom.">
+               alt="The MintDE desktop in Dark mode with the Aurora wallpaper: Settings is open on Wallpaper, showing the MintOS wallpaper collection, and a glass dock of twelve apps sits at the bottom.">
         </figure>
-        <p class="caption">MintDE 1.0.7 running on the native MintOS26 kernel &mdash; captured in QEMU on 8&nbsp;November&nbsp;2026.</p>
+        <p class="caption">MintDE 2.4.0 on the native MintOS26 kernel, with the original Aurora wallpaper &mdash; captured in QEMU on 13&nbsp;November&nbsp;2026.</p>
       </div>
     </section>
 
     <!-- ============ STATS ============ -->
     <section class="stats" aria-label="MintOS26 by the numbers">
       <div class="wrap stats-grid">
-        <div class="stat reveal"><strong data-count="15000">~15,000</strong><span>lines of C and x86-64 assembly</span></div>
-        <div class="stat reveal"><strong data-count="700" data-suffix="+">700+</strong><span>automated host-side checks</span></div>
-        <div class="stat reveal"><strong>10</strong><span>apps in the MintDE dock</span></div>
+        <div class="stat reveal"><strong data-count="48000">~48,000</strong><span>lines of MintOS's own C and assembly</span></div>
+        <div class="stat reveal"><strong data-count="1400" data-suffix="+">1,400+</strong><span>automated host-side checks</span></div>
+        <div class="stat reveal"><strong>12</strong><span>apps in the MintDE dock</span></div>
         <div class="stat reveal"><strong>0</strong><span>lines borrowed from Linux</span></div>
       </div>
     </section>
@@ -138,62 +140,62 @@
           <article class="card reveal">
             <span class="path">kernel/arch/x86_64</span>
             <h3>CPU bring-up</h3>
-            <p>Own GDT, 64-bit TSS and IDT, with guarded stacks for double faults, NMIs and machine checks.</p>
+            <p>Own GDT, 64-bit TSS and IDT with guarded fault stacks. FPU, SSE and AVX state is saved per task with XSAVE.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/mm</span>
             <h3>Memory</h3>
-            <p>Physical page allocator, NX paging with read-only kernel text, heap, vmalloc and isolated per-process address spaces.</p>
+            <p>NX paging, a frame pool with demand-zero pages, <code>mmap</code>/<code>brk</code>, and isolated address spaces of up to 64&nbsp;MiB per process.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/task</span>
             <h3>Scheduler</h3>
-            <p>A cooperative scheduler on a PIT timer ticking near 100&nbsp;Hz.</p>
+            <p>A cooperative kernel on a 100&nbsp;Hz timer, with preemptive 20&nbsp;ms time slices for user programs.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/proc</span>
             <h3>Processes</h3>
-            <p>An ELF64 loader for ring-3 programs. A crashing user process is contained instead of taking the kernel down.</p>
+            <p>ELF64 programs spawned from disk with argv, pipes, wait and kill. A crashing program is contained, never the kernel.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/abi</span>
             <h3>System calls</h3>
-            <p>A versioned syscall ABI where every pointer from user space is validated before the kernel touches it.</p>
+            <p>MintOS's own validated <code>int 0x80</code> ABI, plus an explicit Linux-x86-64 subset so the musl C library and Lua run unmodified.</p>
+          </article>
+          <article class="card reveal">
+            <span class="path">kernel/fs</span>
+            <h3>MintFS</h3>
+            <p>MintOS's own copy-on-write, checksummed filesystem. A power cut leaves the last saved state, never a broken disk.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/block</span>
             <h3>Storage</h3>
-            <p>AHCI SATA with LBA48 DMA reads and per-device I/O counters. General writes are blocked by policy.</p>
-          </article>
-          <article class="card reveal">
-            <span class="path">kernel/fs</span>
-            <h3>Filesystems</h3>
-            <p>A VFS mount table with a RAM-backed <code>/session</code> and up to eight read-only FAT16 volumes under <code>/Volumes</code>.</p>
-          </article>
-          <article class="card reveal">
-            <span class="path">kernel/bus</span>
-            <h3>PCI</h3>
-            <p>Configuration-space enumeration with BAR and interrupt decoding. Detecting a device is not the same as driving it, and MintOS says so.</p>
+            <p>AHCI SATA with 4&nbsp;KiB DMA transfers. MintOS writes only inside partitions it created; every other disk stays read-only.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/net</span>
             <h3>Network</h3>
-            <p>An opt-in Intel 82540EM (E1000) driver with bounded DMA rings and a loopback self-test. No TCP/IP yet.</p>
+            <p>Intel E1000-family driver and MintOS's own IPv4 stack: DHCP, DNS, TCP, and TLS&nbsp;1.3/1.2 with certificate checks.</p>
           </article>
           <article class="card reveal">
-            <span class="path">kernel/input</span>
-            <h3>Input</h3>
-            <p>PS/2 keyboard and mouse, with live event counters shown right in Settings.</p>
+            <span class="path">kernel/usb</span>
+            <h3>USB</h3>
+            <p>A polled xHCI driver for USB keyboards, mice and tablets, alongside PS/2.</p>
+          </article>
+          <article class="card reveal">
+            <span class="path">kernel/sound</span>
+            <h3>Sound</h3>
+            <p>An Intel High Definition Audio driver and mixer that plays MintOS's original startup chime and UI sounds.</p>
+          </article>
+          <article class="card reveal">
+            <span class="path">kernel/user/web</span>
+            <h3>Web engine</h3>
+            <p>Its own HTML and CSS engine with images, tables, floats, forms, cookies and downloads. Scripts are never run.</p>
           </article>
           <article class="card reveal">
             <span class="path">kernel/ui</span>
             <h3>Graphics</h3>
-            <p>Framebuffer surfaces, rounded alpha-blended glass panels and RGBA icon drawing for user space.</p>
-          </article>
-          <article class="card reveal">
-            <span class="path">kernel/console</span>
-            <h3>Diagnostics</h3>
-            <p>Structured COM1 logging, ATA IDENTIFY probes and storage health checks that record exactly what happened.</p>
+            <p>A shared-canvas compositor with blur and vibrancy, a boot animation, and wallpapers drawn with integer math.</p>
           </article>
         </div>
       </div>
@@ -205,46 +207,53 @@
         <header class="section-head reveal">
           <p class="kicker">MintDE</p>
           <h2>A desktop of its own</h2>
-          <p>MintDE is the native Mint Desktop Environment, versioned separately from the OS. It runs entirely in ring 3 with a glass dock, menus, Launchpad and a set of system apps.</p>
+          <p>MintDE 2.4 is the native Mint Desktop Environment: macOS-style windows, menu bar, Dock, Launchpad, Spotlight, Control Center and Notification Center, all running in ring 3. It has its own personality too: an original startup chime, a mint-leaf boot animation, and wallpapers including the dynamic <em>Mint Day</em>, whose sky follows the time of day.</p>
         </header>
 
         <div class="dock reveal" role="list" aria-label="Apps in the MintDE dock">
+          <div class="dock-app" role="listitem"><img src="assets/icons/launchpad.png" alt="" width="64" height="64"><span>Launchpad</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/files.png" alt="" width="64" height="64"><span>Files</span></div>
+          <div class="dock-app" role="listitem"><img src="assets/icons/web.png" alt="" width="64" height="64"><span>Web</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/notes.png" alt="" width="64" height="64"><span>Notes</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/terminal.png" alt="" width="64" height="64"><span>Terminal</span></div>
+          <div class="dock-app" role="listitem"><img src="assets/icons/calculator.png" alt="" width="64" height="64"><span>Calculator</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/settings.png" alt="" width="64" height="64"><span>Settings</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/system-monitor.png" alt="" width="64" height="64"><span>System Monitor</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/storage.png" alt="" width="64" height="64"><span>Storage &amp; Logs</span></div>
-          <div class="dock-app" role="listitem"><img src="assets/icons/cpu.png" alt="" width="64" height="64"><span>Hardware &amp; Drivers</span></div>
-          <div class="dock-app" role="listitem"><img src="assets/icons/database.png" alt="" width="64" height="64"><span>Network</span></div>
           <div class="dock-app" role="listitem"><img src="assets/icons/disk-utility.png" alt="" width="64" height="64"><span>Disk Utility</span></div>
-          <div class="dock-app" role="listitem"><img src="assets/icons/launchpad.png" alt="" width="64" height="64"><span>Launchpad</span></div>
+          <div class="dock-app" role="listitem"><img src="assets/icons/cpu.png" alt="" width="64" height="64"><span>Hardware &amp; Drivers</span></div>
+          <div class="dock-app" role="listitem"><img src="assets/icons/network.png" alt="" width="64" height="64"><span>Network</span></div>
         </div>
 
         <div class="gallery reveal">
           <div class="tabs" role="tablist" aria-label="Screenshots">
             <button role="tab" id="tab-desktop" aria-controls="panel-desktop" aria-selected="true">Desktop</button>
+            <button role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" tabindex="-1">Setup Assistant</button>
+            <button role="tab" id="tab-web" aria-controls="panel-web" aria-selected="false" tabindex="-1">Web</button>
             <button role="tab" id="tab-terminal" aria-controls="panel-terminal" aria-selected="false" tabindex="-1">Terminal</button>
-            <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Settings</button>
-            <button role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false" tabindex="-1">Files</button>
+            <button role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false" tabindex="-1">Notes</button>
             <button role="tab" id="tab-uefi" aria-controls="panel-uefi" aria-selected="false" tabindex="-1">UEFI Desktop</button>
           </div>
 
           <div class="panel" role="tabpanel" id="panel-desktop" aria-labelledby="tab-desktop">
-            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-desktop.jpg" width="1600" height="900" alt="MintDE's clean desktop with the menu bar and dock."></figure>
-            <p class="panel-caption">MintDE starts on a clean workspace. The menu bar shows live keyboard and pointer state; everything else lives in the dock and Launchpad.</p>
+            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-desktop.jpg" width="1600" height="900" alt="MintDE in Dark mode with the Aurora wallpaper and Settings open on the wallpaper collection."></figure>
+            <p class="panel-caption">Dark mode, the original Aurora wallpaper and System Settings. Settings, wallpaper and accent are saved on MintOS HD and come back after a restart.</p>
+          </div>
+          <div class="panel" role="tabpanel" id="panel-setup" aria-labelledby="tab-setup" hidden>
+            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-setup.jpg" width="1600" height="900" alt="The MintOS Setup Assistant welcome page with a large greeting and a Get Started button."></figure>
+            <p class="panel-caption">On first boot the Setup Assistant greets you in ten languages, prepares a blank disk as MintOS HD, and creates your account with its own home folder.</p>
+          </div>
+          <div class="panel" role="tabpanel" id="panel-web" aria-labelledby="tab-web" hidden>
+            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-web.jpg" width="1600" height="900" alt="The MintOS Web app showing the Wikipedia article on Mentha over HTTPS, with styled text, links and an infobox photo."></figure>
+            <p class="panel-caption">Web draws real pages with MintOS's own engine: Wikipedia over HTTPS with styling, links, the infobox and its photo. Scripts are never run.</p>
           </div>
           <div class="panel" role="tabpanel" id="panel-terminal" aria-labelledby="tab-terminal" hidden>
-            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-terminal.jpg" width="1600" height="900" alt="The MintDE Terminal window showing the output of the net test command."></figure>
-            <p class="panel-caption">The bounded diagnostic Terminal running <code>net test</code> in QEMU. The RX timeout is expected there: QEMU's E1000 loops back differently from VirtualBox's, which is the real target.</p>
+            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-terminal.jpg" width="1600" height="900" alt="The MintDE Terminal running hello, sysinfo and Lua scripts."></figure>
+            <p class="panel-caption">Terminal runs real programs from MintOS HD: the musl-based <code>hello</code> and <code>sysinfo</code>, and Lua&nbsp;5.4 running a script with floating point.</p>
           </div>
-          <div class="panel" role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden>
-            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-settings.jpg" width="1496" height="570" alt="MintDE Settings, Appearance tab, with theme, accent colour, text size, wallpaper and reduced-motion options next to live input counters."></figure>
-            <p class="panel-caption">Settings has General, Appearance, Displays, Input, Storage and Privacy categories, with real dropdowns and live input counters. Settings last for the session only, for now.</p>
-          </div>
-          <div class="panel" role="tabpanel" id="panel-files" aria-labelledby="tab-files" hidden>
-            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-files.jpg" width="1253" height="812" alt="The MintDE Files window listing RAM-backed session files."></figure>
-            <p class="panel-caption">Files keeps RAM-backed session files separate from read-only disk volumes. (Captured on an earlier MintDE build.)</p>
+          <div class="panel" role="tabpanel" id="panel-notes" aria-labelledby="tab-notes" hidden>
+            <figure class="screen"><img loading="lazy" src="assets/screenshots/mintde-notes.jpg" width="1600" height="900" alt="The Notes app with one note titled Merged release check."></figure>
+            <p class="panel-caption">Notes keeps many notes, grouped by date, as text files in <code>~/Documents/Notes</code>. They are saved about a second after you stop typing.</p>
           </div>
           <div class="panel" role="tabpanel" id="panel-uefi" aria-labelledby="tab-uefi" hidden>
             <figure class="screen"><img loading="lazy" src="assets/screenshots/uefi-desktop.jpg" width="960" height="540" alt="The UEFI Desktop with a top bar, desktop icons and a dock of apps."></figure>
@@ -260,8 +269,8 @@
         <header class="section-head reveal">
           <p class="kicker">Try it</p>
           <h2>Poke at the Terminal</h2>
-          <p>This is a small browser re-creation of the MintDE Terminal. Its replies are copied from MintDE's source, and the hardware values come from a real QEMU boot log. Some output is shortened.</p>
-          <p class="hint">Try <button class="chip" data-cmd="help">help</button> <button class="chip" data-cmd="ver">ver</button> <button class="chip" data-cmd="pci">pci</button> <button class="chip" data-cmd="mounts">mounts</button> <button class="chip" data-cmd="status">status</button></p>
+          <p>This is a small browser re-creation of the MintDE Terminal. Its replies follow MintDE 2.4.0, and the hardware values come from a real 26.5.014.0 QEMU boot log. Programs such as <code>lua</code> only run in the real OS.</p>
+          <p class="hint">Try <button class="chip" data-cmd="help">help</button> <button class="chip" data-cmd="ver">ver</button> <button class="chip" data-cmd="pci">pci</button> <button class="chip" data-cmd="mounts">mounts</button> <button class="chip" data-cmd="net">net</button> <button class="chip" data-cmd="df">df</button></p>
         </header>
 
         <div class="term reveal" id="term">
@@ -272,11 +281,11 @@
           <div class="term-body">
             <div class="term-head">
               <strong>Terminal</strong>
-              <span>Bounded MintDE command shell; commands are read-only</span>
+              <span>mintsh on MintOS HD &mdash; a browser re-creation</span>
             </div>
             <div class="term-out" id="term-out" role="log" aria-live="polite" aria-label="Terminal output"></div>
             <form class="term-in" id="term-form" autocomplete="off">
-              <label for="term-input" class="prompt">root#mintos &gt;</label>
+              <label for="term-input" class="prompt">alex@MintOS %</label>
               <input id="term-input" type="text" spellcheck="false" autocapitalize="off" aria-label="Type a command" placeholder="type help">
             </form>
           </div>
@@ -290,38 +299,38 @@
         <header class="section-head reveal">
           <p class="kicker">Status</p>
           <h2>Honest about where it is</h2>
-          <p>MintOS26 is an experimental hobby OS that runs in virtual machines. Test logs are kept with every release, and nothing is called working until it has been seen working.</p>
+          <p>MintOS26 is an experimental hobby OS, tested in virtual machines. Test logs are kept with every release, and nothing is called working until it has been seen working.</p>
         </header>
 
         <div class="status-grid">
           <div class="status-col reveal">
-            <h3><span class="badge badge-ok">Works</span></h3>
+            <h3><span class="badge badge-ok">Works in QEMU</span></h3>
             <ul>
-              <li>Boots in QEMU with OVMF firmware, into both UEFI Desktop and native MintDE</li>
-              <li>Startup selector with a safe default and a recovery path</li>
-              <li>Ring-3 desktop with dock, menus, Launchpad, Settings, Files and Terminal</li>
-              <li>PCI enumeration and AHCI SATA disks with LBA48 reads</li>
-              <li>Read-only FAT16, up to eight volumes at once</li>
-              <li>PS/2 keyboard and mouse</li>
+              <li>Boot animation, then the native MintDE desktop or the UEFI Desktop recovery path</li>
+              <li>Setup Assistant, your own account, and settings, notes and files saved on MintOS HD</li>
+              <li>MintFS read/write disks that survive power cuts</li>
+              <li>Networking with DHCP, DNS, TCP and HTTPS (TLS 1.3 and 1.2)</li>
+              <li>Web pages with CSS, images and forms</li>
+              <li>Programs: Lua 5.4 and C programs built with the musl SDK</li>
+              <li>Sound through Intel HD Audio, and USB keyboard, mouse and tablet</li>
             </ul>
           </div>
           <div class="status-col reveal">
             <h3><span class="badge badge-wip">In progress</span></h3>
             <ul>
-              <li>E1000 loopback: transmit completes, receive still times out</li>
-              <li>Full MintDE testing in VirtualBox at several screen sizes</li>
-              <li>Window resizing, cursor and menu polish</li>
-              <li>Terminal line editing and process blocking/wake-up</li>
+              <li>Real hardware (Dell OptiPlex 7040): sound and the I219 network chip are experimental</li>
+              <li>Testing in VirtualBox</li>
+              <li>Web: CSS grid, SVG and web fonts</li>
+              <li>Graphical apps as separate processes (window server)</li>
             </ul>
           </div>
           <div class="status-col reveal">
             <h3><span class="badge badge-no">Not yet</span></h3>
             <ul>
-              <li>Saving files to disk (Notes and Settings reset on reboot)</li>
-              <li>TCP/IP, DHCP and DNS</li>
-              <li>USB, NVMe, audio and ACPI power management</li>
-              <li>GPU acceleration</li>
-              <li>Real hardware. VMs only for now</li>
+              <li>JavaScript in Web</li>
+              <li>GPU drivers and display scaling (planned for 26.6)</li>
+              <li>NVMe, USB storage and Wi-Fi</li>
+              <li>Multiple CPU cores and audio input</li>
             </ul>
           </div>
         </div>
@@ -339,10 +348,58 @@
 
         <ol class="timeline">
           <li class="reveal is-latest">
+            <div class="tl-ver"><strong>26.5.014.0</strong><span>MintDE 2.4.0</span></div>
+            <div class="tl-body">
+              <h3>Programs, saved settings, real web pages and sound <span class="badge badge-ok">latest</span></h3>
+              <p>Setup Assistant and accounts, settings and notes saved on disk, Lua and C programs, a new HTML/CSS web engine with images and forms, TLS&nbsp;1.2, HD Audio sound, the boot animation, wallpapers and Notification Center.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/releases/tag/v26.5.014.0">Release &amp; ISO &rarr;</a> &middot; <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.014.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
+            <div class="tl-ver"><strong>26.5.013.0</strong><span>MintDE 2.3.0</span></div>
+            <div class="tl-body">
+              <h3>MintFS: files that stay</h3>
+              <p>MintOS's own copy-on-write filesystem on disks it initializes, Finder-style Files with Trash, and Notes saved to disk.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.013.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
+            <div class="tl-ver"><strong>26.5.012.0</strong><span>MintDE 2.2.0</span></div>
+            <div class="tl-body">
+              <h3>TLS 1.3 and HTTPS</h3>
+              <p>MintOS's own crypto library and TLS&nbsp;1.3 client with certificate checks against Mozilla's roots. Web opens HTTPS sites.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.012.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
+            <div class="tl-ver"><strong>26.5.011.0</strong><span>MintDE 2.1.0</span></div>
+            <div class="tl-body">
+              <h3>USB, networking and the web</h3>
+              <p>xHCI USB input, Intel Ethernet, an IPv4/TCP stack with DHCP and DNS, and the first Web browser.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.011.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
+            <div class="tl-ver"><strong>26.5.010.0</strong><span>MintDE 2.0.0</span></div>
+            <div class="tl-body">
+              <h3>MintDE 2: a macOS-style desktop</h3>
+              <p>Windows, Dock, Launchpad, Spotlight and Control Center on a shared canvas, plus a real clock.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.010.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
+            <div class="tl-ver"><strong>26.5.009.0</strong><span>MintDE 1.0.8</span></div>
+            <div class="tl-body">
+              <h3>Real-hardware groundwork</h3>
+              <p>Display modes up to 4K, write-combined framebuffer, ACPI shutdown and restart, and RAID-mode SATA.</p>
+              <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.009.0.md">Changelog &rarr;</a>
+            </div>
+          </li>
+          <li class="reveal">
             <div class="tl-ver"><strong>26.5.008.0</strong><span>MintDE 1.0.7</span></div>
             <div class="tl-body">
-              <h3>Loopback, the VirtualBox way <span class="badge badge-ok">latest</span></h3>
-              <p>Switched the network self-test to the loopback path VirtualBox's emulated 82540EM actually uses, fixed which TX descriptor diagnostics report, and made every changelog row clickable in About.</p>
+              <h3>Loopback, the VirtualBox way</h3>
+              <p>Switched the network self-test to the loopback path VirtualBox's emulated 82540EM actually uses, and made every changelog row clickable in About.</p>
               <a class="tl-link" href="https://github.com/thejakubruzicka/MintOS26/blob/HEAD/changelogs/MintOS26-26.5.008.0.md">Changelog &rarr;</a>
             </div>
           </li>
@@ -406,13 +463,64 @@
       </div>
     </section>
 
+    <!-- ============ DOWNLOAD ============ -->
+    <section class="section" id="download">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">Download</p>
+          <h2>Try MintOS in a virtual machine</h2>
+          <p>Download the 26.5.014.0 ISO and boot it in QEMU with UEFI firmware. Give it a blank virtual disk, and the Setup Assistant turns that disk into MintOS HD for your account and files.</p>
+        </header>
+
+        <div class="cta reveal">
+          <a class="btn btn-primary" href="https://github.com/thejakubruzicka/MintOS26/releases/download/v26.5.014.0/mintos26-26.5.014.0-uefi.iso">Download mintos26-26.5.014.0-uefi.iso <small>(34&nbsp;MB)</small></a>
+          <a class="btn btn-ghost" href="https://github.com/thejakubruzicka/MintOS26/releases/tag/v26.5.014.0">Release notes</a>
+        </div>
+
+        <div class="steps">
+          <div class="step reveal">
+            <span class="step-n">1</span>
+            <h3>Get QEMU</h3>
+            <p>QEMU with OVMF (UEFI) firmware. On macOS with Homebrew:</p>
+            <div class="code"><pre><code>brew install qemu</code></pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div class="step reveal">
+            <span class="step-n">2</span>
+            <h3>Make a blank disk</h3>
+            <p>MintOS only ever writes to a disk that starts out blank:</p>
+            <div class="code"><pre><code>qemu-img create -f raw mintos-hd.img 1G</code></pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div class="step reveal">
+            <span class="step-n">3</span>
+            <h3>Boot it</h3>
+            <p>At the selector press <kbd>2</kbd> within three seconds for native MintDE. The firmware path below is Homebrew's; adjust it on Linux.</p>
+            <div class="code"><pre><code>cp /opt/homebrew/share/qemu/edk2-i386-vars.fd vars.fd
+qemu-system-x86_64 -machine q35 -m 2G -cpu max \
+  -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -cdrom mintos26-26.5.014.0-uefi.iso \
+  -drive if=none,id=hd,format=raw,file=mintos-hd.img -device ide-hd,drive=hd,bus=ide.1 \
+  -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
+  -nic user,model=e1000 \
+  -audiodev coreaudio,id=snd -device ich9-intel-hda -device hda-output,audiodev=snd</code></pre><button class="copy" type="button">Copy</button></div>
+            <p>On Linux, use <code>-audiodev pa,id=snd</code> (or drop the last line for no sound).</p>
+          </div>
+        </div>
+
+        <aside class="note reveal">
+          <strong>Before you try it</strong>
+          <p>MintOS26 is experimental and only tested in QEMU. The native path calls <code>ExitBootServices</code>, so it is one-way until you reset the VM. MintOS writes only to disks it initialized itself, and only after you type the confirmation it shows. Still, don't point it at a real disk with data on it.</p>
+        </aside>
+      </div>
+    </section>
+
     <!-- ============ BUILD ============ -->
     <section class="section section-alt" id="build">
       <div class="wrap">
         <header class="section-head reveal">
           <p class="kicker">Build</p>
-          <h2>Build it and boot it</h2>
-          <p>Everything is built from source with clang and LLVM's linkers. The build produces the EFI app, kernel, disk images, VirtualBox disks and a bootable ISO.</p>
+          <h2>Build it from source</h2>
+          <p>Everything is built from source with clang and LLVM's linkers. The build produces the EFI app, kernel, disk images, the bundled programs and a bootable ISO.</p>
         </header>
 
         <div class="steps">
@@ -420,33 +528,26 @@
             <span class="step-n">1</span>
             <h3>Get the tools</h3>
             <p>You need clang, <code>lld-link</code> and <code>ld.lld</code>, GNU make and Python&nbsp;3. On macOS, the Xcode command-line tools plus Homebrew are enough:</p>
-            <div class="code"><pre><code>brew install lld qemu</code></pre><button class="copy" type="button">Copy</button></div>
+            <div class="code"><pre><code>brew install lld qemu binutils</code></pre><button class="copy" type="button">Copy</button></div>
           </div>
           <div class="step reveal">
             <span class="step-n">2</span>
             <h3>Build and test</h3>
-            <p>Clone the repository, then build everything and run the host-side checks:</p>
+            <p>Clone the repository, then build everything and run the host-side checks. On Apple Silicon, the bundled wrapper runs the x86-64 test programs under Rosetta&nbsp;2:</p>
             <div class="code"><pre><code>git clone https://github.com/thejakubruzicka/MintOS26.git
 cd MintOS26
 make clean all
-make check</code></pre><button class="copy" type="button">Copy</button></div>
+PATH="$PWD/tools/macos-host:/opt/homebrew/opt/binutils/bin:$PATH" make check</code></pre><button class="copy" type="button">Copy</button></div>
           </div>
           <div class="step reveal">
             <span class="step-n">3</span>
-            <h3>Boot it in QEMU</h3>
-            <p>Run the UEFI disk with OVMF firmware. At the selector, press <kbd>2</kbd> or <kbd>M</kbd> for native MintDE. The firmware path below is Homebrew's; adjust it on Linux.</p>
-            <div class="code"><pre><code>qemu-system-x86_64 -machine q35 -m 2G -snapshot \
-  -drive if=pflash,format=raw,readonly=on,file=/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
-  -drive file=build/mintos26-26.5.008.0-uefi.img,format=raw \
-  -drive file=build/mintos26-data-512m.img,format=raw \
-  -nic user,model=e1000 -serial stdio</code></pre><button class="copy" type="button">Copy</button></div>
+            <h3>Boot your build</h3>
+            <p>The helper script boots the newest image with a persistent MintOS disk, USB input and sound:</p>
+            <div class="code"><pre><code>tools/run_qemu.sh --mintos-disk -- \
+  -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
+  -audiodev coreaudio,id=snd0 -device ich9-intel-hda -device hda-output,audiodev=snd0</code></pre><button class="copy" type="button">Copy</button></div>
           </div>
         </div>
-
-        <aside class="note reveal">
-          <strong>Before you try the native path</strong>
-          <p>MintDE calls <code>ExitBootServices</code>, so the handoff is one way until you reset the VM. Keep EFI enabled and use a snapshot. Disk Utility's blank-disk initializer is destructive, so only point it at a disposable virtual disk, never at real hardware.</p>
-        </aside>
       </div>
     </section>
   </main>
@@ -454,7 +555,7 @@ make check</code></pre><button class="copy" type="button">Copy</button></div>
   <footer class="footer">
     <div class="wrap footer-inner">
       <div class="footer-brand">
-        <a class="brand" href="#top"><img src="assets/icons/mintde.png" alt="" width="26" height="26"><span>MintOS<span class="brand-num">26</span></span></a>
+        <a class="brand" href="#top"><img src="assets/icons/mintos.png" alt="" width="26" height="26"><span>MintOS<span class="brand-num">26</span></span></a>
         <p>An operating system written from scratch. Released under the MIT License.</p>
       </div>
       <nav class="footer-links" aria-label="Footer">

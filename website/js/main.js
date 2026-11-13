@@ -168,55 +168,61 @@
   }
 
   /* ---------- MintDE Terminal re-creation ----------
-     Replies are copied from kernel/user/desktop.c (MintDE 1.0.7).
-     PCI values come from the 26.5.008.0 QEMU COM1 boot log. */
+     Replies follow MintDE 2.4.0's Terminal (kernel/user/mintde/apps.c).
+     PCI and network values come from the 26.5.014.0 QEMU COM1 boot log. */
   var out = document.getElementById("term-out");
   var form = document.getElementById("term-form");
   var input = document.getElementById("term-input");
   if (!out || !form || !input) return;
 
   var bootTime = Date.now();
-  var PROMPT = "root#mintos >";
+  var PROMPT = "alex@MintOS %";
 
   var replies = {
     help: [
-      "Commands: help, clear, ver, uptime, status, cpu",
+      "Commands: help, clear, ver, uptime, status, cpu, usb",
+      "Network: net up, net down, ifconfig, ping <host>, nslookup <host>, curl [-I] [-s] http(s)://...",
       "pci, resources, drivers, mounts, io, logs, net",
-      "drives, volumes, use sda/sdb, net start/status/test, ls, cd, pwd, cat",
-      "use sda | ls [name] | cd <dir> | pwd | cat <file>"
+      "MintOS HD: ls [-l], cd, pwd, cat, open, mkdir, touch, rm [-r], rmdir, mv, cp, echo txt > file, df, sync",
+      "Programs: lua, hello, wc, grep, sysinfo, ./prog (Ctrl+C stops, & runs in the background)"
     ],
-    ver: ["MintOS26 26.5.008.0 / MintDE 1.0.7"],
+    ver: ["MintOS26 26.5.014.0 / MintDE 2.4.0"],
     status: [
-      "Kernel services: ring-3 syscall ABI active",
-      "Filesystem: FAT16 mounted read-only",
-      "Persistent file writes: disabled"
+      "Kernel services: ring-3 syscall ABI active; programs preempted every 20 ms",
+      "Filesystem: MintOS HD (MintFS) mounted read/write at /",
+      "FAT16 volumes: read-only; other disks: never written"
     ],
     cpu: [
       "Architecture: x86-64; GDT/TSS and IDT active",
-      "Timer: PIT near 100 Hz; cooperative scheduler active",
-      "CPUID feature and per-core topology API not yet exported"
+      "Timer: PIT near 100 Hz; cooperative kernel, preemptive programs",
+      "FPU: SSE + XSAVE + AVX, 832-byte save area per task"
     ],
     pci: [
-      "0:0.0 0x8086:0x29C0 class 0x6:0x0",
-      "0:1.0 0x1234:0x1111 class 0x3:0x0",
-      "0:2.0 0x8086:0x100E class 0x2:0x0",
-      "0:31.0 0x8086:0x2918 class 0x6:0x1",
-      "0:31.2 0x8086:0x2922 class 0x1:0x6",
-      "0:31.3 0x8086:0x2930 class 0xC:0x5"
+      "00:00.0 8086:29C0 class 06:00 host bridge",
+      "00:01.0 1234:1111 class 03:00 display (UEFI framebuffer)",
+      "00:02.0 8086:100E class 02:00 Intel 82540EM network",
+      "00:03.0 1B36:000D class 0C:03 xHCI USB controller",
+      "00:04.0 8086:293E class 04:03 Intel HD Audio",
+      "00:1F.2 8086:2922 class 01:06 AHCI SATA"
     ],
     mounts: [
-      "/session  RAMFS from ramfs [volatile]",
+      "/  MintFS from sdc [read/write, copy-on-write]",
+      "/session  RAMFS [volatile]",
       "/Volumes/sdb  FAT16 from sdb [read-only]"
     ],
+    df: [
+      "Volume        Size      Used      Avail     Mounted on",
+      "MintOS HD     1 GB      780 KB    1 GB      / (MintFS, sdc)"
+    ],
     net: [
-      "VirtualBox E1000: detected but not initialized",
-      { note: "… register snapshot shortened on this page …" },
-      "No TCP/IP, DHCP, DNS, or external packet send service yet"
+      "Intel 82540EM: link up, driver active",
+      "IPv4 10.0.2.15/24 via DHCP, gateway 10.0.2.2, DNS 10.0.2.3",
+      "TCP, DNS, HTTP and HTTPS (TLS 1.3 and 1.2) available"
     ]
   };
   replies["net status"] = replies.net;
 
-  var needsVm = ["resources", "drivers", "io", "logs", "drives", "volumes", "use", "ls", "cd", "pwd", "cat", "net start", "net test"];
+  var needsVm = ["resources", "drivers", "io", "logs", "drives", "volumes", "use", "ls", "cd", "pwd", "cat", "lua", "hello", "sysinfo", "ping", "curl", "net up"];
 
   function row(text, cls) {
     var div = document.createElement("div");

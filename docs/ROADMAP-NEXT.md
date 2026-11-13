@@ -54,6 +54,23 @@ Next:
 - **Your data:** a Setup Assistant and accounts, and desktop items.
 - **Icons:** a refreshed set is planned for 26.6/26.7.
 
+## Next release: MintOS 26.6 (planned by the user, 13 November 2026)
+
+26.6 is the next big release. It focuses on four areas:
+- **More file support:**
+  - **Formats:** a Preview app for images (PNG/JPEG/GIF/BMP through the engine's decoders, and PDF later), a TextEdit-style editor, Quick Look in Files, and "Open With" file associations.
+  - **Archives:** ZIP.
+  - **Disks:** FAT32/exFAT and USB mass storage, read first, then writing on disks MintOS formatted.
+- **Apps:**
+  - **Separate GUI app processes:** the window server in `docs/WINDOW-SERVER.md`, so apps run and crash independently.
+  - **SDK and ports:** the MintKit SDK for graphical apps, and more ports on the musl SDK (SQLite, QuickJS, TinyCC, Doom).
+- **Graphics** (Phase D below): `virtio-gpu` and VMware SVGA II / VirtualBox VMSVGA for real modes and a hardware cursor, Intel HD 530 modesetting on the OptiPlex, and an SSE/AVX compositor.
+- **Display scaling:** HiDPI rendering at 1×, 1.5× and 2×, with scaled fonts, icons and layouts, plus a Settings › Displays resolution and scale picker.
+
+The icon refresh agreed for 26.6/26.7 fits here too.
+
+**MintOS 27** will be a redesign of the whole OS. It is kept for the future and is not planned yet.
+
 ## Phase D — graphics (goal 2)
 
 - **Virtual machines:**
