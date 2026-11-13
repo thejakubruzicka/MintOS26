@@ -18,10 +18,16 @@ web = (root / "kernel/user/mintde/web.c").read_text()
 apps = (root / "kernel/user/mintde/apps.c").read_text()
 
 checks = {
-    "only TLS 1.3 is negotiated (supported_versions 0x0304 required; no TLS 1.2 fallback)":
-        "type == 43 && elen == 2 && g16(b) == 0x0304" in tls and "if (!version_ok) return fail(t, MINT_TLS_ERR_UNSUPPORTED);" in tls,
+    "TLS 1.3 is preferred; TLS 1.2 only with ECDHE + AEAD suites and the downgrade sentinel checked":
+        "type == 43 && elen == 2 && g16(b) == 0x0304" in tls and "DOWNGRADE" in tls and "is_tls12_suite" in tls and
+        "if (type != HS_SERVER_KEY_EXCHANGE) return fail(t, MINT_TLS_ERR_PROTOCOL);" in tls and "CBC" in (c / "tls.h").read_text(),
+    "TLS 1.2 verifies the ServerKeyExchange signature, uses extended master secret and checks the server Finished":
+        "mint_signature_verify(&key, verify_scheme, signed_data" in tls and '"extended master secret"' in tls and
+        "if (!mint_ct_equal(expect, m + 4, 12)) return fail(t, MINT_TLS_ERR_DECRYPT);" in tls,
+    "P-256 ECDH refuses points that are not on the curve":
+        "if (!on_curve(&qx, &qy, c)) return 0;                 /* invalid-curve points are refused */" in pubkey,
     "the server must echo our session id and pick an offered suite":
-        "mint_ct_equal(b, t->session_id, 32)" in tls and "if (!offered) return fail(t, MINT_TLS_ERR_PROTOCOL);" in tls,
+        "mint_ct_equal(sid_p, t->session_id, 32)" in tls and "if (!offered) return fail(t, MINT_TLS_ERR_PROTOCOL);" in tls,
     "an all-zero X25519 shared secret is rejected":
         "if (!acc) return fail(t, MINT_TLS_ERR_PROTOCOL);" in tls,
     "the certificate chain is validated before CertificateVerify, which must use an allowed TLS 1.3 scheme":

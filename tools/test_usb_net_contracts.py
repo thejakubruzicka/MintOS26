@@ -78,10 +78,10 @@ checks = {
     'automatic connection skips experimental adapters':
         '!(net_info.adapter_flags & MINT_NET_ADAPTER_EXPERIMENTAL)' in apps,
     'Web speaks TLS for https:// and stops on certificate errors with no bypass':
-        'u->secure = 1' in web and 'mint_tls_step(&web_tls)' in web and 'This connection is not private' in web and
-        'proceed' not in web.lower().replace('proceeding', ''),
-    'Web bounds the response, links, tokens and redirects':
-        all(k in web for k in ['WEB_RAW_MAX', 'WEB_LINK_MAX', 'WEB_TOK_MAX', '++fetch.redirects > 5u']),
+        'u->secure = 1' in (root / 'kernel/user/web/whttp.c').read_text() and 'mint_tls_step(&tls_ctx[c])' in web and
+        'This connection is not private' in web and 'proceed' not in web.lower().replace('proceeding', ''),
+    'Web bounds documents, style sheets, images, connections and redirects':
+        all(k in web for k in ['DOC_MAX', 'CSS_MAX', 'IMG_MAX', 'IMG_PIXELS_MAX', 'WEB_CONNS', 'WEB_HEAP_BYTES', '++r->redirects > 10']),
     'the shell repaints background-updated windows and routes the mouse wheel':
         'app_background()' in desktop and 'MINT_DESKTOP_EVENT_SCROLL' in desktop,
 }

@@ -93,6 +93,8 @@ int web_background(void);
 uint32_t web_cursor(const mde_layout *l, int32_t x, int32_t y);
 const char *web_title(void);
 void web_opened(void);
+/* Menu commands: 1 add/remove favorite (Cmd-D), 2 show downloads, 3 show favorites. */
+int web_command(uint32_t command);
 
 /* ---- controls (widgets.c) */
 size_t text_length(const char *s);

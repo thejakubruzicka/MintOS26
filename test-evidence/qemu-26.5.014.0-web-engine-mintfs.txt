@@ -1,0 +1,24 @@
+# web-engine QEMU run, 2026-11-12 22:40 — host check of build/qemu-mintos-disk-1g.img after the session
+$ mintfs_tool check build/qemu-mintos-disk-1g.img
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+fsck: clean
+  inodes=36 dirs=20 files=16 reachable=190 marked=190
+  bad_checksums=0 bad_pointers=0 double_refs=0 leaked=0 missing=0 bad_dirs=0 bad_links=0
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+volume "MintOS HD" generation 43, 261693 of 261883 blocks free
+$ mintfs_tool ls build/qemu-mintos-disk-1g.img /Users/mintos/Downloads
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+dummy.pdf  13264 bytes  mtime=1794519497
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img /Users/mintos/Library/Web/Bookmarks
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+Wikipedia	https://en.wikipedia.org/wiki/Main_Page
+DuckDuckGo	https://lite.duckduckgo.com/lite/
+Hacker News	https://news.ycombinator.com/
+NPR Text	https://text.npr.org/
+MintOS on GitHub	https://github.com/
+CERN: first website	http://info.cern.ch/hypertext/WWW/TheProject.html
+tls-v1-2.badssl.com	https://tls-v1-2.badssl.com:1012/
+$ mintfs_tool cat build/qemu-mintos-disk-1g.img /Users/mintos/Library/Web/Cookies | cut -f1-6
+GPT: MintOS partition LBA 2048-2097111 (1022 MiB)
+# MintOS Web cookies: domain host-only path secure expires name value http-only
+w3.org	0	/	1	1794521300	__cf_bm

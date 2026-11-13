@@ -2363,7 +2363,7 @@ static int terminal_job_step(void) {
                 MINT_TLS_IO io = {&job.handle, term_tls_send, term_tls_recv};
                 mint_tls_init(&term_tls, &io, job.host, mint_clock_gettime(MINT_CLOCK_REALTIME, &wall) == 0 ? wall.tv_sec : 0);
                 job.phase = PH_TLS; job.sent_at = now;
-                terminal_push("* TLS 1.3 handshake\xE2\x80\xA6");
+                terminal_push("* TLS handshake\xE2\x80\xA6");
                 return 1;
             }
             return curl_send_request(now);
@@ -2390,7 +2390,7 @@ static int terminal_job_step(void) {
             push_wrapped(row); job_finish();
             return 1;
         }
-        copy_text(row, sizeof(row), "* TLS 1.3 with ");
+        copy_text(row, sizeof(row), "* "); str_append(row, sizeof(row), mint_tls_version_name(&term_tls)); str_append(row, sizeof(row), " with ");
         str_append(row, sizeof(row), mint_tls_suite_name(term_tls.suite));
         str_append(row, sizeof(row), "; certificate verified");
         push_wrapped(row);

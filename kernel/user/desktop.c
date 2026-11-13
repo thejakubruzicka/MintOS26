@@ -378,7 +378,7 @@ static void paint_dock(void) {
 enum { ACT_NONE = 0, ACT_ABOUT_OS, ACT_ABOUT_DE, ACT_SETTINGS, ACT_LAUNCHPAD, ACT_RESTART, ACT_SHUTDOWN,
        ACT_HIDE, ACT_QUIT, ACT_NEW_FILES, ACT_NEW_TERMINAL, ACT_CLOSE, ACT_MINIMIZE, ACT_ZOOM,
        ACT_BRING_ALL, ACT_TOGGLE_DARK, ACT_SPOTLIGHT, ACT_HELP, ACT_RELEASE_NOTES, ACT_FOCUS_BASE = 100,
-       ACT_FILES_BASE = 200, ACT_NOTES_BASE = 300 };
+       ACT_FILES_BASE = 200, ACT_WEB_BASE = 220, ACT_NOTES_BASE = 300 };
 typedef struct { const char *label; const char *shortcut; uint32_t action; uint8_t enabled, separator, checked; } menu_item;
 static menu_item menu_items[24];
 static uint32_t menu_count;
@@ -425,6 +425,10 @@ static void build_menu(int32_t m) {
             add_item("New Note", "\xE2\x8C\x98N", ACT_NOTES_BASE + NOTES_CMD_NEW, notes_command_enabled(NOTES_CMD_NEW));
             add_item("Delete Note", "\xE2\x8C\x98\xE2\x8C\xAB", ACT_NOTES_BASE + NOTES_CMD_DELETE, notes_command_enabled(NOTES_CMD_DELETE));
             add_sep();
+        } else if (app == APP_WEB && focused_app == APP_WEB) {
+            add_item("Add to Favorites", "\xE2\x8C\x98" "D", ACT_WEB_BASE + 1, 1);
+            add_item("Show Favorites", 0, ACT_WEB_BASE + 3, 1);
+            add_item("Show Downloads", "\xE2\x87\xA7\xE2\x8C\x98J", ACT_WEB_BASE + 2, 1); add_sep();
         } else {
             add_item("New Terminal Window", 0, ACT_NEW_TERMINAL, 1); add_sep();
         }
@@ -547,6 +551,7 @@ static void run_action(uint32_t act) {
     if (act >= ACT_FOCUS_BASE && act < ACT_FOCUS_BASE + APP_COUNT) { shell_open_app(act - ACT_FOCUS_BASE); return; }
     if (act > ACT_FILES_BASE && act < ACT_FILES_BASE + FILES_CMD_COUNT) { if (files_command(act - ACT_FILES_BASE)) shell_damage_window(APP_FILES); return; }
     if (act > ACT_NOTES_BASE && act < ACT_NOTES_BASE + NOTES_CMD_COUNT) { if (notes_command(act - ACT_NOTES_BASE)) shell_damage_window(APP_NOTES); return; }
+    if (act > ACT_WEB_BASE && act < ACT_WEB_BASE + 8) { if (web_command(act - ACT_WEB_BASE)) shell_damage_window(APP_WEB); return; }
     switch (act) {
     case ACT_ABOUT_OS: shell_open_app(APP_ABOUT_OS); break;
     case ACT_ABOUT_DE: shell_open_app(APP_ABOUT_MINTDE); break;

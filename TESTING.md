@@ -96,7 +96,37 @@ In QEMU (network as below):
 2. **Web:** open `https://en.wikipedia.org/wiki/Prague_Castle`. The address bar shows a padlock and `en.wikipedia.org`, and the page opens at the article title.
 3. **Search:** type a few words; DuckDuckGo results load over HTTPS.
 4. **Certificate errors:** a certificate for another name, or one from an untrusted authority, shows "This connection is not private" with the reason. The local `openssl s_server` tests in `tools/test_tls.py` produce these cases on demand.
-5. **TLS 1.2-only server** (for example `https://tls-v1-2.badssl.com:1012/`): shows "Secure connection failed" and says the server may only support TLS 1.2.
+5. **TLS 1.2-only server** (for example `https://tls-v1-2.badssl.com:1012/`): since 26.5.014.0 the page opens over TLS 1.2 (padlock shown). `curl -I` reports "TLS 1.2 with ECDHE-...".
+
+### Web engine test (26.5.014.0)
+
+On the host, `tools/test_web_engine.py` (part of `make check`) builds the engine with the system compiler and checks:
+URL resolution (RFC 3986 examples), requests, cookies (RFC 6265 subset), form encoding and dates; the bounded heap;
+inflate against Python's `zlib` (raw/zlib/gzip, every level and strategy, corrupt/truncated/bomb streams);
+the HTTP/1.1 parser fed in random pieces (chunked, gzip, 1xx, redirects, Set-Cookie, Content-Disposition);
+PNG/GIF/BMP decoding pixel-exact and baseline/progressive JPEG within ±8 of libjpeg-turbo (`tools/fixtures/web`);
+HTML + CSS + layout of `tools/fixtures/web/article.html` (floats, tables, lists, forms, hidden content, var(), @media,
+quirks mode) at several widths; malformed/deep markup; that every engine file builds for ring 3 with no SSE/x87
+instructions; and source contracts. `tools/test_tls.py` adds `openssl s_server -tls1_2` cases (six ECDHE AEAD suites,
+ECDSA and RSA certificates, X25519 and P-256, with and without extended master secret) and TLS 1.3 over P-256 via
+HelloRetryRequest; `--live` also checks badssl.com.
+
+`tools/test_web_layout.c` can lay out any saved page: `build/test-web-layout page.html 1880 sheet1.css ...` prints the
+display list and the heap use per stage (useful when a page runs out of memory).
+
+In QEMU (`tools/run_qemu.sh --mintos-disk -- -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0`,
+native MintDE, a MintOS HD on the scratch disk; `tools/qemu_drive.py` automates boot, typing, clicks and screenshots over QMP):
+
+1. **Wikipedia:** `en.wikipedia.org/wiki/Prague` shows the styled article: heading, links in Wikipedia blue, the infobox
+   floated right with its photo, references and images further down loading as you scroll (Page Down).
+2. **Forms:** open `lite.duckduckgo.com/lite/`, press Tab, type a query, press Return: the POST form submits and the
+   results page shows the query field, selects, buttons and results.
+3. **Hacker News** (`news.ycombinator.com`): the table layout with the orange header, story titles left-aligned.
+4. **TLS 1.2:** `https://tls-v1-2.badssl.com:1012/` opens (green page, padlock).
+5. **Downloads:** open a PDF link such as `https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf`:
+   the Downloads panel opens with progress, the file is saved as `~/Downloads/dummy.pdf`, "Show in Files" opens Files.
+6. **Favorites:** ⌘D on a page adds it (status "Added to Favorites"); it appears on the start page and in the book
+   button's list, and survives a restart (`~/Library/Web/Bookmarks`). Cookies persist in `~/Library/Web/Cookies`.
 
 ### USB, network and Web test (26.5.011.0)
 

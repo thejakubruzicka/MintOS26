@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
         if (time(NULL) - start > 30) break;
         struct pollfd p = {fd, POLLIN, 0}; poll(&p, 1, 200);
     }
-    printf("OK %s | %s | %zu bytes\n", mint_tls_suite_name(tls.suite), status, total);
+    printf("OK %s %s | %s | %zu bytes\n", mint_tls_suite_name(tls.suite), mint_tls_version_name(&tls), status, total);
     mint_tls_close(&tls);
     close(fd);
     return 0;

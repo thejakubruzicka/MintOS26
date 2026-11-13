@@ -60,6 +60,12 @@ void mint_aes_encrypt_block(const MINT_AEAD *a, const uint8_t in[16], uint8_t ou
 void mint_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t point[32]);
 void mint_x25519_base(uint8_t out[32], const uint8_t scalar[32]);
 
+/* ------------------------------------------------------------------ P-256 ECDH */
+/* Ephemeral secp256r1 key pair: pub is 0x04 || X || Y. 1 on success. */
+int mint_p256_keygen(uint8_t priv[32], uint8_t pub[65]);
+/* Shared secret = X coordinate of priv * peer (peer must be a valid point). */
+int mint_p256_ecdh(uint8_t out[32], const uint8_t priv[32], const uint8_t *peer, size_t peer_len);
+
 /* ------------------------------------------------------------------ randomness */
 /* Fills out with unpredictable bytes (RDSEED/RDRAND mixed with TSC jitter
  * through SHA-512 on MintOS; the host test build supplies its own). */
